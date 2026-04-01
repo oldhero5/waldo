@@ -86,7 +86,7 @@ export default function DashboardPage() {
                 { label: "Server", value: serveStatus?.loaded ? "Active" : "Inactive", icon: Rocket, to: "/deploy",
                   valueColor: serveStatus?.loaded ? "#4ade80" : "var(--text-muted)" },
               ].map((c) => (
-                <Link key={c.label} to={c.to} className="surface surface-interactive p-4">
+                <Link key={c.label} to={c.to} className="surface surface-interactive" style={{ padding: 18 }}>
                   <div className="flex items-center gap-2 text-sm mb-1" style={{ color: "var(--text-muted)" }}>
                     <c.icon size={14} />
                     {c.label}
