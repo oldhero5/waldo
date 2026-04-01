@@ -182,6 +182,7 @@ export default function DeployPage() {
     <div className="min-h-screen">
 
       <div className="max-w-4xl mx-auto mt-8 px-4">
+        <p className="eyebrow" style={{ marginBottom: 4 }}>Model serving</p>
         <h1 className="text-2xl font-bold text-gray-900 mb-6">Deploy</h1>
 
         {/* Server status */}

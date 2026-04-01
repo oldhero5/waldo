@@ -129,12 +129,13 @@ export default function ExperimentsPage() {
       <div className="max-w-6xl mx-auto mt-8 px-4">
         <div className="flex items-center justify-between mb-6">
           <div>
+            <p className="eyebrow" style={{ marginBottom: 4 }}>Experiment tracking</p>
             <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
               <FlaskConical size={24} />
               Experiments
             </h1>
             <p className="text-gray-500 text-sm mt-1">
-              {runs?.length || 0} training runs. Select up to 4 to compare. Click a row to expand details.
+              {runs?.length || 0} training runs. Select up to 4 to compare. Click to expand.
             </p>
           </div>
           <div className="flex items-center gap-2">
