@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+
+# Environment
+.env
+
+# Models & weights
+model_cache/
+models/
+*.pt
+*.onnx
+*.onnx_data
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# uv
+uv.lock
+
+# Node
+node_modules/
+
+# Generated / build output
+app/static/
+
+# Training outputs
+runs/
+training/
+
+# Test artifacts
+test-results/
+playwright-report/
+.pytest_cache/
+htmlcov/
+.coverage
+
+# Logs
+*.log
+/tmp/
+
+# Large media files
+Target.mp4
+*.mp4
+!tests/fixtures/*.mp4
+
+# Screenshots (development artifacts)
+docs/screenshots/
+
+# Misc
+waldo_build_plan.docx

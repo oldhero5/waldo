@@ -1,0 +1,19 @@
+FROM python:3.11-slim
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+WORKDIR /app
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ffmpeg libgl1 libglib2.0-0 && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY pyproject.toml .python-version ./
+RUN uv sync --no-dev --group labeler --no-install-project
+
+COPY lib/ lib/
+COPY labeler/ labeler/
+COPY trainer/ trainer/
+
+ENV DEVICE=cpu
+
+CMD ["uv", "run", "celery", "-A", "lib.tasks", "worker", "--loglevel=info", "--concurrency=1", "--pool=solo"]

@@ -1,0 +1,23 @@
+target-version = "py311"
+line-length = 120
+
+[lint]
+select = ["E", "F", "I", "W", "UP", "S", "B"]
+ignore = [
+  "S101",  # assert used (OK in tests)
+  "S104",  # binding to all interfaces (OK for dev server)
+  "S105",  # hardcoded password (false positives on config defaults)
+  "S110",  # try-except-pass (intentional in ML callbacks — don't crash training over preview)
+  "S311",  # non-cryptographic random (OK for dataset train/val splits)
+  "S603",  # subprocess call (not applicable)
+  "S607",  # partial path (not applicable)
+  "B007",  # unused loop variable (OK in comprehensions)
+  "B008",  # function call in default arg (FastAPI Depends/Query pattern)
+  "B904",  # raise-without-from (too noisy in existing codebase)
+  "B905",  # zip-without-strict (too noisy, Python 3.11 compat)
+  "E501",  # line too long (we have line-length = 120)
+  "E741",  # ambiguous variable name (single-char OK in math/CV contexts)
+]
+
+[lint.per-file-ignores]
+"tests/*" = ["S"]
