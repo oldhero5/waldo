@@ -24,8 +24,22 @@ export default function AgentPage() {
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [streamText, setStreamText] = useState("");
+  const [ollamaModels, setOllamaModels] = useState<string[]>([]);
+  const [selectedModel, setSelectedModel] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Fetch available Ollama models
+  useEffect(() => {
+    fetch("/api/v1/agent/models")
+      .then((r) => r.json())
+      .then((d) => {
+        const names = (d.models || []).map((m: any) => m.name);
+        setOllamaModels(names);
+        if (names.length > 0 && !selectedModel) setSelectedModel(names[0]);
+      })
+      .catch(() => {});
+  }, []); // eslint-disable-line
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -49,11 +63,15 @@ export default function AgentPage() {
         content: m.content,
       }));
 
-      const res = await fetch("http://localhost:11434/api/chat", {
+      // Use backend proxy to avoid CORS issues with Ollama
+      const res = await fetch("/api/v1/agent/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(localStorage.getItem("waldo_token") ? { Authorization: `Bearer ${localStorage.getItem("waldo_token")}` } : {}),
+        },
         body: JSON.stringify({
-          model: "llama3.2",
+          model: selectedModel || undefined,
           messages: [
             {
               role: "system",
@@ -71,7 +89,6 @@ Format your responses with markdown for readability.`,
             },
             ...history,
           ],
-          stream: true,
         }),
       });
 
@@ -254,9 +271,23 @@ Format your responses with markdown for readability.`,
               <Send size={16} />
             </button>
           </div>
-          <p className="text-[10px] text-center mt-2" style={{ color: "var(--text-muted)" }}>
-            Powered by local Ollama. Your data never leaves your machine.
-          </p>
+          <div className="flex items-center justify-between mt-2">
+            <div className="flex items-center gap-2">
+              {ollamaModels.length > 0 && (
+                <select
+                  value={selectedModel}
+                  onChange={(e) => setSelectedModel(e.target.value)}
+                  className="text-[10px] px-2 py-1 rounded border"
+                  style={{ borderColor: "var(--border-default)", backgroundColor: "var(--bg-inset)", color: "var(--text-secondary)" }}
+                >
+                  {ollamaModels.map((m) => <option key={m} value={m}>{m}</option>)}
+                </select>
+              )}
+            </div>
+            <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+              Local Ollama &middot; Data stays on your machine
+            </p>
+          </div>
         </div>
       </div>
     </div>

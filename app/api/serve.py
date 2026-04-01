@@ -60,8 +60,9 @@ async def predict_image(
     file: UploadFile = File(...),
     conf: float = Query(0.25, ge=0.0, le=1.0),
     classes: str | None = Query(None),
+    model_id: str | None = Query(None, description="Specific model ID to use (default: active model)"),
 ):
-    """Upload an image and get JSON detections back."""
+    """Upload an image and get JSON detections back. Optionally specify a model_id to use a non-active model."""
     import cv2
     import numpy as np
 
@@ -72,6 +73,14 @@ async def predict_image(
         raise HTTPException(status_code=400, detail="Invalid image file")
 
     engine = get_engine()
+
+    # If a specific model_id is requested and it's different from the loaded one, hot-swap
+    if model_id and model_id != engine.model_id:
+        try:
+            engine.reload(model_id)
+        except Exception as e:
+            raise HTTPException(status_code=404, detail=f"Model not found: {e}")
+
     class_filter = [c.strip() for c in classes.split(",")] if classes else None
 
     def _run():
