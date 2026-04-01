@@ -50,6 +50,7 @@ export default function UploadPage() {
     <div className="min-h-screen">
 
       <div className="max-w-xl mx-auto mt-16 px-4">
+        <p className="eyebrow" style={{ marginBottom: 4 }}>Data ingestion</p>
         <h1 className="text-3xl font-bold text-gray-900 mb-2">Upload Video</h1>
         <p className="text-gray-500 mb-8">
           Upload one or more videos to extract frames and start labeling.

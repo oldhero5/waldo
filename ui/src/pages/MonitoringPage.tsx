@@ -17,6 +17,7 @@ export default function MonitoringPage() {
     <div className="max-w-5xl mx-auto mt-6 px-4 sm:px-6 pb-16">
       <div className="flex items-center justify-between mb-6">
         <div>
+          <p className="eyebrow" style={{ marginBottom: 4 }}>Observability</p>
           <h1 className="text-2xl font-bold flex items-center gap-2" style={{ color: "var(--text-primary)" }}>
             <BarChart3 size={24} />
             Monitoring

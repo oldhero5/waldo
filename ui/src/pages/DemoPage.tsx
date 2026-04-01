@@ -831,6 +831,7 @@ export default function DemoPage() {
     <div className="min-h-screen">
 
       <div className="max-w-4xl mx-auto mt-8 px-4">
+        <p className="eyebrow" style={{ marginBottom: 4 }}>Inference playground</p>
         <h1 className="text-2xl font-bold text-gray-900 mb-2">Demo</h1>
         {status && !status.loaded && (
           <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4 text-sm text-amber-800">

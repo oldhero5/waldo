@@ -19,6 +19,7 @@ export default function SettingsPage() {
 
   return (
     <div className="max-w-3xl mx-auto mt-6 px-4 sm:px-6 pb-16">
+      <p className="eyebrow" style={{ marginBottom: 4 }}>Workspace</p>
       <h1 className="text-2xl font-bold flex items-center gap-2 mb-6" style={{ color: "var(--text-primary)" }}>
         <Settings size={24} />
         Settings

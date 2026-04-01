@@ -503,12 +503,13 @@ export default function DatasetsPage() {
       <div className="max-w-4xl mx-auto mt-6 px-4 pb-12">
         <div className="flex items-center justify-between mb-6">
           <div>
+            <p className="eyebrow" style={{ marginBottom: 4 }}>Data management</p>
             <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
               <Database size={24} />
               Datasets
             </h1>
             <p className="text-gray-500 text-sm mt-1">
-              Your labeled datasets. Click to browse frames, review annotations, or start training.
+              Your labeled datasets. Click to browse, review, or train.
             </p>
           </div>
           <Link
