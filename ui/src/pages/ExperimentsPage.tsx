@@ -293,30 +293,25 @@ export default function ExperimentsPage() {
 
                 {/* Expanded detail panel */}
                 {isExpanded && (
-                  <div className="border-t border-gray-100 px-4 pb-4 pt-3 bg-gray-50/50">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="border-t px-5 pb-5 pt-4" style={{ borderColor: "var(--border-subtle)", backgroundColor: "var(--bg-inset)" }}>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
                       {/* Config */}
                       <div>
-                        <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Configuration</h4>
-                        <div className="space-y-1 text-sm">
-                          <div className="flex justify-between">
-                            <span className="text-gray-500">Model</span>
-                            <span className="font-mono">{run.model_variant}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-gray-500">Task</span>
-                            <span>{run.task_type}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-gray-500">Epochs (ran/total)</span>
-                            <span className="font-mono">{run.epoch_current}/{run.total_epochs}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-gray-500">Status</span>
-                            <span className="capitalize">{run.status}</span>
-                          </div>
+                        <h4 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: "var(--text-muted)" }}>Configuration</h4>
+                        <div className="space-y-2 text-sm">
+                          {[
+                            ["Model", run.model_variant],
+                            ["Task", run.task_type],
+                            ["Epochs", `${run.epoch_current} / ${run.total_epochs}`],
+                            ["Status", run.status],
+                          ].map(([label, value]) => (
+                            <div key={label} className="flex justify-between items-center">
+                              <span style={{ color: "var(--text-secondary)" }}>{label}</span>
+                              <span className="font-mono font-medium" style={{ color: "var(--text-primary)" }}>{value}</span>
+                            </div>
+                          ))}
                           {run.error_message && (
-                            <div className="mt-2 text-xs text-red-600 bg-red-50 rounded p-2">
+                            <div className="mt-2 text-xs rounded p-2 bg-red-50 text-red-600 border border-red-200">
                               {run.error_message.slice(0, 200)}
                             </div>
                           )}
@@ -325,13 +320,13 @@ export default function ExperimentsPage() {
 
                       {/* Best metrics */}
                       <div>
-                        <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Best Metrics</h4>
+                        <h4 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: "var(--text-muted)" }}>Best Metrics</h4>
                         {categorized.length > 0 ? (
-                          <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+                          <div className="grid grid-cols-2 gap-3">
                             {categorized.slice(0, 12).map((m) => (
-                              <div key={m.key} className="flex justify-between">
-                                <span className="text-gray-500 text-xs">{m.label}</span>
-                                <span className="font-mono text-xs">
+                              <div key={m.key} className="rounded-lg p-2" style={{ backgroundColor: "var(--bg-surface)" }}>
+                                <span className="text-[10px] block mb-0.5" style={{ color: "var(--text-muted)" }}>{m.label}</span>
+                                <span className="font-mono text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
                                   {m.label.includes("loss")
                                     ? m.value.toFixed(4)
                                     : formatPct(m.value)}
@@ -340,16 +335,16 @@ export default function ExperimentsPage() {
                             ))}
                           </div>
                         ) : (
-                          <p className="text-xs text-gray-400">No metrics recorded</p>
+                          <p className="text-xs" style={{ color: "var(--text-muted)" }}>No metrics recorded</p>
                         )}
                       </div>
                     </div>
 
                     {/* Actions */}
-                    <div className="flex gap-2 mt-4 pt-3 border-t border-gray-200">
+                    <div className="flex gap-2 mt-4 pt-3" style={{ borderTop: "1px solid var(--border-subtle)" }}>
                       <Link
                         to={`/train/${run.run_id}`}
-                        className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-900 text-white text-xs rounded-lg hover:bg-gray-800"
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700"
                       >
                         {run.status === "training" ? "Monitor Training" : "View Training Curves"}
                       </Link>
@@ -365,7 +360,7 @@ export default function ExperimentsPage() {
                       {run.weights_url && (
                         <a
                           href={run.weights_url}
-                          className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 text-gray-700 text-xs rounded-lg hover:bg-gray-100"
+                          className="flex items-center gap-1.5 px-3 py-1.5 border text-xs rounded-lg" style={{ borderColor: "var(--border-default)", color: "var(--text-secondary)" }}
                         >
                           <Download size={12} />
                           Weights
