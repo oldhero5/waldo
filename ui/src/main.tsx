@@ -5,19 +5,26 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import "./index.css";
 import AppShell from "./components/AppShell";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
+
+// Pages
+import AgentPage from "./pages/AgentPage";
+import CollectionsPage from "./pages/CollectionsPage";
+import DashboardPage from "./pages/DashboardPage";
+import DatasetsPage from "./pages/DatasetsPage";
 import DemoPage from "./pages/DemoPage";
 import DeployPage from "./pages/DeployPage";
+import ExperimentsPage from "./pages/ExperimentsPage";
 import JobsPage from "./pages/JobsPage";
 import LabelPage from "./pages/LabelPage";
 import LoginPage from "./pages/LoginPage";
+import MonitoringPage from "./pages/MonitoringPage";
 import RegisterPage from "./pages/RegisterPage";
 import ReviewPage from "./pages/ReviewPage";
+import SettingsPage from "./pages/SettingsPage";
 import TrainPage from "./pages/TrainPage";
-import CollectionsPage from "./pages/CollectionsPage";
 import UploadPage from "./pages/UploadPage";
-import DashboardPage from "./pages/DashboardPage";
-import DatasetsPage from "./pages/DatasetsPage";
-import ExperimentsPage from "./pages/ExperimentsPage";
+import WorkflowEditorPage from "./pages/WorkflowEditorPage";
+import WorkflowsPage from "./pages/WorkflowsPage";
 
 const queryClient = new QueryClient();
 
@@ -45,15 +52,21 @@ function AuthenticatedRoutes() {
         <Route path="/" element={<DashboardPage />} />
         <Route path="/upload" element={<UploadPage />} />
         <Route path="/collections" element={<CollectionsPage />} />
+        <Route path="/datasets" element={<DatasetsPage />} />
         <Route path="/label/collection/:projectId" element={<LabelPage />} />
         <Route path="/label/:videoId" element={<LabelPage />} />
         <Route path="/review/:jobId" element={<ReviewPage />} />
         <Route path="/train/:jobId" element={<TrainPage />} />
         <Route path="/jobs" element={<JobsPage />} />
-        <Route path="/datasets" element={<DatasetsPage />} />
         <Route path="/experiments" element={<ExperimentsPage />} />
+        <Route path="/workflows" element={<WorkflowsPage />} />
+        <Route path="/workflows/new" element={<WorkflowEditorPage />} />
+        <Route path="/workflows/:workflowId" element={<WorkflowEditorPage />} />
+        <Route path="/monitoring" element={<MonitoringPage />} />
         <Route path="/deploy" element={<DeployPage />} />
         <Route path="/demo" element={<DemoPage />} />
+        <Route path="/agent" element={<AgentPage />} />
+        <Route path="/settings" element={<SettingsPage />} />
       </Routes>
     </AppShell>
   );
