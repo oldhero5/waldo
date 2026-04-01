@@ -1,24 +1,30 @@
 @import "tailwindcss";
 
-/* ── Design system: Light + Dark mode with warm, dynamic feel ── */
+/* ── Design system: Pretext-inspired warm editorial design ── */
 
 :root {
-  --bg-page: #f5f2ed;
-  --bg-surface: #fffdf9;
+  --bg-page: #fbf7f0;
+  --bg-surface: #fffefb;
   --bg-surface-hover: #faf7f2;
   --bg-elevated: #ffffff;
   --bg-inset: #f0ebe4;
 
-  --text-primary: #1a1613;
+  --text-primary: #201b18;
   --text-secondary: #6d645d;
   --text-muted: #9e958c;
 
-  --border-default: #ddd5cb;
+  --border-default: #d8cec3;
   --border-subtle: #ece6dd;
 
   --accent: #2563eb;
   --accent-hover: #1d4ed8;
   --accent-soft: #dbeafe;
+  --accent-warm: #955f3b;
+
+  /* Pretext typography */
+  --font-serif: Georgia, 'Times New Roman', serif;
+  --font-mono: 'SF Mono', ui-monospace, 'Fira Code', monospace;
+  --transition: 160ms ease;
 
   --success: #16a34a;
   --success-soft: #dcfce7;
@@ -72,6 +78,25 @@ body {
   background-color: var(--bg-page);
   color: var(--text-primary);
   transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+/* ── Pretext editorial typography ── */
+
+h1, h2 {
+  font-family: var(--font-serif);
+  letter-spacing: -0.01em;
+}
+
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.mono {
+  font-family: var(--font-mono);
 }
 
 /* ── Utility classes for the design system ── */

@@ -1,6 +1,6 @@
 /**
- * Custom React Flow node for workflow blocks.
- * Shows block name, category color, and input/output handles.
+ * Workflow block node — Pretext-inspired card with color accent,
+ * typed port handles, and editorial typography.
  */
 import { Handle, Position } from "@xyflow/react";
 
@@ -9,60 +9,94 @@ export default function BlockNode({ data, selected }: any) {
 
   return (
     <div
-      className="rounded-xl overflow-hidden transition-shadow duration-150"
-      style={{ 
+      style={{
         backgroundColor: "var(--bg-surface)",
         border: selected ? `2px solid ${color}` : "1px solid var(--border-default)",
-        boxShadow: selected ? `0 0 0 3px ${color}22` : "var(--shadow-sm)",
-        minWidth: 160,
+        borderRadius: 16,
+        boxShadow: selected
+          ? `0 0 0 4px ${color}18, 0 8px 24px rgb(0 0 0 / 0.08)`
+          : "0 2px 8px rgb(0 0 0 / 0.04)",
+        minWidth: 180,
+        transition: "box-shadow 160ms ease, border-color 160ms ease",
+        overflow: "hidden",
       }}
     >
-      {/* Color bar */}
-      <div style={{ height: 3, backgroundColor: color }} />
+      {/* Color accent bar */}
+      <div style={{ height: 4, backgroundColor: color, borderRadius: "16px 16px 0 0" }} />
 
-      {/* Body */}
-      <div className="px-3 py-2.5">
-        <p className="text-xs font-semibold" style={{ color: "var(--text-primary)" }}>
+      {/* Content */}
+      <div style={{ padding: "10px 14px 12px" }}>
+        <p style={{
+          fontFamily: "var(--font-serif)",
+          fontSize: 13,
+          fontWeight: 600,
+          color: "var(--text-primary)",
+          lineHeight: 1.2,
+          marginBottom: 2,
+        }}>
           {data.label}
         </p>
-        <p className="text-[10px] mt-0.5" style={{ color: "var(--text-muted)" }}>
+        <p style={{
+          fontFamily: "var(--font-mono)",
+          fontSize: 10,
+          color: "var(--text-muted)",
+          letterSpacing: "0.02em",
+        }}>
           {data.blockType}
         </p>
+
+        {/* Port labels */}
+        <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8 }}>
+          <div>
+            {data.inputs?.slice(0, 3).map((p: any) => (
+              <div key={p.name} style={{ fontSize: 9, color: "var(--text-muted)", fontFamily: "var(--font-mono)", marginBottom: 1 }}>
+                &larr; {p.name}
+              </div>
+            ))}
+          </div>
+          <div style={{ textAlign: "right" }}>
+            {data.outputs?.slice(0, 3).map((p: any) => (
+              <div key={p.name} style={{ fontSize: 9, color: "var(--text-muted)", fontFamily: "var(--font-mono)", marginBottom: 1 }}>
+                {p.name} &rarr;
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
 
-      {/* Input handles (left side) */}
+      {/* Input handles */}
       {data.inputs?.map((port: any, i: number) => (
         <Handle
           key={`in-${port.name}`}
           type="target"
           position={Position.Left}
           id={port.name}
-          style={{ 
-            top: `${30 + i * 20}%`,
+          style={{
+            top: 48 + i * 16,
             width: 10,
             height: 10,
             backgroundColor: color,
             border: "2px solid var(--bg-surface)",
+            borderRadius: "50%",
           }}
-          title={`${port.name} (${port.type})`}
         />
       ))}
 
-      {/* Output handles (right side) */}
+      {/* Output handles */}
       {data.outputs?.map((port: any, i: number) => (
         <Handle
           key={`out-${port.name}`}
           type="source"
           position={Position.Right}
           id={port.name}
-          style={{ 
-            top: `${30 + i * 20}%`,
+          style={{
+            top: 48 + i * 16,
             width: 10,
             height: 10,
             backgroundColor: color,
             border: "2px solid var(--bg-surface)",
+            borderRadius: "50%",
           }}
-          title={`${port.name} (${port.type})`}
         />
       ))}
     </div>
