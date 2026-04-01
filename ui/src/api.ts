@@ -1,5 +1,17 @@
 const BASE = "/api/v1";
 
+/** Get auth headers — injects JWT token from localStorage into all API calls. */
+function authHeaders(): Record<string, string> {
+  const token = localStorage.getItem("waldo_token");
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+/** Authenticated fetch wrapper. */
+async function authFetch(url: string, init?: RequestInit): Promise<Response> {
+  const headers = { ...authHeaders(), ...(init?.headers || {}) };
+  return fetch(url, { ...init, headers });
+}
+
 export interface UploadResult {
   video_id: string;
   project_id: string;
@@ -61,7 +73,7 @@ export interface JobStats {
 export async function uploadVideo(file: File, projectName = "default"): Promise<UploadResult> {
   const form = new FormData();
   form.append("file", file);
-  const res = await fetch(
+  const res = await authFetch(
     `${BASE}/upload?project_name=${encodeURIComponent(projectName)}`,
     { method: "POST", body: form }
   );
@@ -78,7 +90,7 @@ export async function startLabeling(
     taskType?: string;
   }
 ): Promise<LabelResult> {
-  const res = await fetch(`${BASE}/label`, {
+  const res = await authFetch(`${BASE}/label`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -101,7 +113,7 @@ export async function startExemplarLabeling(
   taskType = "segment",
   className = "object"
 ): Promise<LabelResult> {
-  const res = await fetch(`${BASE}/label/exemplar`, {
+  const res = await authFetch(`${BASE}/label/exemplar`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -118,14 +130,14 @@ export async function startExemplarLabeling(
 }
 
 export async function getJobStatus(jobId: string): Promise<JobStatus> {
-  const res = await fetch(`${BASE}/status/${jobId}`);
+  const res = await authFetch(`${BASE}/status/${jobId}`);
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
 
 export async function listJobs(videoId?: string): Promise<JobStatus[]> {
   const url = videoId ? `${BASE}/status?video_id=${videoId}` : `${BASE}/status`;
-  const res = await fetch(url);
+  const res = await authFetch(url);
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -136,7 +148,7 @@ export async function listAnnotations(
 ): Promise<AnnotationOut[]> {
   const params = new URLSearchParams();
   if (status) params.set("status", status);
-  const res = await fetch(`${BASE}/jobs/${jobId}/annotations?${params}`);
+  const res = await authFetch(`${BASE}/jobs/${jobId}/annotations?${params}`);
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -145,7 +157,7 @@ export async function updateAnnotation(
   annotationId: string,
   update: Partial<{ status: string; polygon: number[]; bbox: number[]; class_name: string }>
 ): Promise<AnnotationOut> {
-  const res = await fetch(`${BASE}/annotations/${annotationId}`, {
+  const res = await authFetch(`${BASE}/annotations/${annotationId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(update),
@@ -181,25 +193,25 @@ export interface DatasetOverview {
 }
 
 export async function getDatasetOverview(jobId: string): Promise<DatasetOverview> {
-  const res = await fetch(`${BASE}/jobs/${jobId}/overview`);
+  const res = await authFetch(`${BASE}/jobs/${jobId}/overview`);
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
 
 export async function deleteJob(jobId: string): Promise<{ status: string; annotations_deleted: number }> {
-  const res = await fetch(`${BASE}/jobs/${jobId}`, { method: "DELETE" });
+  const res = await authFetch(`${BASE}/jobs/${jobId}`, { method: "DELETE" });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
 
 export async function getJobStats(jobId: string): Promise<JobStats> {
-  const res = await fetch(`${BASE}/jobs/${jobId}/stats`);
+  const res = await authFetch(`${BASE}/jobs/${jobId}/stats`);
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
 
 export async function listFrames(videoId: string): Promise<FrameOut[]> {
-  const res = await fetch(`${BASE}/videos/${videoId}/frames`);
+  const res = await authFetch(`${BASE}/videos/${videoId}/frames`);
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -235,7 +247,7 @@ export async function uploadVideoBatch(
 ): Promise<{ videos: UploadResult[]; project_id: string }> {
   const form = new FormData();
   for (const file of files) form.append("files", file);
-  const res = await fetch(
+  const res = await authFetch(
     `${BASE}/upload/batch?project_name=${encodeURIComponent(projectName)}`,
     { method: "POST", body: form }
   );
@@ -250,7 +262,7 @@ export async function uploadImages(
   const form = new FormData();
   for (const file of files) form.append("files", file);
   if (projectName) form.append("project_name", projectName);
-  const res = await fetch(`${BASE}/upload/images`, {
+  const res = await authFetch(`${BASE}/upload/images`, {
     method: "POST",
     body: form,
   });
@@ -262,7 +274,7 @@ export async function linkVideos(
   videoIds: string[],
   targetProjectName: string
 ): Promise<{ linked: number; auto_labeled: number }> {
-  const res = await fetch(`${BASE}/link-videos`, {
+  const res = await authFetch(`${BASE}/link-videos`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ video_ids: videoIds, target_project_name: targetProjectName }),
@@ -272,13 +284,13 @@ export async function linkVideos(
 }
 
 export async function listProjects(): Promise<ProjectOut[]> {
-  const res = await fetch(`${BASE}/projects`);
+  const res = await authFetch(`${BASE}/projects`);
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
 
 export async function listProjectVideos(projectId: string): Promise<VideoOut[]> {
-  const res = await fetch(`${BASE}/projects/${projectId}/videos`);
+  const res = await authFetch(`${BASE}/projects/${projectId}/videos`);
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -319,7 +331,7 @@ export async function startTraining(
   jobId: string,
   opts: { name?: string; model_variant?: string; task_type?: string; hyperparameters?: Record<string, unknown> } = {}
 ): Promise<{ run_id: string; status: string; celery_task_id: string }> {
-  const res = await fetch(`${BASE}/train`, {
+  const res = await authFetch(`${BASE}/train`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ job_id: jobId, ...opts }),
@@ -329,31 +341,31 @@ export async function startTraining(
 }
 
 export async function deleteTrainingRun(runId: string): Promise<{ status: string }> {
-  const res = await fetch(`${BASE}/train/${runId}`, { method: "DELETE" });
+  const res = await authFetch(`${BASE}/train/${runId}`, { method: "DELETE" });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
 
 export async function stopTraining(runId: string): Promise<{ status: string; run_id: string }> {
-  const res = await fetch(`${BASE}/train/${runId}/stop`, { method: "POST" });
+  const res = await authFetch(`${BASE}/train/${runId}/stop`, { method: "POST" });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
 
 export async function getTrainingStatus(runId: string): Promise<TrainingRunStatus> {
-  const res = await fetch(`${BASE}/train/${runId}`);
+  const res = await authFetch(`${BASE}/train/${runId}`);
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
 
 export async function listTrainingRuns(): Promise<TrainingRunStatus[]> {
-  const res = await fetch(`${BASE}/train`);
+  const res = await authFetch(`${BASE}/train`);
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
 
 export async function listModels(): Promise<ModelOut[]> {
-  const res = await fetch(`${BASE}/models`);
+  const res = await authFetch(`${BASE}/models`);
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -363,13 +375,13 @@ export async function getVariants(): Promise<{
   defaults: Record<string, string>;
   hyperparams: Record<string, unknown>;
 }> {
-  const res = await fetch(`${BASE}/train/variants`);
+  const res = await authFetch(`${BASE}/train/variants`);
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
 
 export async function exportModel(modelId: string, format: string): Promise<{ task_id: string }> {
-  const res = await fetch(`${BASE}/models/${modelId}/export`, {
+  const res = await authFetch(`${BASE}/models/${modelId}/export`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ format }),
@@ -422,7 +434,7 @@ export async function predictImage(file: File, conf = 0.25, classes?: string[]):
   form.append("file", file);
   let url = `${BASE}/predict/image?conf=${conf}`;
   if (classes && classes.length > 0) url += `&classes=${encodeURIComponent(classes.join(","))}`;
-  const res = await fetch(url, { method: "POST", body: form });
+  const res = await authFetch(url, { method: "POST", body: form });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -442,7 +454,7 @@ export async function predictVideo(
   form.append("file", file);
   let url = `${BASE}/predict/video?conf=${conf}`;
   if (classes && classes.length > 0) url += `&classes=${encodeURIComponent(classes.join(","))}`;
-  const res = await fetch(url, { method: "POST", body: form });
+  const res = await authFetch(url, { method: "POST", body: form });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -486,13 +498,13 @@ export function streamPredictFrames(
 }
 
 export async function activateModel(modelId: string): Promise<{ status: string; model_id: string; name: string }> {
-  const res = await fetch(`${BASE}/models/${modelId}/activate`, { method: "POST" });
+  const res = await authFetch(`${BASE}/models/${modelId}/activate`, { method: "POST" });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
 
 export async function getServeStatus(): Promise<ServeStatus> {
-  const res = await fetch(`${BASE}/serve/status`);
+  const res = await authFetch(`${BASE}/serve/status`);
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -526,7 +538,7 @@ export interface FeedbackOut {
 }
 
 export async function submitFeedback(item: FeedbackIn): Promise<FeedbackOut> {
-  const res = await fetch(`${BASE}/feedback`, {
+  const res = await authFetch(`${BASE}/feedback`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(item),
@@ -549,7 +561,7 @@ export async function segmentPoints(
   labels: number[],
   threshold = 0.3
 ): Promise<SegmentPointsResponse> {
-  const res = await fetch(`${BASE}/label/segment-points`, {
+  const res = await authFetch(`${BASE}/label/segment-points`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ frame_id: frameId, points, labels, threshold }),
@@ -568,7 +580,7 @@ export async function createAnnotation(data: {
   confidence?: number;
   status?: string;
 }): Promise<{ id: string; class_name: string; status: string }> {
-  const res = await fetch(`${BASE}/annotations`, {
+  const res = await authFetch(`${BASE}/annotations`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -580,13 +592,13 @@ export async function createAnnotation(data: {
 // Feedback
 
 export async function listFeedback(limit = 100): Promise<FeedbackOut[]> {
-  const res = await fetch(`${BASE}/feedback?limit=${limit}`);
+  const res = await authFetch(`${BASE}/feedback?limit=${limit}`);
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
 
 export async function submitFeedbackBatch(items: FeedbackIn[]): Promise<FeedbackOut[]> {
-  const res = await fetch(`${BASE}/feedback/batch`, {
+  const res = await authFetch(`${BASE}/feedback/batch`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ items }),
