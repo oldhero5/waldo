@@ -28,6 +28,15 @@ class Settings(BaseSettings):
     # SAM 3
     sam3_model_id: str = "facebook/sam3"
 
+    # Auth
+    jwt_secret: str = "waldo-dev-secret-change-in-production"
+    jwt_algorithm: str = "HS256"
+    jwt_expire_minutes: int = 1440  # 24 hours
+
+    # Ollama (for AI agent)
+    ollama_url: str = "http://localhost:11434"
+    ollama_model: str = "llama3.2"
+
     # Device
     device: str = "mps"
     dtype: str = "float32"

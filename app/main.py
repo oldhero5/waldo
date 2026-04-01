@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
 
-from app.api import download, feedback, frames, label, review, serve, status, train, upload
+from app.api import auth, download, feedback, frames, label, review, serve, status, train, upload
 from app.ws import router as ws_router
 
 app = FastAPI(title="Waldo", version="0.5.0")
@@ -12,6 +12,7 @@ app = FastAPI(title="Waldo", version="0.5.0")
 # Gzip compress all responses > 500 bytes (huge win for JSON annotation lists)
 app.add_middleware(GZipMiddleware, minimum_size=500)
 
+app.include_router(auth.router, prefix="/api/v1", tags=["auth"])
 app.include_router(upload.router, prefix="/api/v1", tags=["upload"])
 app.include_router(label.router, prefix="/api/v1", tags=["label"])
 app.include_router(status.router, prefix="/api/v1", tags=["status"])
