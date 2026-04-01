@@ -35,7 +35,7 @@ class Settings(BaseSettings):
 
     # Ollama (for AI agent)
     ollama_url: str = "http://localhost:11434"
-    ollama_model: str = "llama3.2"
+    ollama_model: str = "qwen3.5:9b"
 
     # Device
     device: str = "mps"
