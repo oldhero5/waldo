@@ -63,7 +63,7 @@ export default function Sidebar() {
       {/* Logo + Workspace */}
       <div className="px-4 pt-5 pb-3">
         <Link to="/" className="flex items-center gap-2">
-          <span className="text-lg font-bold tracking-tight" style={{ color: "var(--text-primary)" }}>
+          <span style={{ fontFamily: "var(--font-serif)", fontSize: 20, fontWeight: 700, color: "var(--text-primary)", letterSpacing: "-0.02em" }}>
             Waldo
           </span>
         </Link>
@@ -86,20 +86,28 @@ export default function Sidebar() {
               <Link
                 key={item.to}
                 to={item.to}
-                className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all duration-150"
+                className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px]"
                 style={{
-                  backgroundColor: active ? "var(--accent-soft)" : "transparent",
+                  backgroundColor: active ? "color-mix(in srgb, var(--accent) 10%, transparent 90%)" : "transparent",
                   color: active ? "var(--accent)" : "var(--text-secondary)",
                   fontWeight: active ? 600 : 400,
+                  transition: "all 160ms ease",
+                  borderLeft: active ? "2px solid var(--accent)" : "2px solid transparent",
                 }}
                 onMouseEnter={(e) => {
-                  if (!active) e.currentTarget.style.backgroundColor = "var(--bg-inset)";
+                  if (!active) {
+                    e.currentTarget.style.backgroundColor = "color-mix(in srgb, var(--border-subtle) 50%, transparent 50%)";
+                    e.currentTarget.style.color = "var(--text-primary)";
+                  }
                 }}
                 onMouseLeave={(e) => {
-                  if (!active) e.currentTarget.style.backgroundColor = "transparent";
+                  if (!active) {
+                    e.currentTarget.style.backgroundColor = "transparent";
+                    e.currentTarget.style.color = "var(--text-secondary)";
+                  }
                 }}
               >
-                <Icon size={16} strokeWidth={active ? 2.2 : 1.6} />
+                <Icon size={16} strokeWidth={active ? 2 : 1.5} />
                 {item.label}
               </Link>
             );

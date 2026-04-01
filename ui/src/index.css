@@ -33,9 +33,10 @@
   --warning: #d97706;
   --warning-soft: #fef3c7;
 
-  --shadow-sm: 0 1px 3px rgb(60 40 20 / 0.06);
-  --shadow-md: 0 4px 16px rgb(60 40 20 / 0.08);
-  --shadow-lg: 0 12px 40px rgb(60 40 20 / 0.1);
+  /* Pretext exact shadow values — warm brown tint, not gray */
+  --shadow-sm: 0 2px 8px rgb(54 40 23 / 0.05);
+  --shadow-md: 0 18px 40px rgb(54 40 23 / 0.08);
+  --shadow-lg: 0 22px 44px rgb(54 40 23 / 0.12);
 
   --radius-md: 12px;
   --radius-lg: 16px;
@@ -101,17 +102,18 @@ h1, h2 {
 
 /* ── Utility classes for the design system ── */
 
+/* Pretext exact card spec */
 .surface {
-  background-color: var(--bg-surface);
+  background: color-mix(in srgb, var(--bg-surface) 94%, white 6%);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
-  transition: box-shadow 0.16s ease, border-color 0.16s ease, transform 0.16s ease;
+  border-radius: 20px;
+  box-shadow: 0 18px 40px rgb(54 40 23 / 0.08);
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
 }
 
 .surface:hover {
-  box-shadow: var(--shadow-md);
-  border-color: var(--border-default);
+  border-color: color-mix(in srgb, var(--accent) 25%, var(--border-default) 75%);
+  box-shadow: 0 22px 44px rgb(54 40 23 / 0.12);
 }
 
 .surface-interactive:hover {
@@ -119,10 +121,10 @@ h1, h2 {
 }
 
 .elevated {
-  background-color: var(--bg-elevated);
+  background: color-mix(in srgb, var(--bg-elevated) 96%, white 4%);
   border: 1px solid var(--border-default);
-  border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-md);
+  border-radius: 20px;
+  box-shadow: 0 22px 44px rgb(54 40 23 / 0.12);
 }
 
 /* ── Smooth scrollbars ── */
