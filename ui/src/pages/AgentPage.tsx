@@ -3,6 +3,7 @@
  * Suggests workflows, helps configure training, answers CV questions.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
+import Markdown from "react-markdown";
 import { Send, Loader2, Bot, User, Sparkles } from "lucide-react";
 
 interface Message {
@@ -18,6 +19,11 @@ const SUGGESTIONS = [
   "Explain the difference between segmentation and detection",
   "Help me improve my model's accuracy",
 ];
+
+/** Strip <think>...</think> blocks from qwen model output */
+function stripThinking(text: string): string {
+  return text.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+}
 
 export default function AgentPage() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -120,7 +126,7 @@ Format your responses with markdown for readability.`,
 
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: fullText, timestamp: Date.now() },
+        { role: "assistant", content: stripThinking(fullText), timestamp: Date.now() },
       ]);
       setStreamText("");
     } catch (e: any) {
@@ -197,7 +203,11 @@ Format your responses with markdown for readability.`,
                   border: msg.role === "assistant" ? "1px solid var(--border-subtle)" : "none",
                 }}
               >
-                <div className="whitespace-pre-wrap">{msg.content}</div>
+                {msg.role === "assistant" ? (
+                  <div className="markdown-body"><Markdown>{msg.content}</Markdown></div>
+                ) : (
+                  <div>{msg.content}</div>
+                )}
               </div>
               {msg.role === "user" && (
                 <div
@@ -224,7 +234,7 @@ Format your responses with markdown for readability.`,
                 style={{ backgroundColor: "var(--bg-surface)", border: "1px solid var(--border-subtle)", color: "var(--text-primary)" }}
               >
                 {streamText ? (
-                  <div className="whitespace-pre-wrap">{streamText}<span className="animate-pulse">|</span></div>
+                  <div className="markdown-body"><Markdown>{stripThinking(streamText)}</Markdown><span className="animate-pulse">|</span></div>
                 ) : (
                   <div className="flex items-center gap-2" style={{ color: "var(--text-muted)" }}>
                     <Loader2 size={14} className="animate-spin" />
