@@ -10,7 +10,6 @@ import {
 } from "../api";
 import AnnotationCanvas from "../components/AnnotationCanvas";
 import AnnotationOverlay from "../components/AnnotationOverlay";
-import Nav from "../components/Nav";
 import StatsPanel from "../components/StatsPanel";
 import { Keyboard, CheckCheck, XCircle, ChevronLeft, ChevronRight, Filter, Maximize2 } from "lucide-react";
 
@@ -172,7 +171,7 @@ export default function ReviewPage() {
 
   return (
     <div className="min-h-screen pb-20">
-      <Nav />
+
       <div className="max-w-6xl mx-auto mt-8 px-4">
         <div className="flex justify-between items-start mb-4">
           <div>

@@ -1,7 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { listJobs, listModels, listProjects, getServeStatus } from "../api";
-import Nav from "../components/Nav";
 import { pickKeyMetrics } from "../lib/metrics";
 import {
   Upload,
@@ -44,7 +43,7 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: "var(--bg-page)" }}>
-      <Nav />
+
       <div className="max-w-4xl mx-auto mt-6 px-4 sm:px-6 pb-16">
         <h1 className="text-2xl font-bold mb-6" style={{ color: "var(--text-primary)" }}>Dashboard</h1>
 

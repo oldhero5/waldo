@@ -3,7 +3,6 @@ import { useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { listJobs, getDatasetOverview, uploadImages, uploadVideo, listFeedback, listProjects, listProjectVideos, linkVideos, deleteJob, listAnnotations, updateAnnotation, type JobStatus } from "../api";
 import AnnotationCanvas from "../components/AnnotationCanvas";
-import Nav from "../components/Nav";
 import { Database, CheckCircle, Clock, AlertCircle, Download, Eye, Cpu, MessageSquareWarning, Images, Plus, Upload as UploadIcon, Loader, FolderInput, Trash2 } from "lucide-react";
 
 function DatasetAnnotationViewer({ frameId, imageUrl, jobId, classes, onClose, onPrev, onNext }: {
@@ -500,7 +499,7 @@ export default function DatasetsPage() {
 
   return (
     <div className="min-h-screen">
-      <Nav />
+
       <div className="max-w-4xl mx-auto mt-6 px-4 pb-12">
         <div className="flex items-center justify-between mb-6">
           <div>

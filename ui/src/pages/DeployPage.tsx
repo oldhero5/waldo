@@ -8,7 +8,6 @@ import {
   listModels,
   type ModelOut,
 } from "../api";
-import Nav from "../components/Nav";
 import { ChevronDown, ChevronRight, Search } from "lucide-react";
 
 const EXPORT_FORMATS = ["onnx", "torchscript", "coreml", "tflite", "openvino"];
@@ -181,7 +180,7 @@ export default function DeployPage() {
 
   return (
     <div className="min-h-screen">
-      <Nav />
+
       <div className="max-w-4xl mx-auto mt-8 px-4">
         <h1 className="text-2xl font-bold text-gray-900 mb-6">Deploy</h1>
 

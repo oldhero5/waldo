@@ -2,7 +2,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { listTrainingRuns, deleteTrainingRun, type TrainingRunStatus } from "../api";
-import Nav from "../components/Nav";
 import { FlaskConical, CheckCircle, XCircle, Loader2, Clock, ChevronDown, ChevronRight, Rocket, Download, Trash2 } from "lucide-react";
 
 const STATUS_ICON: Record<string, typeof CheckCircle> = {
@@ -126,7 +125,7 @@ export default function ExperimentsPage() {
 
   return (
     <div className="min-h-screen">
-      <Nav />
+
       <div className="max-w-6xl mx-auto mt-8 px-4">
         <div className="flex items-center justify-between mb-6">
           <div>

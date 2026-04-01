@@ -1,5 +1,4 @@
 import type { ReactNode } from "react";
-import Nav from "./Nav";
 
 interface PageLayoutProps {
   children: ReactNode;
@@ -25,7 +24,6 @@ export default function PageLayout({
 }: PageLayoutProps) {
   return (
     <div className="min-h-screen" style={{ backgroundColor: "var(--bg-page)" }}>
-      <Nav />
       <div className={`${widthClasses[maxWidth]} mx-auto mt-6 px-4 sm:px-6 pb-16`}>
         {(title || actions) && (
           <div className="flex justify-between items-start mb-6">

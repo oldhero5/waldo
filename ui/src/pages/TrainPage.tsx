@@ -11,7 +11,6 @@ import {
   stopTraining,
   activateModel,
 } from "../api";
-import Nav from "../components/Nav";
 import TaskSelector from "../components/TaskSelector";
 import { Info, AlertTriangle, StopCircle, TrendingDown, Eye, RotateCcw } from "lucide-react";
 import LineChart from "../components/LineChart";
@@ -219,7 +218,7 @@ export default function TrainPage() {
 
   return (
     <div className="min-h-screen">
-      <Nav />
+
       <div className="max-w-4xl mx-auto mt-8 px-4">
         <h1 className="text-2xl font-bold text-gray-900 mb-2">Train Model</h1>
         {job && (

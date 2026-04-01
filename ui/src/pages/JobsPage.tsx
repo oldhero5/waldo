@@ -2,7 +2,6 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { listJobs } from "../api";
-import Nav from "../components/Nav";
 import { ArrowRight } from "lucide-react";
 
 const STATUS_COLORS: Record<string, string> = {
@@ -50,7 +49,7 @@ export default function JobsPage() {
 
   return (
     <div className="min-h-screen">
-      <Nav />
+
       <div className="max-w-4xl mx-auto mt-8 px-4">
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-2xl font-bold text-gray-900">Jobs</h1>
