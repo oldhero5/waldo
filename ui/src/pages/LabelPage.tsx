@@ -10,7 +10,6 @@ import {
   type FrameOut,
 } from "../api";
 import ClickCanvas from "../components/ClickCanvas";
-import Nav from "../components/Nav";
 import TaskSelector from "../components/TaskSelector";
 
 type Mode = "text" | "exemplar";
@@ -124,7 +123,7 @@ export default function LabelPage() {
 
   return (
     <div className="min-h-screen">
-      <Nav />
+
       <div className="max-w-3xl mx-auto mt-6 px-4 pb-12">
         {/* Header with video context */}
         <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">

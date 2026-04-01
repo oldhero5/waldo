@@ -1,7 +1,6 @@
 import { useCallback, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { uploadVideo, uploadVideoBatch } from "../api";
-import Nav from "../components/Nav";
 import { Upload, CheckCircle } from "lucide-react";
 
 interface UploadResult {
@@ -49,7 +48,7 @@ export default function UploadPage() {
 
   return (
     <div className="min-h-screen">
-      <Nav />
+
       <div className="max-w-xl mx-auto mt-16 px-4">
         <h1 className="text-3xl font-bold text-gray-900 mb-2">Upload Video</h1>
         <p className="text-gray-500 mb-8">

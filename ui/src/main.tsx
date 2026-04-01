@@ -3,6 +3,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import "./index.css";
+import AppShell from "./components/AppShell";
 import DemoPage from "./pages/DemoPage";
 import DeployPage from "./pages/DeployPage";
 import JobsPage from "./pages/JobsPage";
@@ -21,20 +22,22 @@ createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<DashboardPage />} />
-          <Route path="/upload" element={<UploadPage />} />
-          <Route path="/collections" element={<CollectionsPage />} />
-          <Route path="/label/collection/:projectId" element={<LabelPage />} />
-          <Route path="/label/:videoId" element={<LabelPage />} />
-          <Route path="/review/:jobId" element={<ReviewPage />} />
-          <Route path="/train/:jobId" element={<TrainPage />} />
-          <Route path="/jobs" element={<JobsPage />} />
-          <Route path="/datasets" element={<DatasetsPage />} />
-          <Route path="/experiments" element={<ExperimentsPage />} />
-          <Route path="/deploy" element={<DeployPage />} />
-          <Route path="/demo" element={<DemoPage />} />
-        </Routes>
+        <AppShell>
+          <Routes>
+            <Route path="/" element={<DashboardPage />} />
+            <Route path="/upload" element={<UploadPage />} />
+            <Route path="/collections" element={<CollectionsPage />} />
+            <Route path="/label/collection/:projectId" element={<LabelPage />} />
+            <Route path="/label/:videoId" element={<LabelPage />} />
+            <Route path="/review/:jobId" element={<ReviewPage />} />
+            <Route path="/train/:jobId" element={<TrainPage />} />
+            <Route path="/jobs" element={<JobsPage />} />
+            <Route path="/datasets" element={<DatasetsPage />} />
+            <Route path="/experiments" element={<ExperimentsPage />} />
+            <Route path="/deploy" element={<DeployPage />} />
+            <Route path="/demo" element={<DemoPage />} />
+          </Routes>
+        </AppShell>
       </BrowserRouter>
     </QueryClientProvider>
   </StrictMode>

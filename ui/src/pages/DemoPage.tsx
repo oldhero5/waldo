@@ -8,7 +8,6 @@ import {
   type DetectionOut,
   type FrameResultOut,
 } from "../api";
-import Nav from "../components/Nav";
 import { Link } from "react-router-dom";
 import { AlertTriangle, ImageIcon, VideoIcon, ZoomIn, Move, Loader2 } from "lucide-react";
 
@@ -830,7 +829,7 @@ export default function DemoPage() {
 
   return (
     <div className="min-h-screen">
-      <Nav />
+
       <div className="max-w-4xl mx-auto mt-8 px-4">
         <h1 className="text-2xl font-bold text-gray-900 mb-2">Demo</h1>
         {status && !status.loaded && (
