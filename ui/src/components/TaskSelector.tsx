@@ -1,6 +1,7 @@
 const TASKS = [
   { value: "segment", label: "Segmentation", description: "Pixel-level masks for each object" },
-  { value: "detect", label: "Detection", description: "Bounding boxes around objects" },
+  { value: "detect", label: "Detection (YOLO)", description: "Fast bounding box detection with YOLO" },
+  { value: "detect_transformer", label: "Detection (RF-DETR)", description: "Transformer-based detection — higher accuracy, slower" },
   { value: "classify", label: "Classification", description: "Classify entire frames" },
   { value: "obb", label: "Oriented BBox", description: "Rotated bounding boxes for angled objects" },
   { value: "pose", label: "Pose", description: "Skeleton keypoints on detected objects" },
