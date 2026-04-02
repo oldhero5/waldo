@@ -1,49 +1,32 @@
 /**
- * Workflows list page — browse saved workflows, create new ones.
+ * Workflows list — browse templates (with real graphs) and saved workflows.
  */
-import { Link } from "react-router-dom";
-import { Workflow, Plus } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { Link, useNavigate } from "react-router-dom";
+import { Workflow, Plus, ArrowRight } from "lucide-react";
+import { TEMPLATES } from "../lib/workflow-templates";
+import { authFetch } from "../api";
 
-const TEMPLATES = [
-  {
-    name: "Detect & Count",
-    desc: "Detect objects, filter by confidence, count by class",
-    blocks: ["Image Input", "Detection", "Filter", "Count", "Output"],
-    color: "#8b5cf6",
-  },
-  {
-    name: "Detect → Visualize",
-    desc: "Run detection and draw bounding boxes with labels on the image",
-    blocks: ["Image Input", "Detection", "Draw Boxes", "Output"],
-    color: "#ec4899",
-  },
-  {
-    name: "Privacy Blur",
-    desc: "Detect faces or license plates and blur them for privacy",
-    blocks: ["Image Input", "Detection", "Blur Regions", "Output"],
-    color: "#06b6d4",
-  },
-  {
-    name: "Smart Analysis",
-    desc: "Detect objects, count them, then describe the scene with a local LLM",
-    blocks: ["Image Input", "Detection", "Count", "LLM", "Output"],
-    color: "#22c55e",
-  },
-  {
-    name: "Detect → Crop → Classify",
-    desc: "Detect objects, crop each region, analyze dominant colors",
-    blocks: ["Image Input", "Detection", "Crop", "Dominant Color", "Output"],
-    color: "#f59e0b",
-  },
-  {
-    name: "Conditional Alert",
-    desc: "Detect objects, count them, alert only if count exceeds threshold",
-    blocks: ["Image Input", "Detection", "Count", "If/Else", "LLM", "Output"],
-    color: "#14b8a6",
-  },
-];
+const BASE = "/api/v1";
 
 export default function WorkflowsPage() {
+  const navigate = useNavigate();
+
+  const { data: saved } = useQuery({
+    queryKey: ["saved-workflows"],
+    queryFn: async () => {
+      const res = await authFetch(`${BASE}/workflows/saved`);
+      if (!res.ok) return [];
+      return res.json();
+    },
+  });
+
+  const loadTemplate = (idx: number) => {
+    // Store template in sessionStorage so the editor can load it
+    sessionStorage.setItem("waldo_workflow_template", JSON.stringify(TEMPLATES[idx]));
+    navigate("/workflows/new?template=" + idx);
+  };
+
   return (
     <div className="max-w-4xl mx-auto mt-6 px-4 sm:px-6 pb-16">
       <div className="flex items-center justify-between mb-6">
@@ -54,69 +37,95 @@ export default function WorkflowsPage() {
             Workflows
           </h1>
           <p className="text-sm mt-1" style={{ color: "var(--text-secondary)" }}>
-            Build visual ML pipelines by chaining blocks together.
+            Build visual ML pipelines. Start from a template or create from scratch.
           </p>
         </div>
         <Link
           to="/workflows/new"
-          className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700"
+          className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-xl text-sm hover:bg-blue-700"
+          style={{ transition: "all 160ms ease" }}
         >
           <Plus size={14} />
-          New Workflow
+          Blank Workflow
         </Link>
       </div>
 
-      {/* Templates */}
+      {/* Templates — click to load pre-built graph */}
       <div className="mb-8">
-        <h2 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: "var(--text-muted)" }}>
-          Templates
-        </h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {TEMPLATES.map((t) => (
-            <Link
+        <p className="eyebrow mb-3">Start from a template</p>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 12 }}>
+          {TEMPLATES.map((t, idx) => (
+            <button
               key={t.name}
-              to="/workflows/new"
-              className="surface surface-interactive"
-              style={{ padding: 18 }}
+              onClick={() => loadTemplate(idx)}
+              className="surface surface-interactive text-left"
+              style={{ padding: 16 }}
             >
-              <div className="flex items-center gap-2 mb-2">
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
                 <span style={{ width: 8, height: 8, borderRadius: "50%", backgroundColor: t.color, flexShrink: 0 }} />
-                <span style={{ fontFamily: "var(--font-serif)", fontWeight: 600, fontSize: 14, color: "var(--text-primary)" }}>{t.name}</span>
+                <span style={{ fontFamily: "var(--font-serif)", fontWeight: 600, fontSize: 14, color: "var(--text-primary)" }}>
+                  {t.name}
+                </span>
               </div>
-              <p style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 10, lineHeight: 1.5 }}>{t.desc}</p>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 4, lineHeight: 2 }}>
-                {t.blocks.map((b, i) => (
-                  <span key={b}>
-                    <span style={{
-                      fontFamily: "var(--font-mono)", fontSize: 10, padding: "2px 7px", borderRadius: 6,
-                      backgroundColor: "var(--bg-inset)", color: "var(--text-muted)", whiteSpace: "nowrap",
-                    }}>{b}</span>
-                    {i < t.blocks.length - 1 && <span style={{ color: "var(--border-default)", margin: "0 2px", fontSize: 10 }}> → </span>}
+              <p style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.5, marginBottom: 10 }}>
+                {t.desc}
+              </p>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                {t.tags.map((tag) => (
+                  <span key={tag} style={{
+                    fontFamily: "var(--font-mono)", fontSize: 9, padding: "2px 6px", borderRadius: 5,
+                    backgroundColor: "var(--bg-inset)", color: "var(--text-muted)",
+                  }}>
+                    {tag}
                   </span>
                 ))}
               </div>
-            </Link>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", marginTop: 8 }}>
+                <span style={{ fontSize: 11, color: "var(--accent)", display: "flex", alignItems: "center", gap: 4 }}>
+                  Use template <ArrowRight size={12} />
+                </span>
+              </div>
+            </button>
           ))}
         </div>
       </div>
 
-      {/* Empty state */}
-      <div className="surface p-8 text-center">
-        <Workflow size={40} className="mx-auto mb-3" style={{ color: "var(--text-muted)" }} />
-        <h2 className="font-semibold text-sm mb-1" style={{ color: "var(--text-primary)" }}>
-          No saved workflows yet
-        </h2>
-        <p className="text-xs mb-4" style={{ color: "var(--text-secondary)" }}>
-          Create a workflow by chaining detection, cropping, filtering, and LLM blocks
-          into a visual pipeline. Deploy them as API endpoints.
-        </p>
-        <Link
-          to="/workflows/new"
-          className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700"
-        >
-          <Plus size={14} />
-          Create Your First Workflow
-        </Link>
+      {/* Saved workflows */}
+      <div>
+        <p className="eyebrow mb-3">Your workflows</p>
+        {saved && saved.length > 0 ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {saved.map((wf: any) => (
+              <Link
+                key={wf.id}
+                to={`/workflows/${wf.slug}`}
+                className="surface surface-interactive"
+                style={{ padding: "12px 16px", display: "flex", alignItems: "center", justifyContent: "space-between" }}
+              >
+                <div>
+                  <p style={{ fontFamily: "var(--font-serif)", fontWeight: 600, fontSize: 14, color: "var(--text-primary)" }}>
+                    {wf.name}
+                  </p>
+                  <p style={{ fontSize: 11, color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}>
+                    {wf.block_count} blocks {wf.is_deployed && "· deployed"}
+                  </p>
+                </div>
+                {wf.is_deployed && (
+                  <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 6, backgroundColor: "#dcfce7", color: "#16a34a", fontWeight: 600 }}>
+                    LIVE
+                  </span>
+                )}
+              </Link>
+            ))}
+          </div>
+        ) : (
+          <div className="surface text-center" style={{ padding: 40 }}>
+            <Workflow size={32} style={{ margin: "0 auto 8px", color: "var(--text-muted)" }} />
+            <p style={{ fontSize: 13, color: "var(--text-secondary)" }}>
+              No saved workflows yet. Start from a template above or create a blank workflow.
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );

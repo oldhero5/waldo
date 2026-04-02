@@ -7,7 +7,7 @@ function authHeaders(): Record<string, string> {
 }
 
 /** Authenticated fetch wrapper. */
-async function authFetch(url: string, init?: RequestInit): Promise<Response> {
+export async function authFetch(url: string, init?: RequestInit): Promise<Response> {
   const headers = { ...authHeaders(), ...(init?.headers || {}) };
   return fetch(url, { ...init, headers });
 }
