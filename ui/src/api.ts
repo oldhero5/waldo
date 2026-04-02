@@ -198,6 +198,34 @@ export async function getDatasetOverview(jobId: string): Promise<DatasetOverview
   return res.json();
 }
 
+export async function duplicateDataset(jobId: string): Promise<{ new_id: string; annotations_copied: number }> {
+  const res = await authFetch(`${BASE}/jobs/${jobId}/duplicate`, { method: "POST" });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function listJobClasses(jobId: string): Promise<{ classes: { name: string; count: number }[] }> {
+  const res = await authFetch(`${BASE}/jobs/${jobId}/classes`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function deleteClass(jobId: string, className: string): Promise<{ deleted_count: number }> {
+  const res = await authFetch(`${BASE}/jobs/${jobId}/classes/${encodeURIComponent(className)}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function mergeClasses(jobId: string, sourceClass: string, targetClass: string): Promise<{ updated: number }> {
+  const res = await authFetch(`${BASE}/annotations/merge-classes`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ job_id: jobId, source_class: sourceClass, target_class: targetClass }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
 export async function deleteJob(jobId: string): Promise<{ status: string; annotations_deleted: number }> {
   const res = await authFetch(`${BASE}/jobs/${jobId}`, { method: "DELETE" });
   if (!res.ok) throw new Error(await res.text());
