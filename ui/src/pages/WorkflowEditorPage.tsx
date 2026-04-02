@@ -63,9 +63,61 @@ export default function WorkflowEditorPage() {
   useEffect(() => {
     fetch(`${BASE}/workflows/blocks`)
       .then((r) => r.json())
-      .then((d) => setBlocks(d.blocks || []))
+      .then((d) => {
+        const blockList = d.blocks || [];
+        setBlocks(blockList);
+
+        // Load template if coming from templates page
+        const templateJson = sessionStorage.getItem("waldo_workflow_template");
+        if (templateJson) {
+          sessionStorage.removeItem("waldo_workflow_template");
+          try {
+            const template = JSON.parse(templateJson);
+            const graph = template.graph;
+            if (graph?.nodes && graph?.edges) {
+              // Convert template nodes to React Flow format
+              const blockMap: Record<string, BlockSchema> = {};
+              for (const b of blockList) blockMap[b.name] = b;
+
+              const rfNodes = graph.nodes.map((n: any) => {
+                const schema = blockMap[n.type];
+                const catMeta = CATEGORY_META[schema?.category || "general"] || CATEGORY_META.general;
+                return {
+                  id: n.id,
+                  type: "block",
+                  position: n.position || { x: 0, y: 0 },
+                  data: {
+                    label: schema?.display_name || n.type,
+                    blockType: n.type,
+                    category: schema?.category || "general",
+                    color: catMeta.color,
+                    inputs: schema?.inputs || [],
+                    outputs: schema?.outputs || [],
+                    config: n.config || {},
+                    configSchema: schema?.config_schema || {},
+                  },
+                };
+              });
+
+              const rfEdges = graph.edges.map((e: any, i: number) => ({
+                id: `e${i}`,
+                source: e.source,
+                sourceHandle: e.sourceHandle || e.source_port,
+                target: e.target,
+                targetHandle: e.targetHandle || e.target_port,
+                animated: true,
+                style: { stroke: "var(--accent)", strokeWidth: 2 },
+              }));
+
+              setNodes(rfNodes);
+              setEdges(rfEdges);
+              nodeId = Math.max(...graph.nodes.map((n: any) => parseInt(n.id.replace("n", "")) || 0), 0);
+            }
+          } catch { /* invalid template JSON */ }
+        }
+      })
       .catch(() => {});
-  }, []);
+  }, []); // eslint-disable-line
 
   const onConnect = useCallback(
     (params: Connection) => setEdges((eds) => addEdge({
