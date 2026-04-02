@@ -38,8 +38,11 @@ setup:
 dev-app:
 	uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
+dev-worker:
+	uv run celery -A lib.tasks worker --loglevel=info --concurrency=1 --pool=solo -Q celery,training
+
 dev-labeler:
-	uv run celery -A lib.tasks worker --loglevel=info --concurrency=1 --pool=solo
+	uv run celery -A lib.tasks worker --loglevel=info --concurrency=1 --pool=solo -Q celery,training
 
 dev-trainer:
 	uv run celery -A lib.tasks worker --loglevel=info --concurrency=1 --pool=solo -Q training

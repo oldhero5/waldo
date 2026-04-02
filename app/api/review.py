@@ -147,6 +147,112 @@ def delete_job(job_id: str):
         session.close()
 
 
+class MergeClassesRequest(BaseModel):
+    job_id: str
+    source_class: str
+    target_class: str
+
+
+class AddClassRequest(BaseModel):
+    job_id: str
+    class_name: str
+
+
+@router.post("/annotations/merge-classes")
+def merge_classes(req: MergeClassesRequest):
+    """Merge two class names — renames all annotations from source to target."""
+    session = SessionLocal()
+    try:
+        result = session.execute(
+            text("UPDATE annotations SET class_name = :target WHERE job_id = :job_id AND class_name = :source"),
+            {"target": req.target_class, "source": req.source_class, "job_id": req.job_id},
+        )
+        session.commit()
+        return {"status": "merged", "source": req.source_class, "target": req.target_class, "updated": result.rowcount}
+    finally:
+        session.close()
+
+
+@router.post("/jobs/{job_id}/duplicate")
+def duplicate_dataset(job_id: str):
+    """Duplicate a labeling job and all its annotations into a new dataset."""
+    session = SessionLocal()
+    try:
+
+        original = session.query(LabelingJob).filter_by(id=job_id).first()
+        if not original:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        # Create new job
+        new_job = LabelingJob(
+            video_id=original.video_id,
+            project_id=original.project_id,
+            text_prompt=f"{original.text_prompt} (copy)",
+            prompt_type=original.prompt_type,
+            task_type=original.task_type,
+            status="completed",
+            total_frames=original.total_frames,
+            processed_frames=original.processed_frames,
+            result_minio_key=original.result_minio_key,
+        )
+        session.add(new_job)
+        session.flush()
+
+        # Copy annotations
+        annotations = session.query(Annotation).filter_by(job_id=job_id).all()
+        for ann in annotations:
+            new_ann = Annotation(
+                frame_id=ann.frame_id,
+                job_id=new_job.id,
+                class_name=ann.class_name,
+                class_index=ann.class_index,
+                polygon=ann.polygon,
+                bbox=ann.bbox,
+                confidence=ann.confidence,
+                status=ann.status,
+            )
+            session.add(new_ann)
+
+        session.commit()
+        return {
+            "status": "duplicated",
+            "original_id": job_id,
+            "new_id": str(new_job.id),
+            "annotations_copied": len(annotations),
+        }
+    finally:
+        session.close()
+
+
+@router.get("/jobs/{job_id}/classes")
+def list_job_classes(job_id: str):
+    """List all unique class names in a dataset with their annotation counts."""
+    session = SessionLocal()
+    try:
+        annotations = session.query(Annotation).filter_by(job_id=job_id).all()
+        class_counts: dict[str, int] = {}
+        for a in annotations:
+            class_counts[a.class_name] = class_counts.get(a.class_name, 0) + 1
+        return {"classes": [{"name": k, "count": v} for k, v in sorted(class_counts.items())]}
+    finally:
+        session.close()
+
+
+@router.delete("/jobs/{job_id}/classes/{class_name}")
+def delete_class(job_id: str, class_name: str):
+    """Delete all annotations of a specific class from a dataset."""
+    session = SessionLocal()
+    try:
+        result = session.execute(
+            text("DELETE FROM annotations WHERE job_id = :job_id AND class_name = :class_name"),
+            {"job_id": job_id, "class_name": class_name},
+        )
+        session.commit()
+        return {"status": "deleted", "class_name": class_name, "deleted_count": result.rowcount}
+    finally:
+        session.close()
+
+
 class FrameSummary(BaseModel):
     frame_id: str
     frame_number: int
@@ -156,6 +262,16 @@ class FrameSummary(BaseModel):
     pending: int
     thumbnail_url: str | None = None
     classes: list[str]
+
+
+class CorrectionOut(BaseModel):
+    id: str
+    class_name: str
+    confidence: float | None = None
+    bbox: list | None = None
+    feedback_type: str
+    frame_index: int | None = None
+    source_filename: str | None = None
 
 
 class DatasetOverview(BaseModel):
@@ -172,7 +288,8 @@ class DatasetOverview(BaseModel):
     sample_frames: list[FrameSummary]
     dataset_url: str | None = None
     feedback_count: int = 0
-    labeling_in_progress: int = 0  # Number of related jobs still running
+    corrections: list[CorrectionOut] = []
+    labeling_in_progress: int = 0
 
 
 @router.get("/jobs/{job_id}/overview", response_model=DatasetOverview)
@@ -222,7 +339,21 @@ def get_dataset_overview(job_id: str):
 
         # Check for feedback
         from lib.db import DemoFeedback
-        feedback_count = session.query(DemoFeedback).count()
+        # Get feedback corrections with full details
+        feedback_entries = session.query(DemoFeedback).order_by(DemoFeedback.created_at.desc()).limit(50).all()
+        feedback_count = len(feedback_entries)
+        corrections = [
+            CorrectionOut(
+                id=str(fb.id),
+                class_name=fb.class_name,
+                confidence=fb.confidence,
+                bbox=fb.bbox,
+                feedback_type=fb.feedback_type,
+                frame_index=fb.frame_index,
+                source_filename=fb.source_filename,
+            )
+            for fb in feedback_entries
+        ]
 
         dataset_url = None
         if job.result_minio_key:
@@ -249,6 +380,7 @@ def get_dataset_overview(job_id: str):
             sample_frames=sample_frames,
             dataset_url=dataset_url,
             feedback_count=feedback_count,
+            corrections=corrections,
             labeling_in_progress=labeling_in_progress,
         )
     finally:
