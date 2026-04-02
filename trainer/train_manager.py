@@ -48,11 +48,15 @@ VARIANTS = {
     # Classification
     "yolo11n-cls": "yolo11n-cls.pt",
     "yolo11m-cls": "yolo11m-cls.pt",
+    # RF-DETR (Real-time Transformer detection)
+    "rf-detr-base": "rf-detr-base.pt",
+    "rf-detr-large": "rf-detr-large.pt",
 }
 
 TASK_TO_DEFAULT_VARIANT = {
     "segment": "yolo26n-seg",
     "detect": "yolo26n",
+    "detect_transformer": "rf-detr-base",
     "classify": "yolo11n-cls",
     "pose": "yolo11n-pose",
     "obb": "yolo11n-obb",

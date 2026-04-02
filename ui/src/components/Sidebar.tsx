@@ -68,8 +68,22 @@ export default function Sidebar() {
           </span>
         </Link>
         <button
-          className="flex items-center gap-1 mt-2 text-xs rounded-md px-2 py-1 w-full"
-          style={{ color: "var(--text-secondary)", backgroundColor: "var(--bg-inset)" }}
+          className="flex items-center gap-1 mt-2 text-xs rounded-md px-2 py-1.5 w-full"
+          style={{ color: "var(--text-secondary)", backgroundColor: "var(--bg-inset)", transition: "all 160ms ease" }}
+          onClick={() => {
+            const name = prompt("Create new workspace:", "");
+            if (name) {
+              fetch("/api/v1/auth/register", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ email: "", password: "", display_name: "", workspace_name: name }),
+              }).catch(() => {});
+              // For now, just show the name
+              alert(`Workspace "${name}" — workspace switching coming soon.`);
+            }
+          }}
+          onMouseEnter={(e) => e.currentTarget.style.backgroundColor = "var(--border-subtle)"}
+          onMouseLeave={(e) => e.currentTarget.style.backgroundColor = "var(--bg-inset)"}
         >
           <span className="truncate flex-1 text-left">My Workspace</span>
           <ChevronDown size={12} />
