@@ -1,9 +1,10 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { listJobs, getDatasetOverview, uploadImages, uploadVideo, listFeedback, listProjects, listProjectVideos, linkVideos, deleteJob, listAnnotations, updateAnnotation, type JobStatus } from "../api";
+import { listJobs, getDatasetOverview, uploadImages, uploadVideo, listFeedback, listProjects, listProjectVideos, linkVideos, deleteJob, duplicateDataset, mergeClasses, deleteClass, listAnnotations, updateAnnotation, type JobStatus } from "../api";
 import AnnotationCanvas from "../components/AnnotationCanvas";
-import { Database, CheckCircle, Clock, AlertCircle, Download, Eye, Cpu, MessageSquareWarning, Images, Plus, Upload as UploadIcon, Loader, FolderInput, Trash2 } from "lucide-react";
+import { Database, CheckCircle, Clock, AlertCircle, Download, Eye, Cpu, MessageSquareWarning, Images, Plus, Upload as UploadIcon, Loader, FolderInput, Trash2, Copy, Merge, Tag } from "lucide-react";
+import Accordion from "../components/Accordion";
 
 function DatasetAnnotationViewer({ frameId, imageUrl, jobId, classes, onClose, onPrev, onNext }: {
   frameId: string; imageUrl: string; jobId: string; classes: string[];
@@ -36,6 +37,7 @@ function DatasetAnnotationViewer({ frameId, imageUrl, jobId, classes, onClose, o
 
 
 function DatasetCard({ job, onDeleted }: { job: JobStatus; onDeleted: () => void }) {
+  const queryClient = useQueryClient();
   const [expanded, setExpanded] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadMsg, setUploadMsg] = useState("");
@@ -452,6 +454,58 @@ function DatasetCard({ job, onDeleted }: { job: JobStatus; onDeleted: () => void
                   </div>
                 )}
               </div>
+
+              {/* Class management */}
+              {overview.classes.length > 0 && (
+                <Accordion title="Manage Classes" eyebrow="Class operations" count={overview.classes.length} className="mt-3">
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    {overview.classes.map((cls) => (
+                      <div key={cls} className="flex items-center gap-1.5 surface" style={{ padding: "4px 10px", borderRadius: 10 }}>
+                        <Tag size={10} style={{ color: "var(--text-muted)" }} />
+                        <span style={{ fontSize: 12, fontFamily: "var(--font-mono)", color: "var(--text-primary)" }}>{cls}</span>
+                        <button
+                          onClick={async () => {
+                            const target = prompt(`Rename "${cls}" to:`, cls);
+                            if (target && target !== cls) {
+                              await mergeClasses(job.job_id, cls, target);
+                              queryClient.invalidateQueries({ queryKey: ["dataset-overview", job.job_id] });
+                            }
+                          }}
+                          style={{ fontSize: 9, color: "var(--accent)", background: "none", border: "none", marginLeft: 4 }}
+                          title="Rename/merge class"
+                        >
+                          <Merge size={10} />
+                        </button>
+                        <button
+                          onClick={async () => {
+                            if (confirm(`Delete all "${cls}" annotations?`)) {
+                              await deleteClass(job.job_id, cls);
+                              queryClient.invalidateQueries({ queryKey: ["dataset-overview", job.job_id] });
+                            }
+                          }}
+                          style={{ fontSize: 9, color: "var(--danger)", background: "none", border: "none" }}
+                          title="Delete class"
+                        >
+                          <Trash2 size={10} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex gap-2 mt-3">
+                    <button
+                      onClick={async () => {
+                        const result = await duplicateDataset(job.job_id);
+                        queryClient.invalidateQueries({ queryKey: ["jobs"] });
+                        alert(`Dataset duplicated. ${result.annotations_copied} annotations copied.`);
+                      }}
+                      className="flex items-center gap-1 text-xs px-3 py-1.5 surface"
+                      style={{ color: "var(--text-secondary)", borderRadius: 8 }}
+                    >
+                      <Copy size={11} /> Duplicate Dataset
+                    </button>
+                  </div>
+                </Accordion>
+              )}
             </>
           )}
         </div>
