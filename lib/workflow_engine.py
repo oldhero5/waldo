@@ -25,13 +25,16 @@ def _load_blocks():
     from lib.workflow_blocks.io import ImageInputBlock, OutputBlock
     from lib.workflow_blocks.llm import LLMBlock
     from lib.workflow_blocks.logic import ConditionalBlock, ExpressionBlock
+    from lib.workflow_blocks.platform import DatasetInputBlock, ModelSelectorBlock, TrainTriggerBlock, WebhookBlock
     from lib.workflow_blocks.visualization import BlurVisualization, BoundingBoxVisualization, CountVisualization
 
     for cls in [
         # I/O
-        ImageInputBlock, OutputBlock,
+        ImageInputBlock, OutputBlock, WebhookBlock,
+        # Platform
+        DatasetInputBlock, TrainTriggerBlock,
         # Models
-        DetectionBlock,
+        DetectionBlock, ModelSelectorBlock,
         # Transforms
         CropBlock, FilterBlock, ResizeBlock,
         # Visualization

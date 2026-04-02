@@ -223,6 +223,20 @@ class ModelRegistry(Base):
     training_run = relationship("TrainingRun", back_populates="models")
 
 
+class SavedWorkflow(Base):
+    __tablename__ = "saved_workflows"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String(255), nullable=False)
+    slug = Column(String(255), unique=True, nullable=False)
+    description = Column(Text, nullable=True)
+    graph = Column(JSON, nullable=False)
+    is_deployed = Column(Boolean, default=False)
+    workspace_id = Column(UUID(as_uuid=True), ForeignKey("workspaces.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class DemoFeedback(Base):
     """Stores false-positive / correction feedback from the Demo page."""
     __tablename__ = "demo_feedback"
