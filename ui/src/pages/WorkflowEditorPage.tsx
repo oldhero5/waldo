@@ -17,7 +17,7 @@ import {
   BackgroundVariant,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { Play, Loader2, Trash2, ChevronDown, ChevronRight, Cpu, Scissors, Filter, MessageSquare, ArrowDownToLine, Eye, GitBranch, Scan } from "lucide-react";
+import { Play, Loader2, Trash2, ChevronDown, ChevronRight, Cpu, Scissors, Filter, MessageSquare, ArrowDownToLine, Eye, GitBranch, Scan, Rocket, Save, Cloud } from "lucide-react";
 import BlockNode from "../components/workflow/BlockNode";
 
 const BASE = "/api/v1";
@@ -42,6 +42,7 @@ const CATEGORY_META: Record<string, { color: string; icon: typeof Cpu; label: st
   logic: { color: "#06b6d4", icon: GitBranch, label: "Logic" },
   classical_cv: { color: "#14b8a6", icon: Scan, label: "Classical CV" },
   ai: { color: "#22c55e", icon: MessageSquare, label: "AI" },
+  platform: { color: "#e11d48", icon: Rocket, label: "Platform" },
   general: { color: "#6b7280", icon: Filter, label: "General" },
 };
 
@@ -56,6 +57,8 @@ export default function WorkflowEditorPage() {
   const [running, setRunning] = useState(false);
   const [runResult, setRunResult] = useState<any>(null);
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
+  const [saving, setSaving] = useState(false);
+  const [deployInfo, setDeployInfo] = useState<{ url: string; curl: string } | null>(null);
 
   useEffect(() => {
     fetch(`${BASE}/workflows/blocks`)
@@ -286,7 +289,7 @@ export default function WorkflowEditorPage() {
             </Panel>
           )}
 
-          {/* Run toolbar */}
+          {/* Toolbar */}
           <Panel position="top-right">
             <div className="flex gap-2">
               {selectedNode && (
@@ -294,6 +297,39 @@ export default function WorkflowEditorPage() {
                   <Trash2 size={13} /> Delete
                 </button>
               )}
+              <button
+                onClick={async () => {
+                  const name = prompt("Workflow name:", "My Workflow");
+                  if (!name) return;
+                  setSaving(true);
+                  try {
+                    const graph = {
+                      nodes: nodes.map((n: any) => ({ id: n.id, type: n.data.blockType, config: n.data.config || {} })),
+                      edges: edges.map((e: any) => ({ source: e.source, source_port: e.sourceHandle || "output", target: e.target, target_port: e.targetHandle || "input" })),
+                    };
+                    const res = await fetch(`${BASE}/workflows`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ name, graph }),
+                    });
+                    if (res.ok) {
+                      const data = await res.json();
+                      // Deploy immediately
+                      const deployRes = await fetch(`${BASE}/workflows/saved/${data.slug}/deploy`, { method: "POST" });
+                      if (deployRes.ok) {
+                        const deploy = await deployRes.json();
+                        setDeployInfo({ url: deploy.endpoint, curl: deploy.curl });
+                      }
+                    }
+                  } finally { setSaving(false); }
+                }}
+                disabled={saving || nodes.length === 0}
+                className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-medium surface"
+                style={{ color: "var(--text-primary)" }}
+              >
+                {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                Save & Deploy
+              </button>
               <button
                 onClick={runWorkflow}
                 disabled={running || nodes.length === 0}
@@ -305,6 +341,32 @@ export default function WorkflowEditorPage() {
               </button>
             </div>
           </Panel>
+
+          {/* Deploy info */}
+          {deployInfo && (
+            <Panel position="top-center">
+              <div className="surface" style={{ padding: 16, maxWidth: 500, borderRadius: 20 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                  <Cloud size={16} style={{ color: "var(--success)" }} />
+                  <span style={{ fontFamily: "var(--font-serif)", fontWeight: 600, fontSize: 14, color: "var(--text-primary)" }}>
+                    Workflow Deployed
+                  </span>
+                </div>
+                <p style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 8 }}>
+                  Your workflow is now serving at:
+                </p>
+                <pre style={{
+                  fontFamily: "var(--font-mono)", fontSize: 11, padding: "8px 12px", borderRadius: 10,
+                  backgroundColor: "var(--bg-inset)", color: "var(--text-primary)", overflow: "auto",
+                }}>
+                  {deployInfo.curl}
+                </pre>
+                <button onClick={() => setDeployInfo(null)} style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 6, textDecoration: "underline", background: "none", border: "none" }}>
+                  Dismiss
+                </button>
+              </div>
+            </Panel>
+          )}
 
           {/* Results */}
           {runResult && (

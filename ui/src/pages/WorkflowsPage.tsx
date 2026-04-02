@@ -2,7 +2,7 @@
  * Workflows list page — browse saved workflows, create new ones.
  */
 import { Link } from "react-router-dom";
-import { Workflow, Plus, Sparkles } from "lucide-react";
+import { Workflow, Plus } from "lucide-react";
 
 const TEMPLATES = [
   {
