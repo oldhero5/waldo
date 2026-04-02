@@ -18,13 +18,31 @@ def register_block(cls: type[BlockBase]) -> type[BlockBase]:
 
 def _load_blocks():
     """Import all block modules to populate the registry."""
+    from lib.workflow_blocks.classical_cv import ContourDetectionBlock, DominantColorBlock, GrayscaleBlock, ResizeBlock
     from lib.workflow_blocks.crop import CropBlock
     from lib.workflow_blocks.detection import DetectionBlock
     from lib.workflow_blocks.filter_block import FilterBlock
     from lib.workflow_blocks.io import ImageInputBlock, OutputBlock
     from lib.workflow_blocks.llm import LLMBlock
+    from lib.workflow_blocks.logic import ConditionalBlock, ExpressionBlock
+    from lib.workflow_blocks.visualization import BlurVisualization, BoundingBoxVisualization, CountVisualization
 
-    for cls in [DetectionBlock, CropBlock, FilterBlock, LLMBlock, ImageInputBlock, OutputBlock]:
+    for cls in [
+        # I/O
+        ImageInputBlock, OutputBlock,
+        # Models
+        DetectionBlock,
+        # Transforms
+        CropBlock, FilterBlock, ResizeBlock,
+        # Visualization
+        BoundingBoxVisualization, BlurVisualization, CountVisualization,
+        # Logic
+        ConditionalBlock, ExpressionBlock,
+        # Classical CV
+        GrayscaleBlock, ContourDetectionBlock, DominantColorBlock,
+        # AI
+        LLMBlock,
+    ]:
         BLOCK_REGISTRY[cls.name] = cls
 
 
