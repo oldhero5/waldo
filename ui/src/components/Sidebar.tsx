@@ -2,6 +2,7 @@
  * Left sidebar navigation — Pretext-inspired warm light design.
  * Persistent on desktop, collapsible on mobile.
  */
+import { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import {
   Home,
@@ -36,6 +37,120 @@ const BOTTOM_ITEMS = [
   { to: "/settings", label: "Settings", icon: Settings },
 ];
 
+function WorkspaceSwitcher() {
+  const [open, setOpen] = useState(false);
+  const [workspaces, setWorkspaces] = useState<{ id: string; name: string; slug: string; role: string }[]>([]);
+  const [active, setActive] = useState("My Workspace");
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState("");
+
+  useEffect(() => {
+    const token = localStorage.getItem("waldo_token");
+    if (!token) return;
+    fetch("/api/v1/workspaces", { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => r.json())
+      .then((data) => {
+        if (Array.isArray(data) && data.length > 0) {
+          setWorkspaces(data);
+          setActive(data[0].name);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleCreate = async () => {
+    if (!newName.trim()) return;
+    const token = localStorage.getItem("waldo_token");
+    const res = await fetch("/api/v1/workspaces", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token || ""}` },
+      body: JSON.stringify({ name: newName }),
+    });
+    if (res.ok) {
+      const ws = await res.json();
+      setWorkspaces((prev) => [...prev, ws]);
+      setActive(ws.name);
+      setNewName("");
+      setCreating(false);
+    }
+  };
+
+  return (
+    <div className="px-4 pt-5 pb-3">
+      <Link to="/" className="flex items-center gap-2">
+        <span style={{ fontFamily: "var(--font-serif)", fontSize: 20, fontWeight: 700, color: "var(--text-primary)", letterSpacing: "-0.02em" }}>
+          Waldo
+        </span>
+      </Link>
+      <div className="relative mt-2">
+        <button
+          onClick={() => setOpen(!open)}
+          className="flex items-center gap-1 text-xs rounded-lg px-2.5 py-2 w-full"
+          style={{ color: "var(--text-secondary)", backgroundColor: "var(--bg-inset)", transition: "all 160ms ease" }}
+        >
+          <span className="truncate flex-1 text-left" style={{ fontWeight: 500 }}>{active}</span>
+          <ChevronDown size={12} style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform 160ms ease" }} />
+        </button>
+
+        {open && (
+          <div
+            className="absolute left-0 right-0 mt-1 rounded-xl overflow-hidden z-50"
+            style={{
+              backgroundColor: "var(--bg-surface)",
+              border: "1px solid var(--border-default)",
+              boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
+            }}
+          >
+            {workspaces.map((ws) => (
+              <button
+                key={ws.id}
+                onClick={() => { setActive(ws.name); setOpen(false); }}
+                className="w-full text-left px-3 py-2 text-xs"
+                style={{
+                  color: ws.name === active ? "var(--accent)" : "var(--text-primary)",
+                  backgroundColor: ws.name === active ? "var(--accent-soft)" : "transparent",
+                  fontWeight: ws.name === active ? 600 : 400,
+                  transition: "all 100ms ease",
+                }}
+                onMouseEnter={(e) => { if (ws.name !== active) e.currentTarget.style.backgroundColor = "var(--bg-inset)"; }}
+                onMouseLeave={(e) => { if (ws.name !== active) e.currentTarget.style.backgroundColor = "transparent"; }}
+              >
+                {ws.name}
+                <span style={{ fontSize: 9, color: "var(--text-muted)", marginLeft: 6 }}>{ws.role}</span>
+              </button>
+            ))}
+            <div style={{ borderTop: "1px solid var(--border-subtle)", padding: 6 }}>
+              {creating ? (
+                <div className="flex gap-1">
+                  <input
+                    autoFocus
+                    value={newName}
+                    onChange={(e) => setNewName(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") handleCreate(); if (e.key === "Escape") setCreating(false); }}
+                    placeholder="Workspace name"
+                    className="flex-1 px-2 py-1 text-xs rounded border"
+                    style={{ borderColor: "var(--border-default)", backgroundColor: "var(--bg-inset)", color: "var(--text-primary)" }}
+                  />
+                  <button onClick={handleCreate} className="px-2 py-1 bg-blue-600 text-white text-xs rounded">Create</button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setCreating(true)}
+                  className="w-full text-left px-3 py-1.5 text-xs"
+                  style={{ color: "var(--accent)" }}
+                >
+                  + New Workspace
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
 export default function Sidebar() {
   const loc = useLocation();
 
@@ -60,35 +175,8 @@ export default function Sidebar() {
         borderRight: "1px solid var(--border-subtle)",
       }}
     >
-      {/* Logo + Workspace */}
-      <div className="px-4 pt-5 pb-3">
-        <Link to="/" className="flex items-center gap-2">
-          <span style={{ fontFamily: "var(--font-serif)", fontSize: 20, fontWeight: 700, color: "var(--text-primary)", letterSpacing: "-0.02em" }}>
-            Waldo
-          </span>
-        </Link>
-        <button
-          className="flex items-center gap-1 mt-2 text-xs rounded-md px-2 py-1.5 w-full"
-          style={{ color: "var(--text-secondary)", backgroundColor: "var(--bg-inset)", transition: "all 160ms ease" }}
-          onClick={() => {
-            const name = prompt("Create new workspace:", "");
-            if (name) {
-              fetch("/api/v1/auth/register", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ email: "", password: "", display_name: "", workspace_name: name }),
-              }).catch(() => {});
-              // For now, just show the name
-              alert(`Workspace "${name}" — workspace switching coming soon.`);
-            }
-          }}
-          onMouseEnter={(e) => e.currentTarget.style.backgroundColor = "var(--border-subtle)"}
-          onMouseLeave={(e) => e.currentTarget.style.backgroundColor = "var(--bg-inset)"}
-        >
-          <span className="truncate flex-1 text-left">My Workspace</span>
-          <ChevronDown size={12} />
-        </button>
-      </div>
+      {/* Logo + Workspace Switcher */}
+      <WorkspaceSwitcher />
 
       {/* Main nav */}
       <nav className="flex-1 px-2 mt-1">

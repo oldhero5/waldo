@@ -4,7 +4,21 @@ from fastapi import FastAPI
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
 
-from app.api import agent, auth, download, feedback, frames, label, review, serve, status, train, upload, workflows
+from app.api import (
+    agent,
+    auth,
+    download,
+    feedback,
+    frames,
+    label,
+    review,
+    serve,
+    status,
+    train,
+    upload,
+    workflows,
+    workspaces,
+)
 from app.ws import router as ws_router
 
 app = FastAPI(title="Waldo", version="0.5.0")
@@ -24,6 +38,7 @@ app.include_router(serve.router, prefix="/api/v1", tags=["serve"])
 app.include_router(feedback.router, prefix="/api/v1", tags=["feedback"])
 app.include_router(workflows.router, prefix="/api/v1", tags=["workflows"])
 app.include_router(agent.router, prefix="/api/v1", tags=["agent"])
+app.include_router(workspaces.router, prefix="/api/v1", tags=["workspaces"])
 app.include_router(ws_router)
 
 
