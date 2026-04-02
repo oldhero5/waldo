@@ -17,7 +17,7 @@ import {
   BackgroundVariant,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { Play, Loader2, Trash2, ChevronDown, ChevronRight, Cpu, Scissors, Filter, MessageSquare, ArrowDownToLine } from "lucide-react";
+import { Play, Loader2, Trash2, ChevronDown, ChevronRight, Cpu, Scissors, Filter, MessageSquare, ArrowDownToLine, Eye, GitBranch, Scan } from "lucide-react";
 import BlockNode from "../components/workflow/BlockNode";
 
 const BASE = "/api/v1";
@@ -35,10 +35,13 @@ interface BlockSchema {
 const nodeTypes: NodeTypes = { block: BlockNode };
 
 const CATEGORY_META: Record<string, { color: string; icon: typeof Cpu; label: string }> = {
+  io: { color: "#3b82f6", icon: ArrowDownToLine, label: "Input / Output" },
   models: { color: "#8b5cf6", icon: Cpu, label: "Models" },
   transforms: { color: "#f59e0b", icon: Scissors, label: "Transforms" },
+  visualization: { color: "#ec4899", icon: Eye, label: "Visualization" },
+  logic: { color: "#06b6d4", icon: GitBranch, label: "Logic" },
+  classical_cv: { color: "#14b8a6", icon: Scan, label: "Classical CV" },
   ai: { color: "#22c55e", icon: MessageSquare, label: "AI" },
-  io: { color: "#3b82f6", icon: ArrowDownToLine, label: "Input / Output" },
   general: { color: "#6b7280", icon: Filter, label: "General" },
 };
 

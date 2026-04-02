@@ -7,18 +7,39 @@ import { Workflow, Plus, Sparkles } from "lucide-react";
 const TEMPLATES = [
   {
     name: "Detect & Count",
-    desc: "Run detection, filter by confidence, count objects",
-    blocks: ["Image Input", "Detection", "Filter", "Output"],
+    desc: "Detect objects, filter by confidence, count by class",
+    blocks: ["Image Input", "Detection", "Filter", "Count", "Output"],
+    color: "#8b5cf6",
   },
   {
-    name: "Detect → Crop → Classify",
-    desc: "Detect objects, crop regions, classify each crop",
-    blocks: ["Image Input", "Detection", "Crop", "Classification", "Output"],
+    name: "Detect → Visualize",
+    desc: "Run detection and draw bounding boxes with labels on the image",
+    blocks: ["Image Input", "Detection", "Draw Boxes", "Output"],
+    color: "#ec4899",
+  },
+  {
+    name: "Privacy Blur",
+    desc: "Detect faces or license plates and blur them for privacy",
+    blocks: ["Image Input", "Detection", "Blur Regions", "Output"],
+    color: "#06b6d4",
   },
   {
     name: "Smart Analysis",
-    desc: "Detect objects then describe the scene with an LLM",
-    blocks: ["Image Input", "Detection", "LLM", "Output"],
+    desc: "Detect objects, count them, then describe the scene with a local LLM",
+    blocks: ["Image Input", "Detection", "Count", "LLM", "Output"],
+    color: "#22c55e",
+  },
+  {
+    name: "Detect → Crop → Classify",
+    desc: "Detect objects, crop each region, analyze dominant colors",
+    blocks: ["Image Input", "Detection", "Crop", "Dominant Color", "Output"],
+    color: "#f59e0b",
+  },
+  {
+    name: "Conditional Alert",
+    desc: "Detect objects, count them, alert only if count exceeds threshold",
+    blocks: ["Image Input", "Detection", "Count", "If/Else", "LLM", "Output"],
+    color: "#14b8a6",
   },
 ];
 
@@ -50,26 +71,27 @@ export default function WorkflowsPage() {
         <h2 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: "var(--text-muted)" }}>
           Templates
         </h2>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {TEMPLATES.map((t) => (
             <Link
               key={t.name}
               to="/workflows/new"
-              className="surface surface-interactive p-4"
+              className="surface surface-interactive"
+              style={{ padding: 18 }}
             >
               <div className="flex items-center gap-2 mb-2">
-                <Sparkles size={14} style={{ color: "var(--accent)" }} />
-                <span className="font-semibold text-sm" style={{ color: "var(--text-primary)" }}>{t.name}</span>
+                <span style={{ width: 8, height: 8, borderRadius: "50%", backgroundColor: t.color, flexShrink: 0 }} />
+                <span style={{ fontFamily: "var(--font-serif)", fontWeight: 600, fontSize: 14, color: "var(--text-primary)" }}>{t.name}</span>
               </div>
-              <p className="text-xs mb-3" style={{ color: "var(--text-secondary)" }}>{t.desc}</p>
-              <div className="flex flex-wrap gap-1">
-                {t.blocks.map((b) => (
-                  <span
-                    key={b}
-                    className="text-[10px] px-1.5 py-0.5 rounded"
-                    style={{ backgroundColor: "var(--bg-inset)", color: "var(--text-muted)" }}
-                  >
-                    {b}
+              <p style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 10, lineHeight: 1.5 }}>{t.desc}</p>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 4, lineHeight: 2 }}>
+                {t.blocks.map((b, i) => (
+                  <span key={b}>
+                    <span style={{
+                      fontFamily: "var(--font-mono)", fontSize: 10, padding: "2px 7px", borderRadius: 6,
+                      backgroundColor: "var(--bg-inset)", color: "var(--text-muted)", whiteSpace: "nowrap",
+                    }}>{b}</span>
+                    {i < t.blocks.length - 1 && <span style={{ color: "var(--border-default)", margin: "0 2px", fontSize: 10 }}> → </span>}
                   </span>
                 ))}
               </div>
