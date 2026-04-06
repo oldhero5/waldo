@@ -129,12 +129,22 @@ def get_det_features(model, backbone_features: mx.array):
     return src, pos_flat, det_features, (H_f, W_f)
 
 
+_compiled_encoder_fn = None
+
 def run_detr_encoder(model, src, pos_flat, inputs_embeds, attention_mask):
-    """Run DETR encoder. ~63ms. (Can't compile — has internal mx.eval)."""
-    encoded = model.detector_model.detr_encoder(
-        src, pos_flat, inputs_embeds, attention_mask
-    )
-    return encoded
+    """Run DETR encoder with fused+compiled layers."""
+    global _compiled_encoder_fn
+    if _compiled_encoder_fn is None:
+        encoder = model.detector_model.detr_encoder
+        def fused_encoder(src, pos, text_mem, text_mask):
+            output = src
+            for layer in encoder.layers:
+                output = layer(output, pos, text_mem, text_mask)
+            return output
+        _compiled_encoder_fn = mx.compile(fused_encoder)
+    output = _compiled_encoder_fn(src, pos_flat, inputs_embeds, attention_mask)
+    mx.eval(output)
+    return output
 
 
 def postprocess_mlx(
