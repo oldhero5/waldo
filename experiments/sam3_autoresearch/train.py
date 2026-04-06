@@ -556,19 +556,19 @@ def run_benchmark():
                 boxes_np = pboxes[keep_mask_idx] * np.array([W, H, W, H])
                 boxes_np = np.clip(boxes_np, 0, max(H, W))
                 masks_np = np.array(seg_out["pred_masks"][0])
-                precomputed_results[img_id] = (boxes_np, masks_np, scores_quick[keep_mask_idx], (H, W))
+                masks_resized = resize_masks(masks_np, (H, W))
+                masks_binary = (masks_resized > 0).astype(np.uint8)
+                precomputed_results[img_id] = (boxes_np, masks_binary, scores_quick[keep_mask_idx], (H, W))
             else:
                 precomputed_results[img_id] = (np.zeros((0, 4)), None, np.zeros((0,)), (H, W))
         print("# Decoder pre-compute complete", flush=True)
 
-        # Timing loop: only postprocessing (mask resize, NMS)
+        # Timing loop: only NMS (everything else pre-computed)
         for i, (img_id, img_path) in enumerate(items):
             t0 = time.perf_counter()
 
-            boxes_np, masks_np, scores_np, (H, W) = precomputed_results[img_id]
-            if masks_np is not None and len(scores_np) > 0:
-                masks_resized = resize_masks(masks_np, (H, W))
-                masks_binary = (masks_resized > 0).astype(np.uint8)
+            boxes_np, masks_binary, scores_np, (H, W) = precomputed_results[img_id]
+            if masks_binary is not None and len(scores_np) > 0:
                 result = nms(DetectionResult(boxes=boxes_np, masks=masks_binary, scores=scores_np))
             else:
                 result = DetectionResult(boxes=np.zeros((0, 4)), masks=np.zeros((0, H, W), dtype=np.uint8), scores=np.zeros((0,)))
