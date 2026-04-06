@@ -79,27 +79,20 @@ def load_predictor(
 # ============================================================
 
 
+# Precompute normalization constants
+_NORM_MEAN = np.array(IMAGE_MEAN, dtype=np.float32)
+_NORM_INV_STD = 1.0 / np.array(IMAGE_STD, dtype=np.float32)
+_NORM_OFFSET = -_NORM_MEAN * _NORM_INV_STD  # Combine: (x/255 - mean) / std = x * (1/255/std) + offset
+
 def preprocess_image(
     image: Image.Image,
     resolution: int = RESOLUTION,
-    mean: tuple = IMAGE_MEAN,
-    std: tuple = IMAGE_STD,
 ) -> np.ndarray:
-    """Preprocess image for SAM3.1. Returns (1, H, W, 3) float32 array.
-
-    Optimization ideas:
-    - Lower resolution (e.g. 512, 672, 784)
-    - Faster interpolation (NEAREST vs BILINEAR)
-    - Skip normalization (retrain?)
-    - Use cv2 resize instead of PIL
-    - Batch multiple images
-    """
+    """Preprocess image for SAM3.1. Returns (1, H, W, 3) float32 array."""
     image = image.convert("RGB")
     image = image.resize((resolution, resolution), PREPROCESS_INTERPOLATION)
-    pixel_values = np.array(image, dtype=np.float32) / 255.0
-    mean_arr = np.array(mean, dtype=np.float32)
-    std_arr = np.array(std, dtype=np.float32)
-    pixel_values = (pixel_values - mean_arr) / std_arr
+    pixel_values = np.array(image, dtype=np.float32) * (1.0 / 255.0)
+    pixel_values = (pixel_values - _NORM_MEAN) * _NORM_INV_STD
     return pixel_values[None]  # (1, H, W, 3)
 
 
@@ -137,11 +130,10 @@ def get_det_features(model, backbone_features: mx.array):
 
 
 def run_detr_encoder(model, src, pos_flat, inputs_embeds, attention_mask):
-    """Run DETR encoder. Cacheable when backbone + text are unchanged. ~8ms."""
+    """Run DETR encoder. ~63ms. (Can't compile — has internal mx.eval)."""
     encoded = model.detector_model.detr_encoder(
         src, pos_flat, inputs_embeds, attention_mask
     )
-    # Defer eval — fuse with decoder
     return encoded
 
 
