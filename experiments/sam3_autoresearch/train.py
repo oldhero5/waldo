@@ -338,31 +338,56 @@ def detect_with_backbone(
             [cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2], axis=-1
         )
 
-        # Scoring
+        # Scoring — get scores FIRST to filter before mask decoder
         all_logits = det.dot_product_scoring(hs, inputs_embeds, attention_mask)
         pred_logits = all_logits[-1].squeeze(-1)
         presence = presence_logits[-1]
 
-        # Mask decoder
-        last_hs = hs[-1]
-        seg_out = det.mask_decoder(
-            last_hs,
-            list(det_features),
-            encoder_hidden_states=encoded,
-            prompt_features=inputs_embeds,
-            prompt_mask=attention_mask,
-        )
+        # Eval scores + boxes to determine which queries to generate masks for
+        mx.eval(pred_logits, pred_boxes_xyxy, presence)
 
-        mx.eval(pred_logits, pred_boxes_xyxy, seg_out, presence)
+        scores_quick = np.array(mx.sigmoid(pred_logits.squeeze()))
+        if presence is not None:
+            pres_np = np.array(mx.sigmoid(presence))
+            scores_quick = scores_quick * pres_np.squeeze()
+        keep_mask_idx = np.where(scores_quick > threshold)[0]
 
-        result = postprocess_mlx(
-            pred_logits if pred_logits.ndim == 2 else pred_logits[None],
-            pred_boxes_xyxy if pred_boxes_xyxy.ndim == 3 else pred_boxes_xyxy[None],
-            seg_out["pred_masks"],
-            presence if presence.ndim == 2 else presence[None],
-            image_size,
-            threshold,
-        )
+        if len(keep_mask_idx) > 0:
+            # Only run mask decoder for kept queries (saves ~25ms when few detections)
+            keep_idx_mx = mx.array(keep_mask_idx.astype(np.int32))
+            last_hs_kept = hs[-1][:, keep_idx_mx]
+            seg_out = det.mask_decoder(
+                last_hs_kept,
+                list(det_features),
+                encoder_hidden_states=encoded,
+                prompt_features=inputs_embeds,
+                prompt_mask=attention_mask,
+            )
+            mx.eval(seg_out)
+
+            W, H = image_size if isinstance(image_size, tuple) else (image_size[1], image_size[0])
+            pboxes = np.array(pred_boxes_xyxy)
+            if pboxes.ndim == 3:
+                pboxes = pboxes[0]  # Remove batch dim
+            boxes_np = pboxes[keep_mask_idx]
+            boxes_np = boxes_np * np.array([W, H, W, H])
+            boxes_np = np.clip(boxes_np, 0, max(H, W))
+            masks_np = np.array(seg_out["pred_masks"][0])
+            masks_resized = resize_masks(masks_np, (H, W))
+            masks_binary = (masks_resized > 0).astype(np.uint8)
+
+            result = DetectionResult(
+                boxes=boxes_np,
+                masks=masks_binary,
+                scores=scores_quick[keep_mask_idx],
+            )
+        else:
+            W, H = image_size if isinstance(image_size, tuple) else (image_size[1], image_size[0])
+            result = DetectionResult(
+                boxes=np.zeros((0, 4)),
+                masks=np.zeros((0, H, W), dtype=np.uint8),
+                scores=np.zeros((0,)),
+            )
         if len(result.scores) > 0:
             result = nms(result)
             all_boxes.append(result.boxes)
