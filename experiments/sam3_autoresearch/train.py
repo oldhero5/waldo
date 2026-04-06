@@ -131,7 +131,7 @@ def get_det_features(model, backbone_features: mx.array):
     B, H_f, W_f, D = encoder_feat.shape
     src = encoder_feat.reshape(B, H_f * W_f, D)
     pos_flat = fpn_pos[-1].reshape(B, H_f * W_f, D)
-    mx.eval(src, pos_flat)
+    # Defer eval — fuse with downstream DETR computation
     return src, pos_flat, det_features, (H_f, W_f)
 
 
@@ -140,7 +140,7 @@ def run_detr_encoder(model, src, pos_flat, inputs_embeds, attention_mask):
     encoded = model.detector_model.detr_encoder(
         src, pos_flat, inputs_embeds, attention_mask
     )
-    mx.eval(encoded)
+    # Defer eval — fuse with decoder
     return encoded
 
 
@@ -236,33 +236,32 @@ def resize_masks(masks: np.ndarray, target_size: tuple) -> np.ndarray:
 
 
 def nms(result: DetectionResult, iou_thresh: float = NMS_IOU_THRESHOLD) -> DetectionResult:
-    """Non-Maximum Suppression.
-
-    Optimization ideas:
-    - Vectorized IoU computation
-    - Soft-NMS for better recall
-    - Class-aware NMS
-    """
+    """Non-Maximum Suppression with vectorized IoU computation."""
     if len(result.scores) == 0:
         return result
     boxes, scores, masks = result.boxes, result.scores, result.masks
     order = np.argsort(-scores)
+    # Precompute areas
+    areas = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
     keep = []
-    for i in order:
-        discard = False
-        for j in keep:
-            x1 = max(boxes[i][0], boxes[j][0])
-            y1 = max(boxes[i][1], boxes[j][1])
-            x2 = min(boxes[i][2], boxes[j][2])
-            y2 = min(boxes[i][3], boxes[j][3])
-            inter = max(0, x2 - x1) * max(0, y2 - y1)
-            a_i = (boxes[i][2] - boxes[i][0]) * (boxes[i][3] - boxes[i][1])
-            a_j = (boxes[j][2] - boxes[j][0]) * (boxes[j][3] - boxes[j][1])
-            if inter / max(a_i + a_j - inter, 1e-6) > iou_thresh:
-                discard = True
-                break
-        if not discard:
-            keep.append(i)
+    suppressed = np.zeros(len(scores), dtype=bool)
+    for idx in range(len(order)):
+        i = order[idx]
+        if suppressed[i]:
+            continue
+        keep.append(i)
+        # Vectorized IoU against remaining candidates
+        remaining = order[idx + 1:]
+        if len(remaining) == 0:
+            break
+        xx1 = np.maximum(boxes[i, 0], boxes[remaining, 0])
+        yy1 = np.maximum(boxes[i, 1], boxes[remaining, 1])
+        xx2 = np.minimum(boxes[i, 2], boxes[remaining, 2])
+        yy2 = np.minimum(boxes[i, 3], boxes[remaining, 3])
+        inter = np.maximum(0, xx2 - xx1) * np.maximum(0, yy2 - yy1)
+        union = areas[i] + areas[remaining] - inter
+        iou = inter / np.maximum(union, 1e-6)
+        suppressed[remaining[iou > iou_thresh]] = True
     labels = [result.labels[i] for i in keep] if result.labels else None
     track_ids = result.track_ids[keep] if result.track_ids is not None else None
     return DetectionResult(
