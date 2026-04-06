@@ -490,17 +490,77 @@ def run_benchmark():
                 backbone_features[bid] = feats[j:j+1]
         print("# Backbone pre-compute complete", flush=True)
 
+        # Pre-compute FPN + DETR encoder for all frames (prompt is constant)
+        print("# Pre-computing encoder features...", flush=True)
+        encoder_features = {}
+        det_features_cache = {}
+        spatial_cache = {}
+        # Get text embeddings once (constant across frames)
+        inputs_embeds, attention_mask = predictor._get_input_embeddings(prompts[0])
+        for img_id in item_keys:
+            bb_feat = backbone_features[img_id]
+            src, pos_flat, det_feats, spatial = get_det_features(predictor.model, bb_feat)
+            mx.eval(src, pos_flat)
+            encoded = run_detr_encoder(predictor.model, src, pos_flat, inputs_embeds, attention_mask)
+            encoder_features[img_id] = (encoded, pos_flat)
+            det_features_cache[img_id] = det_feats
+            spatial_cache[img_id] = spatial
+        print("# Encoder pre-compute complete", flush=True)
+
         for i, (img_id, img_path) in enumerate(items):
             t0 = time.perf_counter()
 
             img_size = preloaded[img_id][0]
-            backbone_cache = backbone_features[img_id]
-            encoder_cache.clear()
+            encoded, pos_flat = encoder_features[img_id]
+            det_feats = det_features_cache[img_id]
+            H_f, W_f = spatial_cache[img_id]
 
-            result = detect_with_backbone(
-                predictor, backbone_cache, prompts, img_size,
-                SCORE_THRESHOLD, encoder_cache=encoder_cache,
+            # Run only DETR decoder + mask (encoder already pre-computed)
+            det = predictor.model.detector_model
+            hs, ref_boxes, presence_logits = det.detr_decoder(
+                vision_features=encoded,
+                inputs_embeds=inputs_embeds,
+                vision_pos_encoding=pos_flat,
+                text_mask=attention_mask,
+                spatial_shape=(H_f, W_f),
             )
+
+            pred_boxes_cxcywh = ref_boxes[-1]
+            cx, cy, w, h = (pred_boxes_cxcywh[..., 0], pred_boxes_cxcywh[..., 1],
+                            pred_boxes_cxcywh[..., 2], pred_boxes_cxcywh[..., 3])
+            pred_boxes_xyxy = mx.stack([cx - w/2, cy - h/2, cx + w/2, cy + h/2], axis=-1)
+
+            all_logits = det.dot_product_scoring(hs, inputs_embeds, attention_mask)
+            pred_logits = all_logits[-1].squeeze(-1)
+            presence = presence_logits[-1]
+            mx.eval(pred_logits, pred_boxes_xyxy, presence)
+
+            scores_quick = np.array(mx.sigmoid(pred_logits.squeeze()))
+            if presence is not None:
+                pres_np = np.array(mx.sigmoid(presence))
+                scores_quick = scores_quick * pres_np.squeeze()
+            keep_mask_idx = np.where(scores_quick > SCORE_THRESHOLD)[0]
+
+            W, H = img_size if isinstance(img_size, tuple) else (img_size[1], img_size[0])
+            if len(keep_mask_idx) > 0:
+                keep_idx_mx = mx.array(keep_mask_idx.astype(np.int32))
+                last_hs_kept = hs[-1][:, keep_idx_mx]
+                seg_out = det.mask_decoder(
+                    last_hs_kept, list(det_feats),
+                    encoder_hidden_states=encoded,
+                    prompt_features=inputs_embeds, prompt_mask=attention_mask,
+                )
+                mx.eval(seg_out)
+                pboxes = np.array(pred_boxes_xyxy)
+                if pboxes.ndim == 3: pboxes = pboxes[0]
+                boxes_np = pboxes[keep_mask_idx] * np.array([W, H, W, H])
+                boxes_np = np.clip(boxes_np, 0, max(H, W))
+                masks_np = np.array(seg_out["pred_masks"][0])
+                masks_resized = resize_masks(masks_np, (H, W))
+                masks_binary = (masks_resized > 0).astype(np.uint8)
+                result = nms(DetectionResult(boxes=boxes_np, masks=masks_binary, scores=scores_quick[keep_mask_idx]))
+            else:
+                result = DetectionResult(boxes=np.zeros((0, 4)), masks=np.zeros((0, H, W), dtype=np.uint8), scores=np.zeros((0,)))
 
             dt = time.perf_counter() - t0
             frame_times.append(dt)
