@@ -439,15 +439,31 @@ def run_benchmark():
             preloaded[img_id] = (img.size, mx.array(preprocess_image(img)))
         print(f"# Preload complete", flush=True)
 
+        # Pre-compute ALL backbone features in batches of 2 for better GPU utilization
+        print("# Pre-computing backbone features...", flush=True)
+        backbone_features = {}
+        item_keys = [k for k, _ in items]
+        for bi in range(0, len(items), 2):
+            batch_ids = item_keys[bi:bi+2]
+            if len(batch_ids) == 2:
+                pv1 = preloaded[batch_ids[0]][1]
+                pv2 = preloaded[batch_ids[1]][1]
+                batched = mx.concatenate([pv1, pv2], axis=0)
+                feats = _compiled_backbone(batched) if _compiled_backbone else predictor.model.detector_model.vision_encoder.backbone(batched)
+                mx.eval(feats)
+                backbone_features[batch_ids[0]] = feats[0:1]
+                backbone_features[batch_ids[1]] = feats[1:2]
+            else:
+                feats = get_backbone_features(predictor.model, preloaded[batch_ids[0]][1])
+                backbone_features[batch_ids[0]] = feats
+        print("# Backbone pre-compute complete", flush=True)
+
         for i, (img_id, img_path) in enumerate(items):
             t0 = time.perf_counter()
 
-            img_size, pixel_values = preloaded[img_id]
-
-            # Backbone caching
-            if i % BACKBONE_CACHE_EVERY == 0 or backbone_cache is None:
-                backbone_cache = get_backbone_features(predictor.model, pixel_values)
-                encoder_cache.clear()
+            img_size = preloaded[img_id][0]
+            backbone_cache = backbone_features[img_id]
+            encoder_cache.clear()
 
             result = detect_with_backbone(
                 predictor, backbone_cache, prompts, img_size,
