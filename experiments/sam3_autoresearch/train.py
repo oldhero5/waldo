@@ -102,17 +102,16 @@ def preprocess_image(
     return pixel_values[None]  # (1, H, W, 3)
 
 
+_compiled_backbone = None
+
 def get_backbone_features(model, pixel_values: mx.array) -> mx.array:
     """Run ViT backbone only (no FPN neck). ~67ms on M4 Max.
-
-    Optimization ideas:
-    - Cache across similar frames
-    - Quantize backbone weights (int8/int4)
-    - Prune attention heads
-    - Reduce patch size
-    - Run on ANE via CoreML/maderix bridge
+    Uses mx.compile for JIT compilation speedup.
     """
-    features = model.detector_model.vision_encoder.backbone(pixel_values)
+    global _compiled_backbone
+    if _compiled_backbone is None:
+        _compiled_backbone = mx.compile(model.detector_model.vision_encoder.backbone)
+    features = _compiled_backbone(pixel_values)
     mx.eval(features)
     return features
 
