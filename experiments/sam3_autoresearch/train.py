@@ -48,7 +48,7 @@ MODEL_ID = "mlx-community/sam3.1-bf16"
 PREPROCESS_INTERPOLATION = Image.BILINEAR  # NEAREST, BILINEAR, BICUBIC, LANCZOS
 IMAGE_MEAN = (0.5, 0.5, 0.5)
 IMAGE_STD = (0.5, 0.5, 0.5)
-MASK_RESIZE_METHOD = "pil_bilinear"  # pil_bilinear, cv2_nearest, cv2_linear
+MASK_RESIZE_METHOD = "cv2_linear"  # pil_bilinear, cv2_nearest, cv2_linear
 
 # ============================================================
 # MODEL LOADING — Loads weights from mlx-vlm, can be modified
