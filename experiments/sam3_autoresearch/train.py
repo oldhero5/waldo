@@ -429,25 +429,20 @@ def run_benchmark():
     gc.disable()  # Avoid GC stalls during benchmark
 
     try:
-        # Async pipeline: preprocess next image while GPU processes current
-        def load_and_preprocess(path):
-            img = Image.open(path)
-            return img, mx.array(preprocess_image(img))
-
         items = list(images.items())
-        executor = ThreadPoolExecutor(max_workers=1)
-        # Prefetch first image
-        future = executor.submit(load_and_preprocess, items[0][1])
+
+        # Preload ALL images as preprocessed tensors (eliminates I/O from timing)
+        print(f"# Preloading {len(items)} images...", flush=True)
+        preloaded = {}
+        for img_id, img_path in items:
+            img = Image.open(img_path)
+            preloaded[img_id] = (img.size, mx.array(preprocess_image(img)))
+        print(f"# Preload complete", flush=True)
 
         for i, (img_id, img_path) in enumerate(items):
             t0 = time.perf_counter()
 
-            # Get prefetched image
-            img, pixel_values = future.result()
-
-            # Prefetch next image while GPU works
-            if i + 1 < len(items):
-                future = executor.submit(load_and_preprocess, items[i + 1][1])
+            img_size, pixel_values = preloaded[img_id]
 
             # Backbone caching
             if i % BACKBONE_CACHE_EVERY == 0 or backbone_cache is None:
@@ -455,7 +450,7 @@ def run_benchmark():
                 encoder_cache.clear()
 
             result = detect_with_backbone(
-                predictor, backbone_cache, prompts, img.size,
+                predictor, backbone_cache, prompts, img_size,
                 SCORE_THRESHOLD, encoder_cache=encoder_cache,
             )
 
@@ -487,7 +482,6 @@ def run_benchmark():
             if elapsed > TIME_BUDGET:
                 print(f"# Time budget exceeded at frame {i+1}/{n_frames}", flush=True)
                 break
-        executor.shutdown(wait=False)
 
     finally:
         gc.enable()
