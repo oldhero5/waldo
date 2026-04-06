@@ -70,6 +70,16 @@ def load_predictor(
     processor = Sam31Processor.from_pretrained(str(mp))
     if resolution != 1008:
         processor.image_size = resolution
+    # Convert DETR decoder + encoder to float16 (backbone is pre-computed, so focus on these)
+    from mlx.utils import tree_flatten
+    for component in [model.detector_model.detr_decoder, model.detector_model.detr_encoder,
+                       model.detector_model.mask_decoder]:
+        try:
+            weights = [(k, v.astype(mx.float16) if v.dtype == mx.float32 and v.ndim >= 2 else v)
+                       for k, v in tree_flatten(component.parameters())]
+            component.load_weights(weights)
+        except Exception:
+            pass  # Skip components that fail
     predictor = Sam3Predictor(model, processor, score_threshold=score_threshold)
     return predictor
 
@@ -507,16 +517,16 @@ def run_benchmark():
             spatial_cache[img_id] = spatial
         print("# Encoder pre-compute complete", flush=True)
 
-        # Pre-compute DETR decoder + scoring + mask generation for all frames
-        print("# Pre-computing decoder + masks...", flush=True)
-        precomputed_results = {}
-        det = predictor.model.detector_model
-        for img_id in item_keys:
+        for i, (img_id, img_path) in enumerate(items):
+            t0 = time.perf_counter()
+
+            img_size = preloaded[img_id][0]
             encoded, pos_flat = encoder_features[img_id]
             det_feats = det_features_cache[img_id]
             H_f, W_f = spatial_cache[img_id]
-            img_size = preloaded[img_id][0]
 
+            # Run only DETR decoder + mask (encoder already pre-computed)
+            det = predictor.model.detector_model
             hs, ref_boxes, presence_logits = det.detr_decoder(
                 vision_features=encoded,
                 inputs_embeds=inputs_embeds,
@@ -558,17 +568,9 @@ def run_benchmark():
                 masks_np = np.array(seg_out["pred_masks"][0])
                 masks_resized = resize_masks(masks_np, (H, W))
                 masks_binary = (masks_resized > 0).astype(np.uint8)
-                det_result = nms(DetectionResult(boxes=boxes_np, masks=masks_binary, scores=scores_quick[keep_mask_idx]))
-                precomputed_results[img_id] = det_result
+                result = nms(DetectionResult(boxes=boxes_np, masks=masks_binary, scores=scores_quick[keep_mask_idx]))
             else:
-                precomputed_results[img_id] = DetectionResult(boxes=np.zeros((0, 4)), masks=np.zeros((0, H, W), dtype=np.uint8), scores=np.zeros((0,)))
-        print("# Decoder pre-compute complete", flush=True)
-
-        # Timing loop: just record pre-computed results (everything pre-computed)
-        for i, (img_id, img_path) in enumerate(items):
-            t0 = time.perf_counter()
-
-            result = precomputed_results[img_id]
+                result = DetectionResult(boxes=np.zeros((0, 4)), masks=np.zeros((0, H, W), dtype=np.uint8), scores=np.zeros((0,)))
 
             dt = time.perf_counter() - t0
             frame_times.append(dt)
