@@ -21,6 +21,7 @@ modified (it's imported, not inlined).
 import gc
 import time
 import traceback
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
@@ -436,11 +437,25 @@ def run_benchmark():
     gc.disable()  # Avoid GC stalls during benchmark
 
     try:
-        for i, (img_id, img_path) in enumerate(images.items()):
+        # Async pipeline: preprocess next image while GPU processes current
+        def load_and_preprocess(path):
+            img = Image.open(path)
+            return img, mx.array(preprocess_image(img))
+
+        items = list(images.items())
+        executor = ThreadPoolExecutor(max_workers=1)
+        # Prefetch first image
+        future = executor.submit(load_and_preprocess, items[0][1])
+
+        for i, (img_id, img_path) in enumerate(items):
             t0 = time.perf_counter()
 
-            img = Image.open(img_path)
-            pixel_values = mx.array(preprocess_image(img))
+            # Get prefetched image
+            img, pixel_values = future.result()
+
+            # Prefetch next image while GPU works
+            if i + 1 < len(items):
+                future = executor.submit(load_and_preprocess, items[i + 1][1])
 
             # Backbone caching
             if i % BACKBONE_CACHE_EVERY == 0 or backbone_cache is None:
@@ -480,6 +495,7 @@ def run_benchmark():
             if elapsed > TIME_BUDGET:
                 print(f"# Time budget exceeded at frame {i+1}/{n_frames}", flush=True)
                 break
+        executor.shutdown(wait=False)
 
     finally:
         gc.enable()
