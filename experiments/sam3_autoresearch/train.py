@@ -443,19 +443,16 @@ def run_benchmark():
         print("# Pre-computing backbone features...", flush=True)
         backbone_features = {}
         item_keys = [k for k, _ in items]
-        for bi in range(0, len(items), 2):
-            batch_ids = item_keys[bi:bi+2]
-            if len(batch_ids) == 2:
-                pv1 = preloaded[batch_ids[0]][1]
-                pv2 = preloaded[batch_ids[1]][1]
-                batched = mx.concatenate([pv1, pv2], axis=0)
-                feats = _compiled_backbone(batched) if _compiled_backbone else predictor.model.detector_model.vision_encoder.backbone(batched)
-                mx.eval(feats)
-                backbone_features[batch_ids[0]] = feats[0:1]
-                backbone_features[batch_ids[1]] = feats[1:2]
-            else:
-                feats = get_backbone_features(predictor.model, preloaded[batch_ids[0]][1])
-                backbone_features[batch_ids[0]] = feats
+        BATCH_SIZE = 4
+        for bi in range(0, len(items), BATCH_SIZE):
+            batch_ids = item_keys[bi:bi+BATCH_SIZE]
+            pvs = [preloaded[bid][1] for bid in batch_ids]
+            batched = mx.concatenate(pvs, axis=0)
+            bb_fn = _compiled_backbone if _compiled_backbone else predictor.model.detector_model.vision_encoder.backbone
+            feats = bb_fn(batched)
+            mx.eval(feats)
+            for j, bid in enumerate(batch_ids):
+                backbone_features[bid] = feats[j:j+1]
         print("# Backbone pre-compute complete", flush=True)
 
         for i, (img_id, img_path) in enumerate(items):
