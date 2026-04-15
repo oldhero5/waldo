@@ -1,4 +1,5 @@
 import React from "react";
+import useBaseUrl from "@docusaurus/useBaseUrl";
 
 type DemoProps = {
   src: string;
@@ -8,6 +9,11 @@ type DemoProps = {
 };
 
 export default function Demo({ src, poster, caption, width = "100%" }: DemoProps) {
+  // Resolve root-relative paths against the configured baseUrl
+  // (Docusaurus only rewrites Markdown ![]() syntax, not raw <video src>).
+  const resolvedSrc = useBaseUrl(src);
+  const resolvedPoster = useBaseUrl(poster ?? "");
+
   return (
     <figure
       style={{
@@ -19,8 +25,8 @@ export default function Demo({ src, poster, caption, width = "100%" }: DemoProps
       }}
     >
       <video
-        src={src}
-        poster={poster}
+        src={resolvedSrc}
+        poster={poster ? resolvedPoster : undefined}
         controls
         muted
         loop

@@ -15,7 +15,41 @@
 import { test, expect, Page } from "@playwright/test";
 import * as path from "path";
 
-const PAGES: Array<{ name: string; route: string; waitFor?: string }> = [
+type PageSpec = {
+  name: string;
+  route: string;
+  waitFor?: string;
+  postLoad?: (page: Page) => Promise<void>;
+};
+
+// Wait until the review page has actually painted bounding-box overlays into
+// at least one canvas. The review canvases are absolutely positioned over each
+// frame thumbnail; we poll until one has non-transparent pixels.
+async function waitForBoxesPainted(page: Page) {
+  await page.waitForFunction(
+    () => {
+      const canvases = document.querySelectorAll("canvas");
+      for (const c of Array.from(canvases) as HTMLCanvasElement[]) {
+        if (c.width === 0 || c.height === 0) continue;
+        const ctx = c.getContext("2d");
+        if (!ctx) continue;
+        try {
+          const data = ctx.getImageData(0, 0, c.width, c.height).data;
+          for (let i = 3; i < data.length; i += 4 * 64) {
+            if (data[i] > 0) return true;
+          }
+        } catch {
+          return true; // tainted canvas — treat as painted
+        }
+      }
+      return false;
+    },
+    null,
+    { timeout: 15_000, polling: 250 }
+  );
+}
+
+const PAGES: Array<PageSpec> = [
   { name: "dashboard", route: "/" },
   { name: "upload", route: "/upload" },
   { name: "collections", route: "/collections" },
@@ -33,7 +67,26 @@ const PAGES: Array<{ name: string; route: string; waitFor?: string }> = [
   { name: "agent", route: "/agent" },
   { name: "settings", route: "/settings" },
   { name: "login", route: "/login", waitFor: 'input[type="email"]' },
-  { name: "review", route: "/review/3227d592-5401-4064-b294-49542a6a1a15" },
+  {
+    name: "review",
+    route: "/review/3227d592-5401-4064-b294-49542a6a1a15",
+    // The list-view canvases race against <img loading="lazy"> and often paint
+    // at h=0 (known UI bug). Click into the first frame to open the inspect
+    // modal, which mounts a fresh AnnotationCanvas with proper sizing.
+    postLoad: async (page) => {
+      await page.waitForLoadState("networkidle");
+      await page.waitForTimeout(1500);
+      const thumb = page.locator('img[src*="/download/frames/"]').first();
+      await thumb.waitFor({ state: "visible", timeout: 15_000 });
+      // Click the parent div (which has the onClick), not the image itself.
+      await thumb.locator("..").click({ force: true });
+      await page.waitForTimeout(2500);
+      try {
+        await waitForBoxesPainted(page);
+      } catch {}
+      await page.waitForTimeout(800);
+    },
+  },
   { name: "train", route: "/train/3227d592-5401-4064-b294-49542a6a1a15" },
   { name: "label", route: "/label/collection/c711d261-e7ef-4f5b-a2d4-7e4267ca3551" },
 ];
@@ -62,11 +115,16 @@ test.describe("Waldo screenshot capture", () => {
 
   for (const p of PAGES) {
     test(`capture ${p.name}`, async ({ page }) => {
+      test.setTimeout(120_000);
       try {
         if (p.name !== "login") await login(page);
         await page.goto(p.route, { waitUntil: "networkidle" });
         if (p.waitFor) await page.waitForSelector(p.waitFor, { timeout: 10_000 });
-        await page.waitForTimeout(1500); // let animations + lazy data settle
+        if (p.postLoad) {
+          await p.postLoad(page);
+        } else {
+          await page.waitForTimeout(1500);
+        }
         await page.screenshot({
           path: path.join(OUT_DIR, `${p.name}.png`),
           fullPage: true,
