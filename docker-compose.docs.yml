@@ -1,0 +1,47 @@
+---
+# Docs site dev + build — Docker-first so Linux & Windows devs need no Node.
+#
+# Dev server:        docker compose -f docker-compose.docs.yml up docs
+#                    -> http://localhost:3000
+# Build static site: docker compose -f docker-compose.docs.yml run --rm docs-build
+#                    -> output in docs-site/build/
+# Capture screenshots from a running Waldo dev server:
+#                    docker compose -f docker-compose.docs.yml run --rm docs-screenshots
+
+services:
+  docs:
+    image: waldo-docs:latest
+    build:
+      context: ./docs-site
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./docs-site:/app
+      - docs-node-modules:/app/node_modules
+    command: ["npm", "start"]
+
+  docs-build:
+    image: waldo-docs:latest
+    build:
+      context: ./docs-site
+    volumes:
+      - ./docs-site:/app
+      - docs-node-modules:/app/node_modules
+    command: ["npm", "run", "build"]
+
+  docs-screenshots:
+    image: waldo-docs:latest
+    build:
+      context: ./docs-site
+    network_mode: host  # so it can reach the Waldo dev server on localhost
+    environment:
+      - WALDO_BASE_URL=${WALDO_BASE_URL:-http://localhost:8000}
+      - WALDO_USER=${WALDO_USER:-admin@localhost}
+      - WALDO_PASSWORD=${WALDO_PASSWORD:-}
+    volumes:
+      - ./docs-site:/app
+      - docs-node-modules:/app/node_modules
+    command: ["npm", "run", "screenshots"]
+
+volumes:
+  docs-node-modules:
