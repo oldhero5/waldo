@@ -1,6 +1,10 @@
 # Waldo
 
-Auto-label any object in video using text prompts or click-based exemplars. Powered by [SAM 3](https://huggingface.co/facebook/sam3). Train YOLO models on the labeled data, monitor training live, export weights for deployment.
+> **Where's Waldo? Right here, finding objects in your video.**
+
+Self-hosted ML platform for video object detection at scale. Auto-label any object in video using text prompts or click-based exemplars (powered by [SAM 3](https://huggingface.co/facebook/sam3)), train YOLO26 detectors on the labeled data, monitor training live, and deploy the model to a serving endpoint or edge device.
+
+📘 **Full documentation:** [`docs-site/`](docs-site/) — quickstart, UI tour with screenshots and short walkthrough videos, API reference, deployment guides. Build it locally with `cd docs-site && npm install && npm run start`.
 
 ## Architecture
 
@@ -337,8 +341,24 @@ waldo/
 
 ## Documentation
 
-- **[docs/GUIDE.md](docs/GUIDE.md)** — Full platform walkthrough with screenshots
-- **[docs/WALKTHROUGH.md](docs/WALKTHROUGH.md)** — Step-by-step first-run tutorial
+The full docs live in [`docs-site/`](docs-site/) (Docusaurus). Highlights:
+
+- **[Quickstart](docs-site/docs/getting-started/quickstart.md)** — upload a clip, auto-label, train, deploy in ~15 minutes
+- **[UI Tour](docs-site/docs/ui/overview.md)** — every page screenshotted, with short walkthrough videos
+- **[Architecture](docs-site/docs/architecture/overview.md)** — services, data model, security
+- **[API Reference](docs-site/docs/api/overview.md)** — every REST endpoint grouped by resource
+- **[Workflow Blocks](docs-site/docs/workflows/overview.md)** — composable blocks for the visual editor
+- **[Deployment](docs-site/docs/deployment/docker.md)** — Docker, Linux, Windows, and edge devices
+
+Run the site locally:
+
+```bash
+cd docs-site
+npm install
+npm run start          # http://localhost:3000
+```
+
+Or build static HTML with `npm run build`. Screenshots and videos can be regenerated against your local Waldo with `npm run screenshots` and `npx playwright test scripts/recordings.spec.ts`.
 
 ## License
 
