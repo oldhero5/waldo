@@ -19,6 +19,8 @@ app = [
     "fastapi",
     "uvicorn[standard]",
     "python-multipart",
+    "python-jose[cryptography]",
+    "passlib[bcrypt]",
 ]
 labeler = [
     "transformers>=4.47",
@@ -39,6 +41,9 @@ dev = [
     "pytest",
     "pytest-asyncio",
     "httpx",
+    "pre-commit>=3.7",
+    "ruff>=0.6",
+    "detect-secrets>=1.5",
 ]
 
 [build-system]
@@ -54,3 +59,33 @@ default-groups = ["app", "labeler", "trainer", "dev"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+extend-exclude = ["docs-site", "ui", "**/migrations"]
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W",   # pycodestyle + pyflakes
+    "I",             # isort
+    "B",             # bugbear
+    "UP",            # pyupgrade
+    "S",             # bandit (security)
+    "SIM",           # simplify
+    "RUF",           # ruff-specific
+]
+ignore = [
+    "E501",   # line length handled by formatter
+    "B008",   # FastAPI Depends() in defaults
+    "S101",   # assert (used in tests)
+    "S104",   # 0.0.0.0 binds (intentional in containers)
+    "S105", "S106", "S107",  # hardcoded password defaults — checked at runtime instead
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S", "B"]
+"alembic/**" = ["I", "F"]
+
+[tool.ruff.format]
+quote-style = "double"
