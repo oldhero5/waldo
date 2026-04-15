@@ -1,0 +1,13 @@
+# Waldo gitleaks config: extends the default ruleset and ignores known false
+# positives in baseline / lockfiles.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Files that contain hashed fingerprints, not real secrets"
+paths = [
+  '''\.secrets\.baseline''',  # detect-secrets baseline holds SHA-1 fingerprints
+  '''uv\.lock''',
+  '''ui/package-lock\.json''',
+  '''ui/pnpm-lock\.yaml''',
+]
