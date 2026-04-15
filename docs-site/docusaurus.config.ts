@@ -7,11 +7,13 @@ const config: Config = {
   tagline: "SAM 3 video labeling + YOLO26 training pipeline",
   favicon: "img/favicon.svg",
 
-  url: "https://waldo.docs",
-  baseUrl: "/",
+  url: "https://oldhero5.github.io",
+  baseUrl: "/waldo/",
+  trailingSlash: false,
 
   organizationName: "oldhero5",
   projectName: "waldo",
+  deploymentBranch: "gh-pages",
 
   onBrokenLinks: "warn",
   onBrokenAnchors: "warn",
