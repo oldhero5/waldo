@@ -1,0 +1,101 @@
+---
+# Waldo pre-commit hooks: security + linting.
+#
+# Local install:  uv run pre-commit install
+# Run on all:     uv run pre-commit run --all-files
+# Docker (Linux/Windows, no local Python/Node needed):
+#                 docker compose -f docker-compose.precommit.yml run --rm precommit
+#
+# Hook order is intentional: cheapest checks first (whitespace, syntax),
+# then security (gitleaks, detect-secrets), then style (ruff, eslint, prettier),
+# then dockerfile linting last.
+
+default_language_version:
+  python: python3.11
+
+repos:
+  # ---- baseline file hygiene ----
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+      - id: check-toml
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+      - id: detect-private-key
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  # ---- secret scanning (defense in depth: two scanners) ----
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks
+
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: [--baseline, .secrets.baseline]
+        exclude: |
+          (?x)^(
+            uv\.lock|
+            ui/package-lock\.json|
+            ui/pnpm-lock\.yaml|
+            \.secrets\.baseline
+          )$
+
+  # ---- python: ruff (lint + format) ----
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.7.4
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+      - id: ruff-format
+
+  # ---- frontend: eslint + prettier (run via local node) ----
+  - repo: local
+    hooks:
+      - id: eslint
+        name: eslint (ui)
+        entry: bash -c 'cd ui && npx --no-install eslint --max-warnings=0'
+        language: system
+        files: ^ui/src/.*\.(ts|tsx|js|jsx)$
+        pass_filenames: true
+      - id: prettier
+        name: prettier (ui)
+        entry: bash -c 'cd ui && npx --no-install prettier --write'
+        language: system
+        files: ^ui/(src|public)/.*\.(ts|tsx|js|jsx|css|json|md|html)$
+        pass_filenames: true
+
+  # ---- dockerfiles ----
+  - repo: https://github.com/hadolint/hadolint
+    rev: v2.12.1-beta
+    hooks:
+      - id: hadolint-docker
+        args:
+          - --ignore=DL3008  # apt pin versions (we use --no-install-recommends)
+          - --ignore=DL3013  # pip pin versions (we use uv lockfile)
+
+  # ---- yaml lint ----
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.35.1
+    hooks:
+      - id: yamllint
+        args: [-d, "{extends: relaxed, rules: {line-length: {max: 200}}}"]
+
+  # ---- shell scripts ----
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.10.0.1
+    hooks:
+      - id: shellcheck
+
+# Skip these hooks in CI for fast pre-commit; run separately in a slow lane.
+ci:
+  skip: [hadolint-docker]
