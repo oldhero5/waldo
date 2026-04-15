@@ -12,7 +12,7 @@ import {
   activateModel,
 } from "../api";
 import TaskSelector from "../components/TaskSelector";
-import { Info, AlertTriangle, StopCircle, TrendingDown, Eye, RotateCcw } from "lucide-react";
+import { Info, AlertTriangle, StopCircle, TrendingDown, Eye, RotateCcw, CheckCircle } from "lucide-react";
 import LineChart from "../components/LineChart";
 import { humanizeMetricKey, formatMetricValue } from "../lib/metrics";
 
@@ -221,10 +221,12 @@ export default function TrainPage() {
 
       <div className="max-w-4xl mx-auto mt-8 px-4">
         <p className="eyebrow" style={{ marginBottom: 4 }}>Model training</p>
-        <h1 className="text-2xl font-bold text-gray-900 mb-2">Train Model</h1>
+        <h1 className="text-2xl font-bold mb-2" style={{ color: "var(--text-primary)" }}>Train Model</h1>
         {job && (
-          <p className="text-gray-500 text-sm mb-6">
-            Dataset: {job.text_prompt || "exemplar"} &middot; {job.total_frames} frames
+          <p className="text-sm mb-6" style={{ color: "var(--text-secondary)" }}>
+            Dataset: {job.name || job.text_prompt || "exemplar"} &middot; {job.total_frames} video{job.total_frames !== 1 ? "s" : ""}
+            {job.annotation_count != null && <> &middot; {job.annotation_count} annotations</>}
+            {job.class_count != null && job.class_count > 0 && <> &middot; {job.class_count} class{job.class_count !== 1 ? "es" : ""}</>}
           </p>
         )}
 
@@ -245,7 +247,7 @@ export default function TrainPage() {
           <div className="space-y-4 max-w-lg">
             {/* Presets */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1.5">Preset</label>
+              <label className="eyebrow block mb-1.5">Preset</label>
               <div className="flex gap-2">
                 {PRESETS.map((p) => {
                   const active = epochs === p.epochs && batchSize === p.batch && imgsz === p.imgsz;
@@ -257,11 +259,11 @@ export default function TrainPage() {
                         setBatchSize(p.batch);
                         setImgsz(p.imgsz);
                       }}
-                      className={`px-4 py-1.5 rounded-lg text-sm border transition-colors ${
-                        active
-                          ? "bg-gray-900 text-white border-gray-900"
-                          : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50"
-                      }`}
+                      className="px-4 py-1.5 rounded-lg text-sm transition-colors"
+                      style={active
+                        ? { backgroundColor: "var(--text-primary)", color: "var(--bg-page)", border: "1px solid var(--text-primary)" }
+                        : { backgroundColor: "var(--bg-surface)", color: "var(--text-secondary)", border: "1px solid var(--border-default)" }
+                      }
                     >
                       {p.label}
                     </button>
@@ -271,16 +273,16 @@ export default function TrainPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Task Type</label>
+              <label className="eyebrow block mb-1">Task Type</label>
               <TaskSelector value={taskType} onChange={setTaskType} />
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Model Variant</label>
+              <label className="eyebrow block mb-1">Model Variant</label>
               <select
                 value={variant}
                 onChange={(e) => setVariant(e.target.value)}
-                className="border rounded px-3 py-2 text-sm bg-white w-full"
+                className="rounded-lg px-3 py-2 text-sm w-full outline-none" style={{ border: "1px solid var(--border-default)", backgroundColor: "var(--bg-inset)", color: "var(--text-primary)" }}
               >
                 {filteredVariants.map((v) => (
                   <option key={v} value={v}>{humanizeVariant(v)}</option>
@@ -290,14 +292,14 @@ export default function TrainPage() {
 
             {/* Fine-tune from existing model */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label className="eyebrow block mb-1">
                 Starting Weights
                 <Tooltip text="Start from pretrained YOLO weights (default) or fine-tune from one of your existing models. Fine-tuning preserves learned features and trains faster." />
               </label>
               <select
                 value={resumeFrom}
                 onChange={(e) => setResumeFrom(e.target.value)}
-                className="border rounded px-3 py-2 text-sm bg-white w-full"
+                className="rounded-lg px-3 py-2 text-sm w-full outline-none" style={{ border: "1px solid var(--border-default)", backgroundColor: "var(--bg-inset)", color: "var(--text-primary)" }}
               >
                 <option value="">Pretrained (start fresh)</option>
                 {existingModels?.filter((m) => m.task_type === taskType).map((m) => (
@@ -315,7 +317,7 @@ export default function TrainPage() {
 
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label className="eyebrow block mb-1">
                   Epochs
                   <Tooltip text="Max training passes. Training may stop earlier if no improvement is seen (see Patience)." />
                 </label>
@@ -323,11 +325,11 @@ export default function TrainPage() {
                   type="number"
                   value={epochs}
                   onChange={(e) => setEpochs(Number(e.target.value))}
-                  className="border rounded px-3 py-2 text-sm w-full"
+                  className="rounded-lg px-3 py-2 text-sm w-full outline-none" style={{ border: "1px solid var(--border-default)", backgroundColor: "var(--bg-inset)", color: "var(--text-primary)" }}
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label className="eyebrow block mb-1">
                   Patience
                   <Tooltip text="Stop training after this many epochs without improvement on validation metrics. Default 2 means training stops if val loss increases for 2 consecutive epochs." />
                 </label>
@@ -336,11 +338,11 @@ export default function TrainPage() {
                   value={patience}
                   onChange={(e) => setPatience(Number(e.target.value))}
                   min={1}
-                  className="border rounded px-3 py-2 text-sm w-full"
+                  className="rounded-lg px-3 py-2 text-sm w-full outline-none" style={{ border: "1px solid var(--border-default)", backgroundColor: "var(--bg-inset)", color: "var(--text-primary)" }}
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label className="eyebrow block mb-1">
                   Batch Size
                   <Tooltip text="Images per batch. Larger = faster training but more memory. Reduce if you get out-of-memory errors." />
                 </label>
@@ -348,11 +350,11 @@ export default function TrainPage() {
                   type="number"
                   value={batchSize}
                   onChange={(e) => setBatchSize(Number(e.target.value))}
-                  className="border rounded px-3 py-2 text-sm w-full"
+                  className="rounded-lg px-3 py-2 text-sm w-full outline-none" style={{ border: "1px solid var(--border-default)", backgroundColor: "var(--bg-inset)", color: "var(--text-primary)" }}
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label className="eyebrow block mb-1">
                   Image Size
                   <Tooltip text="Input resolution. Larger detects smaller objects but trains slower. Common: 640, 1280." />
                 </label>
@@ -360,14 +362,14 @@ export default function TrainPage() {
                   type="number"
                   value={imgsz}
                   onChange={(e) => setImgsz(Number(e.target.value))}
-                  className="border rounded px-3 py-2 text-sm w-full"
+                  className="rounded-lg px-3 py-2 text-sm w-full outline-none" style={{ border: "1px solid var(--border-default)", backgroundColor: "var(--bg-inset)", color: "var(--text-primary)" }}
                 />
               </div>
             </div>
 
             {/* Augmentation preset */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1.5">
+              <label className="eyebrow block mb-1.5">
                 Data Augmentation
                 <Tooltip text="Controls how training images are transformed. Stronger augmentation makes models more robust to lighting, angles, and occlusion — but trains slower." />
               </label>
@@ -379,11 +381,11 @@ export default function TrainPage() {
                 ] as const).map((opt) => (
                   <label
                     key={opt.value}
-                    className={`flex items-start gap-3 p-3 border rounded-lg cursor-pointer transition-colors ${
-                      augPreset === opt.value
-                        ? "border-blue-500 bg-blue-50"
-                        : "border-gray-200 hover:bg-gray-50"
-                    }`}
+                    className="flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-colors"
+                    style={{
+                      border: augPreset === opt.value ? "2px solid var(--accent)" : "2px solid var(--border-subtle)",
+                      backgroundColor: augPreset === opt.value ? "var(--accent-soft)" : "transparent",
+                    }}
                   >
                     <input
                       type="radio"
@@ -395,7 +397,7 @@ export default function TrainPage() {
                     />
                     <div>
                       <span className="text-sm font-medium">{opt.label}</span>
-                      <p className="text-xs text-gray-500 mt-0.5">{opt.desc}</p>
+                      <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>{opt.desc}</p>
                     </div>
                   </label>
                 ))}
@@ -404,7 +406,8 @@ export default function TrainPage() {
 
             <button
               onClick={handleTrain}
-              className="px-6 py-2 bg-gray-900 text-white rounded-lg"
+              className="px-6 py-2 text-white rounded-lg"
+              style={{ backgroundColor: "var(--accent)" }}
             >
               Start Training
             </button>
@@ -416,31 +419,44 @@ export default function TrainPage() {
         {runStatus && (
           <div className="mt-6 space-y-4">
             {/* Progress bar + stop button */}
-            <div className="bg-white rounded-xl border border-gray-200 p-5">
+            <div className="surface p-5" style={{ borderRadius: "var(--radius-lg)" }}>
               <div className="flex justify-between items-center mb-2">
                 <div>
-                  <span className="font-medium capitalize">{runStatus.status}</span>
+                  <span className="font-medium capitalize" style={{ color: "var(--text-primary)" }}>{runStatus.status}</span>
                   {runStatus.status === "training" && batchProgress && batchProgress.total > 0 && (
-                    <span className="text-xs text-gray-400 ml-2">
+                    <span style={{ fontSize: 12, color: "var(--text-muted)", fontFamily: "var(--font-mono)", marginLeft: 8 }}>
                       Batch {batchProgress.batch}/{batchProgress.total} ({Math.round((batchProgress.batch / batchProgress.total) * 100)}%)
                     </span>
                   )}
                   {runStatus.status === "preparing" && (
-                    <span className="text-xs text-gray-400 ml-2">Preparing dataset...</span>
+                    <span style={{ fontSize: 12, color: "var(--text-muted)", marginLeft: 8 }}>Preparing dataset...</span>
                   )}
                 </div>
                 <div className="flex items-center gap-3">
-                  <span className="text-sm text-gray-500">
+                  <span style={{ fontSize: 13, color: "var(--text-secondary)", fontFamily: "var(--font-mono)" }}>
                     Epoch {runStatus.epoch_current}/{runStatus.total_epochs}
+                    {/* ETA estimate from epoch timing */}
+                    {runStatus.status === "training" && runStatus.epoch_current > 1 && runStatus.started_at && (() => {
+                      const elapsed = (Date.now() - new Date(runStatus.started_at).getTime()) / 1000;
+                      const secPerEpoch = elapsed / runStatus.epoch_current;
+                      const remaining = (runStatus.total_epochs - runStatus.epoch_current) * secPerEpoch;
+                      const mins = Math.round(remaining / 60);
+                      return (
+                        <span style={{ color: "var(--text-muted)", marginLeft: 8, fontSize: 11 }}>
+                          ~{mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h ${mins % 60}m`} remaining
+                        </span>
+                      );
+                    })()}
                   </span>
                   {runStatus.status === "training" && (
                     <button
                       onClick={async () => {
                         setStopping(true);
-                        try { await stopTraining(runId!); } catch {}
+                        try { await stopTraining(runId!); } catch (e) { console.error(e); }
                       }}
                       disabled={stopping}
-                      className="flex items-center gap-1 px-3 py-1 bg-red-50 text-red-600 border border-red-200 rounded-lg text-xs hover:bg-red-100 disabled:opacity-50"
+                      className="flex items-center gap-1 px-3 py-1 rounded-lg text-xs disabled:opacity-50"
+                      style={{ backgroundColor: "var(--danger-soft)", color: "var(--danger)", border: "1px solid var(--danger)" }}
                     >
                       <StopCircle size={12} />
                       {stopping ? "Stopping..." : "Stop Early"}
@@ -449,27 +465,26 @@ export default function TrainPage() {
                 </div>
               </div>
               {/* Epoch progress */}
-              <div className="w-full bg-gray-200 rounded-full h-2 mb-1">
+              <div className="w-full rounded-full h-2 mb-1" style={{ backgroundColor: "var(--bg-inset)" }}>
                 <div
-                  className="bg-gray-900 h-2 rounded-full transition-all"
-                  style={{ width: `${progress}%` }}
+                  className="h-2 rounded-full transition-all"
+                  style={{ width: `${progress}%`, backgroundColor: "var(--accent)" }}
                 />
               </div>
               {/* Batch sub-progress within current epoch */}
               {runStatus.status === "training" && batchProgress && batchProgress.total > 0 && (
                 <div className="mt-2">
-                  <div className="w-full bg-gray-100 rounded-full h-1.5">
+                  <div className="w-full rounded-full h-1.5" style={{ backgroundColor: "var(--bg-inset)" }}>
                     <div
-                      className="bg-blue-500 h-1.5 rounded-full transition-all"
-                      style={{ width: `${(batchProgress.batch / batchProgress.total) * 100}%` }}
+                      className="h-1.5 rounded-full transition-all"
+                      style={{ width: `${(batchProgress.batch / batchProgress.total) * 100}%`, backgroundColor: "var(--accent)" }}
                     />
                   </div>
-                  {/* Live batch losses */}
                   {Object.keys(batchProgress.losses).length > 0 && (
-                    <div className="flex gap-4 mt-2 text-xs text-gray-400">
+                    <div className="flex gap-4 mt-2" style={{ fontSize: 11, color: "var(--text-muted)" }}>
                       {Object.entries(batchProgress.losses).map(([k, v]) => (
                         <span key={k}>
-                          {k.replace("train/", "")}: <span className="font-mono text-gray-600">{v.toFixed(3)}</span>
+                          {k.replace("train/", "")}: <span style={{ fontFamily: "var(--font-mono)", color: "var(--text-secondary)" }}>{v.toFixed(3)}</span>
                         </span>
                       ))}
                     </div>
@@ -478,14 +493,38 @@ export default function TrainPage() {
               )}
             </div>
 
+            {/* Run configuration — collapsible summary of hyperparameters used */}
+            {Object.keys(runStatus.hyperparameters).length > 0 && (
+              <div className="surface p-4" style={{ borderRadius: "var(--radius-lg)" }}>
+                <p className="eyebrow mb-2">Configuration</p>
+                <div className="grid grid-cols-3 sm:grid-cols-6 gap-3">
+                  {[
+                    { label: "Model", value: runStatus.model_variant },
+                    { label: "Epochs", value: runStatus.total_epochs },
+                    { label: "Batch", value: runStatus.hyperparameters.batch ?? "-" },
+                    { label: "Img Size", value: runStatus.hyperparameters.imgsz ?? "-" },
+                    { label: "Patience", value: runStatus.hyperparameters.patience ?? "-" },
+                    { label: "Augment", value: runStatus.hyperparameters.augmentation ?? "-" },
+                  ].map((p) => (
+                    <div key={p.label}>
+                      <span className="block" style={{ fontSize: 10, fontFamily: "var(--font-mono)", textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--text-muted)" }}>{p.label}</span>
+                      <span style={{ fontSize: 14, fontWeight: 600, fontFamily: "var(--font-serif)", color: "var(--text-primary)" }}>
+                        {String(p.value)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Overfitting warning */}
             {overfitWarning && (
-              <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
+              <div className="flex items-start gap-2 rounded-lg p-3 text-sm" style={{ backgroundColor: "var(--warning-soft)", border: "1px solid var(--warning)", color: "var(--warning)" }}>
                 <TrendingDown size={16} className="mt-0.5 shrink-0" />
                 <div>
                   <span className="font-medium">Overfitting detected: </span>
                   {overfitWarning}
-                  <p className="text-xs mt-1 text-amber-600">
+                  <p className="text-xs mt-1" style={{ opacity: 0.8 }}>
                     Consider stopping early or adding more training data.
                   </p>
                 </div>
@@ -494,17 +533,27 @@ export default function TrainPage() {
 
             {/* No history message for old runs */}
             {effectiveLossHistory.length === 0 && runStatus.status === "completed" && (
-              <div className="bg-white rounded-xl border border-gray-200 p-5">
-                <h3 className="font-semibold text-gray-900 mb-2">Training Curves</h3>
-                <p className="text-sm text-gray-500">
+              <div className="surface p-5" style={{ borderRadius: "var(--radius-lg)" }}>
+                <p className="eyebrow mb-2">Training Curves</p>
+                <p className="text-sm" style={{ color: "var(--text-muted)" }}>
                   Epoch-by-epoch curves are not available for this run (trained before curve tracking was added).
-                  New training runs will show full loss and accuracy curves here.
                 </p>
               </div>
             )}
 
             {/* Loss curves */}
             {effectiveLossHistory.length > 1 && (() => {
+              // Find best epoch (lowest val box loss)
+              let bestLossEpoch = -1;
+              let bestLossVal = Infinity;
+              effectiveLossHistory.forEach((row, i) => {
+                for (const [k, v] of Object.entries(row)) {
+                  if (k.includes("val") && k.includes("box_loss") && v < bestLossVal) {
+                    bestLossVal = v;
+                    bestLossEpoch = i;
+                  }
+                }
+              });
               const allKeys = Object.keys(effectiveLossHistory[0] || {}).filter((k) => k !== "epoch");
               const lossSeries = allKeys.map((k) => {
                 const isVal = k.startsWith("val/");
@@ -530,13 +579,13 @@ export default function TrainPage() {
               ].filter((g) => g.series.length > 0);
 
               return (
-                <div className="bg-white rounded-xl border border-gray-200 p-5">
-                  <h3 className="font-semibold text-gray-900 mb-3">Loss Curves</h3>
+                <div className="surface p-5" style={{ borderRadius: "var(--radius-lg)" }}>
+                  <p className="eyebrow mb-3">Loss Curves</p>
                   <div className={`grid gap-4 ${groups.length > 1 ? "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3" : ""}`}>
                     {groups.map((g) => (
                       <div key={g.title}>
-                        <p className="text-xs text-gray-500 mb-1 font-medium">{g.title}</p>
-                        <LineChart data={lossHistory} series={g.series} height={120} />
+                        <p className="eyebrow mb-1">{g.title}</p>
+                        <LineChart data={effectiveLossHistory} series={g.series} height={120} bestEpoch={bestLossEpoch >= 0 ? bestLossEpoch : undefined} />
                       </div>
                     ))}
                   </div>
@@ -546,6 +595,17 @@ export default function TrainPage() {
 
             {/* Accuracy metrics */}
             {effectiveMetricHistory.length > 1 && (() => {
+              // Find best epoch (highest mAP50)
+              let bestMetricEpoch = -1;
+              let bestMetricVal = -1;
+              effectiveMetricHistory.forEach((row, i) => {
+                for (const [k, v] of Object.entries(row)) {
+                  if (k.includes("mAP50") && k.includes("(B)") && v > bestMetricVal) {
+                    bestMetricVal = v;
+                    bestMetricEpoch = i;
+                  }
+                }
+              });
               const keys = Object.keys(effectiveMetricHistory[0] || {}).filter((k) => k !== "epoch");
               const METRIC_COLORS: Record<string, string> = {
                 "precision": "#8b5cf6",
@@ -572,13 +632,13 @@ export default function TrainPage() {
               ];
 
               return (
-                <div className="bg-white rounded-xl border border-gray-200 p-5">
-                  <h3 className="font-semibold text-gray-900 mb-3">Accuracy Metrics</h3>
+                <div className="surface p-5" style={{ borderRadius: "var(--radius-lg)" }}>
+                  <p className="eyebrow mb-3">Accuracy Metrics</p>
                   <div className={`grid gap-4 ${groups.length > 1 ? "grid-cols-1 sm:grid-cols-2" : ""}`}>
                     {groups.map((g) => (
                       <div key={g.title}>
-                        <p className="text-xs text-gray-500 mb-1 font-medium">{g.title}</p>
-                        <LineChart data={metricHistory} series={g.series} height={140} yMin={0} yMax={1} />
+                        <p className="eyebrow mb-1">{g.title}</p>
+                        <LineChart data={effectiveMetricHistory} series={g.series} height={140} yMin={0} yMax={1} bestEpoch={bestMetricEpoch >= 0 ? bestMetricEpoch : undefined} />
                       </div>
                     ))}
                   </div>
@@ -588,15 +648,15 @@ export default function TrainPage() {
 
             {/* Live metrics grid */}
             {Object.keys(metrics).length > 0 && (
-              <div className="bg-white rounded-xl border border-gray-200 p-4">
-                <h3 className="font-semibold text-gray-900 mb-3">Current Metrics</h3>
+              <div className="surface p-4" style={{ borderRadius: "var(--radius-lg)" }}>
+                <p className="eyebrow mb-3">Current Metrics</p>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                   {Object.entries(metrics)
                     .filter(([k]) => !k.includes("sem_loss") && k !== "fitness")
                     .map(([k, v]) => (
-                    <div key={k} className="bg-gray-50 rounded-lg p-2">
-                      <span className="text-xs text-gray-500 block">{humanizeMetricKey(k)}</span>
-                      <span className="font-mono text-sm font-medium">
+                    <div key={k} className="rounded-lg p-2.5" style={{ backgroundColor: "var(--bg-inset)" }}>
+                      <span className="eyebrow block">{humanizeMetricKey(k)}</span>
+                      <span style={{ fontFamily: "var(--font-mono)", fontSize: 14, fontWeight: 600, color: "var(--text-primary)", fontVariantNumeric: "tabular-nums" }}>
                         {typeof v === "number" ? formatMetricValue(k, v) : String(v)}
                       </span>
                     </div>
@@ -605,20 +665,63 @@ export default function TrainPage() {
               </div>
             )}
 
+            {/* Per-class metrics (from best_metrics — YOLO computes these) */}
+            {runStatus.best_metrics && (() => {
+              const classMetrics: { name: string; precision: number; recall: number; mAP50: number }[] = [];
+              // YOLO stores per-class as metrics/precision_class0, etc. — or in the raw metrics dict
+              // Check for per-class keys pattern
+              for (const [k, v] of Object.entries(runStatus.best_metrics)) {
+                if (k.startsWith("per_class/")) {
+                  const parts = k.replace("per_class/", "").split("/");
+                  if (parts.length === 2) {
+                    const [cls, metric] = parts;
+                    let entry = classMetrics.find((c) => c.name === cls);
+                    if (!entry) {
+                      entry = { name: cls, precision: 0, recall: 0, mAP50: 0 };
+                      classMetrics.push(entry);
+                    }
+                    if (metric === "precision") entry.precision = v;
+                    if (metric === "recall") entry.recall = v;
+                    if (metric === "mAP50") entry.mAP50 = v;
+                  }
+                }
+              }
+              if (classMetrics.length === 0) return null;
+              return (
+                <div className="surface p-4" style={{ borderRadius: "var(--radius-lg)" }}>
+                  <p className="eyebrow mb-3">Per-Class Performance</p>
+                  <div className="space-y-1.5">
+                    <div className="grid grid-cols-4 gap-2 text-xs" style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}>
+                      <span>Class</span><span className="text-right">Precision</span><span className="text-right">Recall</span><span className="text-right">mAP50</span>
+                    </div>
+                    {classMetrics.map((c) => (
+                      <div key={c.name} className="grid grid-cols-4 gap-2 text-sm" style={{ fontVariantNumeric: "tabular-nums" }}>
+                        <span style={{ color: "var(--text-primary)", fontWeight: 500 }}>{c.name}</span>
+                        <span className="text-right" style={{ fontFamily: "var(--font-mono)", color: "var(--text-secondary)" }}>{(c.precision * 100).toFixed(1)}%</span>
+                        <span className="text-right" style={{ fontFamily: "var(--font-mono)", color: "var(--text-secondary)" }}>{(c.recall * 100).toFixed(1)}%</span>
+                        <span className="text-right" style={{ fontFamily: "var(--font-mono)", color: "var(--text-secondary)" }}>{(c.mAP50 * 100).toFixed(1)}%</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* Validation/training preview image — always shown */}
             {valPreview && (
-              <div className="bg-white rounded-xl border border-gray-200 p-5">
-                <h3 className="font-semibold text-gray-900 flex items-center gap-2 mb-3">
-                  <Eye size={16} />
-                  Model Predictions on Test Data
-                </h3>
+              <div className="surface p-5" style={{ borderRadius: "var(--radius-lg)" }}>
+                <p className="eyebrow mb-3 flex items-center gap-2">
+                  <Eye size={12} />
+                  Validation Preview
+                </p>
                 <img
                   src={`data:image/jpeg;base64,${valPreview}`}
                   alt="Model predictions"
-                  className="rounded-lg border border-gray-200 w-full cursor-pointer hover:opacity-90 transition-opacity"
+                  className="rounded-lg w-full cursor-pointer hover:opacity-90 transition-opacity"
+                  style={{ border: "1px solid var(--border-default)" }}
                   onClick={() => setPreviewExpanded(true)}
                 />
-                <p className="text-xs text-gray-400 mt-2">
+                <p className="text-xs mt-2" style={{ color: "var(--text-muted)" }}>
                   Updated each epoch. Click to enlarge.
                 </p>
               </div>
@@ -649,62 +752,110 @@ export default function TrainPage() {
               </div>
             )}
 
-            {/* Completed */}
-            {runStatus.status === "completed" && (
-              <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                <h3 className="font-semibold text-green-800 mb-2">Training Complete</h3>
-                <p className="text-sm text-green-700 mb-3">
-                  Finished at epoch {runStatus.epoch_current}/{runStatus.total_epochs}.
-                  {runStatus.best_metrics?.["metrics/mAP50(B)"] != null && (
-                    <> mAP50: {(runStatus.best_metrics["metrics/mAP50(B)"] * 100).toFixed(1)}%</>
-                  )}
-                </p>
-                <div className="flex flex-wrap gap-3">
-                  <button
-                    onClick={async () => {
-                      // Find the model from this run and activate + navigate to demo
-                      const allModels = await listModels();
-                      const thisModel = allModels.find((m) => m.name?.includes(runStatus.name || ""));
-                      if (thisModel) {
-                        await activateModel(thisModel.id);
-                        window.location.href = "/demo";
-                      } else {
-                        window.location.href = "/deploy";
-                      }
-                    }}
-                    className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium"
-                  >
-                    Activate &amp; Try Demo
-                  </button>
-                  <button
-                    onClick={() => { setShowNewRun(true); setRunId(null); }}
-                    className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium"
-                  >
-                    <RotateCcw size={14} />
-                    Train Again
-                  </button>
-                  <Link
-                    to="/experiments"
-                    className="px-4 py-2 border border-green-300 text-green-700 rounded-lg text-sm hover:bg-green-100"
-                  >
-                    View Experiments
-                  </Link>
-                  {runStatus.weights_url && (
-                    <a
-                      href={runStatus.weights_url}
-                      className="px-4 py-2 border border-green-300 text-green-700 rounded-lg text-sm hover:bg-green-100"
+            {/* Completed — Rich results summary */}
+            {runStatus.status === "completed" && (() => {
+              const bm = runStatus.best_metrics || {};
+              const mAP50 = bm["metrics/mAP50(B)"];
+              const mAP5095 = bm["metrics/mAP50-95(B)"];
+              const prec = bm["metrics/precision(B)"];
+              const rec = bm["metrics/recall(B)"];
+              const duration = runStatus.started_at && runStatus.completed_at
+                ? (() => {
+                    const secs = Math.round((new Date(runStatus.completed_at).getTime() - new Date(runStatus.started_at).getTime()) / 1000);
+                    return secs < 60 ? `${secs}s` : secs < 3600 ? `${Math.floor(secs / 60)}m ${secs % 60}s` : `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`;
+                  })()
+                : null;
+
+              return (
+                <div className="surface p-5" style={{ borderRadius: "var(--radius-lg)", borderColor: "var(--success)" }}>
+                  <div className="flex items-center gap-2 mb-4">
+                    <CheckCircle size={18} style={{ color: "var(--success)" }} />
+                    <span style={{ fontFamily: "var(--font-serif)", fontSize: 16, fontWeight: 700, color: "var(--text-primary)" }}>
+                      Training Complete
+                    </span>
+                    <span style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text-muted)", marginLeft: "auto" }}>
+                      {runStatus.epoch_current} epochs{duration && <> · {duration}</>}
+                    </span>
+                  </div>
+
+                  {/* Hero metrics */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+                    {[
+                      { label: "mAP50", value: mAP50, hero: true },
+                      { label: "mAP50-95", value: mAP5095 },
+                      { label: "Precision", value: prec },
+                      { label: "Recall", value: rec },
+                    ].map((m) => (
+                      <div
+                        key={m.label}
+                        className="rounded-lg p-3 text-center"
+                        style={{ backgroundColor: m.hero ? "var(--success-soft)" : "var(--bg-inset)" }}
+                      >
+                        <span className="eyebrow block">{m.label}</span>
+                        <span style={{
+                          fontSize: m.hero ? 28 : 22,
+                          fontWeight: 700,
+                          fontFamily: "var(--font-serif)",
+                          color: m.hero ? "var(--success)" : "var(--text-primary)",
+                          fontVariantNumeric: "tabular-nums",
+                        }}>
+                          {m.value != null ? `${(m.value * 100).toFixed(1)}%` : "—"}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex flex-wrap gap-3">
+                    <button
+                      onClick={async () => {
+                        const allModels = await listModels();
+                        const thisModel = allModels.find((m) => m.name?.includes(runStatus.name || ""));
+                        if (thisModel) {
+                          await activateModel(thisModel.id);
+                          window.location.href = "/deploy/test";
+                        } else {
+                          window.location.href = "/deploy/models";
+                        }
+                      }}
+                      className="px-4 py-2 text-white rounded-lg text-sm font-medium"
+                      style={{ backgroundColor: "var(--success)" }}
                     >
+                      Activate &amp; Try Demo
+                    </button>
+                    <button
+                      onClick={() => { setShowNewRun(true); setRunId(null); }}
+                      className="flex items-center gap-1.5 px-4 py-2 text-white rounded-lg text-sm font-medium"
+                      style={{ backgroundColor: "var(--accent)" }}
+                    >
+                      <RotateCcw size={14} />
+                      Train Again
+                    </button>
+                    <Link
+                      to="/experiments"
+                      className="px-4 py-2 rounded-lg text-sm"
+                      style={{ border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}
+                    >
+                      View Experiments
+                    </Link>
+                    {runStatus.weights_url && (
+                      <a
+                        href={runStatus.weights_url}
+                        className="px-4 py-2 rounded-lg text-sm"
+                        style={{ border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}
+                      >
                       Download Weights
                     </a>
                   )}
                 </div>
               </div>
-            )}
+              );
+            })()}
 
             {runStatus.status === "failed" && (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-                <h3 className="font-semibold text-red-800 mb-1">Training Failed</h3>
-                <p className="text-sm text-red-600">{runStatus.error_message}</p>
+              <div className="rounded-lg p-4" style={{ backgroundColor: "var(--danger-soft)", border: "1px solid var(--danger)" }}>
+                <h3 className="font-semibold mb-1" style={{ color: "var(--danger)" }}>Training Failed</h3>
+                <p className="text-sm" style={{ color: "var(--danger)" }}>{runStatus.error_message}</p>
               </div>
             )}
           </div>

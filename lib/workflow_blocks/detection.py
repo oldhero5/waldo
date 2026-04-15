@@ -1,4 +1,5 @@
 """Detection block — runs YOLO object detection on an image."""
+
 from typing import Any
 
 from lib.workflow_blocks.base import BlockBase, BlockResult, Port
@@ -23,7 +24,6 @@ class DetectionBlock(BlockBase):
         class_filter = self.config.get("class_filter", None)
 
         engine = get_engine()
-        engine._ensure_loaded()
         detections = engine.predict_image(image, conf=conf, class_filter=class_filter)
 
         return BlockResult(

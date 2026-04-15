@@ -29,6 +29,17 @@ export default function WorkflowsPage() {
 
   return (
     <div className="max-w-4xl mx-auto mt-6 px-4 sm:px-6 pb-16">
+      {/* Experimental banner */}
+      <div
+        className="flex items-center gap-2 rounded-lg px-4 py-2.5 mb-4"
+        style={{ backgroundColor: "var(--warning-soft)", border: "1px solid var(--warning)", color: "var(--warning)", fontSize: 13 }}
+      >
+        <span style={{ fontFamily: "var(--font-mono)", fontSize: 10, letterSpacing: "0.06em", textTransform: "uppercase", padding: "1px 5px", borderRadius: 4, backgroundColor: "var(--warning)", color: "#fff" }}>
+          beta
+        </span>
+        Workflows is experimental. Features may change as the design evolves.
+      </div>
+
       <div className="flex items-center justify-between mb-6">
         <div>
           <p className="eyebrow" style={{ marginBottom: 4 }}>Pipeline builder</p>

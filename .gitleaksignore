@@ -1,0 +1,4 @@
+# Documentation curl examples — placeholder bearer tokens, not real secrets.
+README.md:curl-auth-header:259
+ui/src/pages/deploy/EndpointsTab.tsx:curl-auth-header:12
+ui/src/pages/deploy/EndpointsTab.tsx:curl-auth-header:19

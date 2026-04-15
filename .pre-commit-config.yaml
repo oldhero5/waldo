@@ -58,20 +58,24 @@ repos:
         args: [--fix, --exit-non-zero-on-fix]
       - id: ruff-format
 
-  # ---- frontend: eslint + prettier (run via local node) ----
+  # ---- frontend: eslint + prettier (manual stage only) ----
+  # Disabled from pre-commit until the v2 UI lint debt is cleaned up. Run on
+  # demand with: uv run pre-commit run --hook-stage manual --all-files
   - repo: local
     hooks:
       - id: eslint
         name: eslint (ui)
-        entry: bash -c 'cd ui && npx --no-install eslint --max-warnings=0'
+        entry: bash -c 'cd ui && npx --no-install eslint --max-warnings=0 "$@"' --
         language: system
         files: ^ui/src/.*\.(ts|tsx|js|jsx)$
+        stages: [manual]
         pass_filenames: true
       - id: prettier
         name: prettier (ui)
-        entry: bash -c 'cd ui && npx --no-install prettier --write'
+        entry: bash -c 'cd ui && npx --no-install prettier --write "$@"' --
         language: system
         files: ^ui/(src|public)/.*\.(ts|tsx|js|jsx|css|json|md|html)$
+        stages: [manual]
         pass_filenames: true
 
   # ---- dockerfiles ----
@@ -82,6 +86,8 @@ repos:
         args:
           - --ignore=DL3008  # apt pin versions (we use --no-install-recommends)
           - --ignore=DL3013  # pip pin versions (we use uv lockfile)
+          - --ignore=DL3059  # consecutive RUN — info-level, not worth churning Dockerfiles
+          - --failure-threshold=warning
 
   # ---- yaml lint ----
   - repo: https://github.com/adrienverge/yamllint

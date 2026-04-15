@@ -1,9 +1,14 @@
-from fastapi import APIRouter, Query
+import base64
+import uuid
+
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
+from lib.auth import get_current_user
 from lib.db import DemoFeedback, SessionLocal
+from lib.storage import get_download_url, upload_bytes
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
 class FeedbackIn(BaseModel):
@@ -18,6 +23,7 @@ class FeedbackIn(BaseModel):
     feedback_type: str = "false_positive"
     corrected_class: str | None = None
     source_filename: str | None = None
+    frame_image_b64: str | None = None  # base64-encoded JPEG frame snapshot
 
 
 class FeedbackOut(BaseModel):
@@ -26,9 +32,11 @@ class FeedbackOut(BaseModel):
     class_name: str
     confidence: float | None = None
     bbox: list | None = None
+    polygon: list | None = None
     track_id: int | None = None
     frame_index: int | None = None
     source_filename: str | None = None
+    frame_url: str | None = None
     created_at: str
 
 
@@ -36,10 +44,38 @@ class FeedbackBatchIn(BaseModel):
     items: list[FeedbackIn]
 
 
+def _store_frame_image(image_b64: str) -> str:
+    """Decode base64 JPEG and upload to MinIO. Returns the object key."""
+    data = base64.b64decode(image_b64)
+    key = f"feedback/frames/{uuid.uuid4()}.jpg"
+    upload_bytes(key, data, content_type="image/jpeg")
+    return key
+
+
+def _fb_to_out(fb: DemoFeedback) -> FeedbackOut:
+    return FeedbackOut(
+        id=str(fb.id),
+        feedback_type=fb.feedback_type,
+        class_name=fb.class_name,
+        confidence=fb.confidence,
+        bbox=fb.bbox,
+        polygon=fb.polygon,
+        track_id=fb.track_id,
+        frame_index=fb.frame_index,
+        source_filename=fb.source_filename,
+        frame_url=get_download_url(fb.minio_key) if fb.minio_key else None,
+        created_at=fb.created_at.isoformat(),
+    )
+
+
 @router.post("/feedback", response_model=FeedbackOut, status_code=201)
 def submit_feedback(body: FeedbackIn):
     session = SessionLocal()
     try:
+        minio_key = None
+        if body.frame_image_b64:
+            minio_key = _store_frame_image(body.frame_image_b64)
+
         fb = DemoFeedback(
             model_id=body.model_id,
             class_name=body.class_name,
@@ -52,22 +88,12 @@ def submit_feedback(body: FeedbackIn):
             feedback_type=body.feedback_type,
             corrected_class=body.corrected_class,
             source_filename=body.source_filename,
+            minio_key=minio_key,
         )
         session.add(fb)
         session.commit()
         session.refresh(fb)
-
-        return FeedbackOut(
-            id=str(fb.id),
-            feedback_type=fb.feedback_type,
-            class_name=fb.class_name,
-            confidence=fb.confidence,
-            bbox=fb.bbox,
-            track_id=fb.track_id,
-            frame_index=fb.frame_index,
-            source_filename=fb.source_filename,
-            created_at=fb.created_at.isoformat(),
-        )
+        return _fb_to_out(fb)
     finally:
         session.close()
 
@@ -78,6 +104,10 @@ def submit_feedback_batch(body: FeedbackBatchIn):
     try:
         results = []
         for item in body.items:
+            minio_key = None
+            if item.frame_image_b64:
+                minio_key = _store_frame_image(item.frame_image_b64)
+
             fb = DemoFeedback(
                 model_id=item.model_id,
                 class_name=item.class_name,
@@ -90,22 +120,14 @@ def submit_feedback_batch(body: FeedbackBatchIn):
                 feedback_type=item.feedback_type,
                 corrected_class=item.corrected_class,
                 source_filename=item.source_filename,
+                minio_key=minio_key,
             )
             session.add(fb)
             results.append(fb)
         session.commit()
         for fb in results:
             session.refresh(fb)
-
-        return [
-            FeedbackOut(
-                id=str(fb.id),
-                feedback_type=fb.feedback_type,
-                class_name=fb.class_name,
-                created_at=fb.created_at.isoformat(),
-            )
-            for fb in results
-        ]
+        return [_fb_to_out(fb) for fb in results]
     finally:
         session.close()
 
@@ -124,15 +146,6 @@ def list_feedback(
         if feedback_type:
             query = query.filter_by(feedback_type=feedback_type)
         query = query.order_by(DemoFeedback.created_at.desc()).limit(limit)
-
-        return [
-            FeedbackOut(
-                id=str(fb.id),
-                feedback_type=fb.feedback_type,
-                class_name=fb.class_name,
-                created_at=fb.created_at.isoformat(),
-            )
-            for fb in query.all()
-        ]
+        return [_fb_to_out(fb) for fb in query.all()]
     finally:
         session.close()

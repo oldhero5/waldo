@@ -1,20 +1,23 @@
 /**
- * Settings — workspace management, user profile, API keys.
+ * Settings — workspace management, user profile, API keys, admin queue.
  */
 import { useState } from "react";
-import { Settings, Key, Users, User, Shield, LogOut } from "lucide-react";
+import { Settings, Key, Users, User, Shield, LogOut, ListChecks } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
+import { QueueAdminTab } from "./settings/QueueAdminTab";
 
-type Tab = "profile" | "team" | "api_keys";
+type Tab = "profile" | "team" | "api_keys" | "queue";
 
 export default function SettingsPage() {
   const [tab, setTab] = useState<Tab>("profile");
   const { user, logout } = useAuth();
+  const isAdmin = user?.role === "admin";
 
   const tabs: { key: Tab; label: string; icon: typeof User }[] = [
     { key: "profile", label: "Profile", icon: User },
     { key: "team", label: "Team", icon: Users },
     { key: "api_keys", label: "API Keys", icon: Key },
+    ...(isAdmin ? [{ key: "queue" as Tab, label: "Queue", icon: ListChecks }] : []),
   ];
 
   return (
@@ -182,6 +185,9 @@ print(r.json())`}
           </div>
         </div>
       )}
+
+      {/* Queue admin tab */}
+      {tab === "queue" && isAdmin && <QueueAdminTab />}
     </div>
   );
 }

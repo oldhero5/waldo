@@ -1,4 +1,5 @@
 """Video object tracker — optimized with frame skipping and batched inference."""
+
 import logging
 import math
 
@@ -85,7 +86,8 @@ class CentroidTracker:
             used_tracks.add(tid)
             cx, cy = det_centers[di]
             self.tracks[tid] = {
-                "cx": cx, "cy": cy,
+                "cx": cx,
+                "cy": cy,
                 "bbox": detections[di].bbox,
                 "lost": 0,
                 "class_index": detections[di].class_index,
@@ -98,7 +100,8 @@ class CentroidTracker:
                 detections[di].track_id = tid
                 cx, cy = det_centers[di]
                 self.tracks[tid] = {
-                    "cx": cx, "cy": cy,
+                    "cx": cx,
+                    "cy": cy,
                     "bbox": detections[di].bbox,
                     "lost": 0,
                     "class_index": detections[di].class_index,
@@ -129,14 +132,14 @@ class VideoTracker:
         """Track objects across video frames with frame skipping for speed."""
         meta = validate_video(path)
         engine = get_engine()
-        engine._ensure_loaded()
 
         needs_tiling = engine._needs_tiling(meta["height"], meta["width"])
 
         if needs_tiling:
             logger.info(
                 "Video is %dx%d — using tiled inference + centroid tracking",
-                meta["width"], meta["height"],
+                meta["width"],
+                meta["height"],
             )
             return self._track_with_tiling(path, meta, engine, on_frame)
         else:
@@ -156,8 +159,12 @@ class VideoTracker:
         frame_skip = self._compute_frame_skip(meta["fps"])
 
         if frame_skip > 1:
-            logger.info("Frame skip: processing every %d frames (%.1f→%.1f fps)",
-                        frame_skip, meta["fps"], meta["fps"] / frame_skip)
+            logger.info(
+                "Frame skip: processing every %d frames (%.1f→%.1f fps)",
+                frame_skip,
+                meta["fps"],
+                meta["fps"] / frame_skip,
+            )
 
         try:
             frame_idx = 0
@@ -209,8 +216,7 @@ class VideoTracker:
         min_frames = max(3, int(total_frames * 0.05))
         valid_tracks = {tid for tid, count in track_counts.items() if count >= min_frames}
 
-        logger.info("Track filter: %d/%d tracks kept (min_frames=%d)",
-                     len(valid_tracks), len(track_counts), min_frames)
+        logger.info("Track filter: %d/%d tracks kept (min_frames=%d)", len(valid_tracks), len(track_counts), min_frames)
 
         for fr in frame_results:
             fr.detections = [d for d in fr.detections if d.track_id in valid_tracks]

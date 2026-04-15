@@ -51,10 +51,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
 
+    let status = 0;
     fetch(`${API}/auth/me`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then((res) => {
+        status = res.status;
         if (!res.ok) throw new Error("Invalid token");
         return res.json();
       })
@@ -63,11 +65,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setLoading(false);
       })
       .catch(() => {
-        // Token invalid — clear it
-        localStorage.removeItem("waldo_token");
-        localStorage.removeItem("waldo_refresh");
-        setToken(null);
-        setUser(null);
+        if (status === 401 || status === 403) {
+          // Token invalid — clear auth
+          localStorage.removeItem("waldo_token");
+          localStorage.removeItem("waldo_refresh");
+          setToken(null);
+          setUser(null);
+        }
+        // Network errors: keep token, just stop loading
         setLoading(false);
       });
   }, [token]);
@@ -85,7 +90,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const data = await res.json();
     localStorage.setItem("waldo_token", data.access_token);
     localStorage.setItem("waldo_refresh", data.refresh_token);
+
+    // Fetch user before updating token state so the route guard sees
+    // a valid user immediately — avoids the redirect-back-to-login race.
+    const meRes = await fetch(`${API}/auth/me`, {
+      headers: { Authorization: `Bearer ${data.access_token}` },
+    });
+    if (!meRes.ok) throw new Error("Failed to fetch user");
+    const me = await meRes.json();
+    setUser(me);
     setToken(data.access_token);
+    setLoading(false);
   }, []);
 
   const register = useCallback(async (email: string, password: string, displayName: string) => {
@@ -101,7 +116,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const data = await res.json();
     localStorage.setItem("waldo_token", data.access_token);
     localStorage.setItem("waldo_refresh", data.refresh_token);
+
+    const meRes = await fetch(`${API}/auth/me`, {
+      headers: { Authorization: `Bearer ${data.access_token}` },
+    });
+    if (!meRes.ok) throw new Error("Failed to fetch user");
+    const me = await meRes.json();
+    setUser(me);
     setToken(data.access_token);
+    setLoading(false);
   }, []);
 
   const logout = useCallback(() => {

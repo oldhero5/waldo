@@ -1,8 +1,18 @@
 from pydantic_settings import BaseSettings
 
+INSECURE_DEV_DEFAULTS = {
+    "postgres_password": {"waldo", "postgres", ""},
+    "minio_access_key": {"minioadmin", ""},
+    "minio_secret_key": {"minioadmin", ""},
+    "jwt_secret": {"waldo-dev-secret-change-in-production", ""},
+}
+
 
 class Settings(BaseSettings):
     model_config = {"env_file": ".env", "extra": "ignore"}
+
+    # Deployment environment — production enforces secret hardening
+    app_env: str = "development"
 
     # PostgreSQL
     postgres_host: str = "localhost"
@@ -25,17 +35,20 @@ class Settings(BaseSettings):
     # Hugging Face
     hf_token: str = ""
 
-    # SAM 3
+    # SAM 3 (PyTorch/transformers) + SAM 3.1 (MLX)
     sam3_model_id: str = "facebook/sam3"
+    sam3_mlx_model_id: str = "mlx-community/sam3.1-bf16"
 
-    # Auth
+    # Auth — jwt_secret MUST be overridden in production (validated at startup)
     jwt_secret: str = "waldo-dev-secret-change-in-production"
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 1440  # 24 hours
 
-    # Ollama (for AI agent)
+    # AI Agent (Gemma4 via mlx-vlm on Apple Silicon)
+    agent_model_id: str = "google/gemma-4-e4b-it"
+    # Ollama fallback
     ollama_url: str = "http://localhost:11434"
-    ollama_model: str = "qwen3.5:9b"
+    ollama_model: str = "gemma4:12b"
 
     # Device
     device: str = "mps"
@@ -59,5 +72,29 @@ class Settings(BaseSettings):
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
 
+    def is_production(self) -> bool:
+        return self.app_env.lower() in {"production", "prod"}
+
+    def validate_production_secrets(self) -> list[str]:
+        """Return list of insecure-default fields. Empty list = safe."""
+        problems: list[str] = []
+        for field, bad_values in INSECURE_DEV_DEFAULTS.items():
+            if getattr(self, field) in bad_values:
+                problems.append(field)
+        return problems
+
 
 settings = Settings()
+
+
+def enforce_production_secrets() -> None:
+    """Call at app startup. Raises RuntimeError in production if secrets are weak."""
+    if not settings.is_production():
+        return
+    problems = settings.validate_production_secrets()
+    if problems:
+        raise RuntimeError(
+            "Refusing to start in production with insecure defaults for: "
+            + ", ".join(problems)
+            + ". Set these via environment variables."
+        )

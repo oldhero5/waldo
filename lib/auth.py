@@ -1,4 +1,8 @@
 """Authentication utilities — JWT tokens, password hashing, FastAPI dependencies."""
+
+import logging
+import os
+import secrets
 from datetime import UTC, datetime, timedelta
 
 from fastapi import Depends, HTTPException, Request, status
@@ -8,6 +12,8 @@ from passlib.context import CryptContext
 
 from lib.config import settings
 from lib.db import ApiKey, SessionLocal, User, WorkspaceMember
+
+logger = logging.getLogger(__name__)
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer(auto_error=False)
@@ -44,19 +50,9 @@ async def get_current_user(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
 ) -> User:
-    """FastAPI dependency — extracts user from JWT or API key.
-
-    If no users exist in the database (first run), creates an admin user
-    and returns it without requiring auth. This provides a smooth onboarding
-    experience where the first user to access the app becomes the admin.
-    """
+    """FastAPI dependency — extracts user from JWT or API key."""
     session = SessionLocal()
     try:
-        # Check if any users exist — if not, bootstrap
-        user_count = session.query(User).count()
-        if user_count == 0:
-            return _bootstrap_admin(session)
-
         if not credentials:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
 
@@ -80,9 +76,6 @@ async def get_optional_user(
         return None
     session = SessionLocal()
     try:
-        user_count = session.query(User).count()
-        if user_count == 0:
-            return _bootstrap_admin(session)
         try:
             return _auth_jwt(session, credentials.credentials)
         except HTTPException:
@@ -91,35 +84,65 @@ async def get_optional_user(
         session.close()
 
 
-def _bootstrap_admin(session) -> User:
-    """Create the first admin user + default workspace on first access."""
-    from lib.db import Workspace
+def bootstrap_admin_if_empty() -> None:
+    """Create the first admin user + workspace if the user table is empty.
 
-    workspace = session.query(Workspace).first()
-    if not workspace:
-        workspace = Workspace(name="Default Workspace", slug="default")
-        session.add(workspace)
+    Call from app startup, NOT from request handlers — never auto-create users
+    on an unauthenticated request, that's how default-credential takeovers happen.
+
+    Password resolution:
+      1. ADMIN_BOOTSTRAP_PASSWORD env var if set
+      2. Otherwise, generate a random 32-char password and log it once
+    Email resolution: ADMIN_BOOTSTRAP_EMAIL env var, default 'admin@localhost'.
+    """
+    from lib.db import Project, Workspace
+
+    session = SessionLocal()
+    try:
+        if session.query(User).count() > 0:
+            return
+
+        email = os.environ.get("ADMIN_BOOTSTRAP_EMAIL", "admin@localhost")
+        password = os.environ.get("ADMIN_BOOTSTRAP_PASSWORD")
+        generated = False
+        if not password:
+            if settings.is_production():
+                raise RuntimeError("Production startup requires ADMIN_BOOTSTRAP_PASSWORD when no users exist.")
+            password = secrets.token_urlsafe(24)
+            generated = True
+
+        workspace = session.query(Workspace).first()
+        if not workspace:
+            workspace = Workspace(name="Default Workspace", slug="default")
+            session.add(workspace)
+            session.flush()
+
+        user = User(
+            email=email,
+            password_hash=hash_password(password),
+            display_name="Admin",
+        )
+        session.add(user)
         session.flush()
 
-    user = User(
-        email="admin@localhost",
-        password_hash=hash_password("admin"),
-        display_name="Admin",
-    )
-    session.add(user)
-    session.flush()
+        session.add(WorkspaceMember(workspace_id=workspace.id, user_id=user.id, role="admin"))
 
-    member = WorkspaceMember(workspace_id=workspace.id, user_id=user.id, role="admin")
-    session.add(member)
+        for project in session.query(Project).filter(Project.workspace_id.is_(None)).all():
+            project.workspace_id = workspace.id
 
-    # Assign existing projects to this workspace
-    from lib.db import Project
-    for project in session.query(Project).filter(Project.workspace_id.is_(None)).all():
-        project.workspace_id = workspace.id
+        session.commit()
 
-    session.commit()
-    session.refresh(user)
-    return user
+        if generated:
+            banner = "=" * 72
+            logger.warning(
+                "\n%s\nWaldo bootstrapped first admin user.\n  email:    %s\n  password: %s\nStore this password — it will not be shown again.\n%s",
+                banner,
+                email,
+                password,
+                banner,
+            )
+    finally:
+        session.close()
 
 
 def _auth_jwt(session, token: str) -> User:
@@ -149,3 +172,22 @@ def _auth_api_key(session, key: str) -> User:
             if user:
                 return user
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
+
+
+async def require_admin(user: User = Depends(get_current_user)) -> User:
+    """FastAPI dependency — only admins pass.
+
+    Admin = a WorkspaceMember row with role="admin" in any workspace.
+    Raises 403 otherwise.
+    """
+    session = SessionLocal()
+    try:
+        is_admin = session.query(WorkspaceMember).filter_by(user_id=user.id, role="admin").first() is not None
+        if not is_admin:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin role required",
+            )
+        return user
+    finally:
+        session.close()

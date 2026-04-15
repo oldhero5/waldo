@@ -1,6 +1,6 @@
 # Waldo
 
-Auto-label any object in video using text prompts or click-based exemplars. Powered by SAM 3 (`facebook/sam3`). Train YOLO models on the labeled data, get notified when done, export weights for deployment.
+Auto-label any object in video using text prompts or click-based exemplars. Powered by [SAM 3](https://huggingface.co/facebook/sam3). Train YOLO models on the labeled data, monitor training live, export weights for deployment.
 
 ## Architecture
 
@@ -10,301 +10,336 @@ Auto-label any object in video using text prompts or click-based exemplars. Powe
                     └──────────────┬───────────────────────────┘
                                    │
                     ┌──────────────▼───────────────────────────┐
-                    │          FastAPI  (waldo-app)             │
+                    │          FastAPI  (waldo-app)            │
                     │   REST API  ·  WebSocket  ·  Static UI   │
                     └──┬───────────────┬───────────────┬───────┘
                        │               │               │
               ┌────────▼──┐    ┌───────▼───┐    ┌──────▼──────┐
-              │  Celery    │    │  Celery    │    │             │
-              │  Labeler   │    │  Trainer   │    │   Infra     │
-              │  (SAM 3)   │    │  (YOLO)    │    │             │
-              └────────────┘    └───────────┘    │ PostgreSQL  │
-                                                  │ Redis       │
-                                                  │ MinIO       │
-                                                  └─────────────┘
+              │  Celery   │    │  Celery   │    │             │
+              │  Labeler  │    │  Trainer  │    │   Infra     │
+              │  (SAM 3)  │    │  (YOLO)   │    │             │
+              └───────────┘    └───────────┘    │ PostgreSQL  │
+                                                │ Redis       │
+                                                │ MinIO       │
+                                                └─────────────┘
 ```
 
-**Full Pipeline:** Upload video → Label (text or click) → Review → Train YOLO → Get notified → Download weights
+**Pipeline:** Upload video → Label (text or click) → Review → Train YOLO → Deploy API
 
 ## Quickstart
 
-### Prerequisites
-- Docker (OrbStack or Docker Desktop)
-- Node.js 20+ and [uv](https://docs.astral.sh/uv/) (for building UI and local dev)
-- Hugging Face token (for SAM 3 model download)
+Every target platform runs as **Docker containers** via `docker-compose.yml`. The
+only exception is `make up-gpu` on macOS, which runs labeler and trainer natively
+so they can reach Apple's MPS GPU (MPS cannot be passed through to Linux containers).
 
-### Run (one command)
+### Prerequisites (all platforms)
+
+- Docker 24+ with Compose v2.3+ (OrbStack or Docker Desktop)
+- Node.js 20+ and [uv](https://docs.astral.sh/uv/) for local dev
+- Hugging Face token for the SAM 3 model download
 
 ```bash
-cp .env.example .env       # Add your HF_TOKEN
-make up                    # Builds UI, builds containers, starts everything
+cp .env.example .env     # Add HF_TOKEN
 ```
 
-That's it. Open `http://localhost:8000`. The app automatically runs database migrations on startup.
+### Matrix at a glance
 
-Containers started:
-- **waldo-app** — FastAPI + React UI (port 8000)
-- **waldo-labeler** — SAM 3 Celery worker
-- **waldo-trainer** — YOLO Celery worker
-- **postgres** — Database
-- **redis** — Task broker + metrics pub/sub
-- **minio** — Object storage (console at port 9001)
+| Platform | Command | Workers in Docker? | GPU |
+|----------|---------|:---:|-----|
+| macOS (CPU) | `make up` | ✅ | none |
+| macOS (native MPS) | `make up-gpu` | ❌ native | Apple MPS |
+| Linux + NVIDIA | `make up PROFILE=nvidia` | ✅ | CUDA |
+| Linux (CPU only) | `make up` | ✅ | none |
+| Windows (WSL 2) + NVIDIA | `make up PROFILE=nvidia` | ✅ | CUDA |
+
+### macOS (Apple Silicon)
+
+Apple's MPS cannot be passed through to Linux containers. Two options:
 
 ```bash
-make logs              # Tail all container logs
-make down              # Stop everything
+make up          # Everything in Docker, CPU workers. Slowest but zero setup.
+make up-gpu      # Infra + app in Docker, native MPS workers. Recommended.
 ```
 
-### NVIDIA GPU
+`make up-gpu` starts the labeler and trainer natively so they can reach the
+M-series GPU. Logs land in `/tmp/waldo-labeler.log` and `/tmp/waldo-trainer.log`.
+
+### Linux with NVIDIA CUDA
+
+Requires [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
+so Docker can see the GPU.
 
 ```bash
+# 1. Install the driver + toolkit (Ubuntu example — see NVIDIA docs for others)
+sudo apt install -y nvidia-driver-550
+distribution=$(. /etc/os-release; echo $ID$VERSION_ID)
+curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+curl -s -L https://nvidia.github.io/libnvidia-container/$distribution/libnvidia-container.list | \
+  sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+  sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+sudo apt update && sudo apt install -y nvidia-container-toolkit
+sudo nvidia-ctk runtime configure --runtime=docker
+sudo systemctl restart docker
+
+# 2. Verify the GPU is visible to Docker
+make gpu-check
+
+# 3. Start Waldo with the nvidia profile
 make up PROFILE=nvidia
+
+# 4. Confirm the workers actually see the GPU inside the container
+make gpu-logs
 ```
 
-### Apple Silicon GPU (MPS)
+The `nvidia` profile builds `labeler/Dockerfile.nvidia` and `trainer/Dockerfile.nvidia`
+from `nvidia/cuda:12.4.0-devel-ubuntu22.04`, installs CUDA-enabled PyTorch from
+`download.pytorch.org/whl/cu124` (PyPI ships CPU-only torch by default — a common
+silent-failure trap), and loads SAM 3 via PyTorch + Transformers. The Apple path
+uses MLX, which is macOS-only. Training uses CUDA bf16 for speed.
 
-Apple's MPS cannot be passed through to Docker containers (Docker runs a Linux VM).
-`make up` runs workers on CPU which works but is slower. For MPS acceleration:
+Each nvidia worker runs `scripts/entrypoint-worker.sh` on boot, which prints
+`nvidia-smi` + `torch.cuda.is_available()` so `make gpu-logs` immediately shows
+whether passthrough is working. Compose also sets `shm_size: 4gb` so PyTorch
+dataloader IPC doesn't OOM on the 64 MB Docker default.
+
+### Windows with NVIDIA CUDA (via WSL 2)
+
+Windows GPU support goes through **WSL 2 + Docker Desktop**. The NVIDIA driver lives
+on the Windows host; CUDA inside WSL is provided by the driver automatically — do
+**not** install a Linux CUDA driver inside WSL.
+
+**1. Prerequisites (on Windows):**
+- Windows 10 21H2+ or Windows 11 with virtualization enabled in BIOS
+- [NVIDIA Game-Ready or Studio driver](https://www.nvidia.com/Download/index.aspx)
+  (R525+) — **installed on Windows, not inside WSL**
+- [Docker Desktop for Windows](https://www.docker.com/products/docker-desktop/)
+  with the **WSL 2 backend** enabled in Settings → General
+- [Git for Windows](https://git-scm.com/download/win)
+
+**2. Install WSL 2 + Ubuntu** (from an elevated PowerShell):
+
+```powershell
+wsl --install -d Ubuntu
+wsl --set-default-version 2
+wsl --update
+```
+
+**3. In Docker Desktop**, Settings → Resources → WSL Integration: toggle on your
+Ubuntu distro so `docker` works inside WSL.
+
+**4. Clone and run Waldo from inside WSL** (open Ubuntu, then):
 
 ```bash
-make up                 # Everything in Docker (CPU workers)
-# OR
-make up-gpu             # Infra + app in Docker, native GPU workers
+# Sanity check — this must print your GPU
+nvidia-smi
+
+# One-time tooling
+sudo apt update && sudo apt install -y make git curl
+curl -LsSf https://astral.sh/uv/install.sh | sh
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+
+# Clone into the WSL filesystem (NOT /mnt/c — it's much slower)
+cd ~ && git clone https://github.com/YOUR_ORG/waldo.git && cd waldo
+cp .env.example .env   # edit and add HF_TOKEN
+
+# Verify GPU in Docker (same command as Linux)
+make gpu-check
+
+# Start Waldo — everything runs as Docker containers, including the GPU workers
+make up PROFILE=nvidia
+
+# Confirm the workers can see the GPU from inside the container
+make gpu-logs
 ```
 
-`make up-gpu` starts infra + app in Docker, then launches labeler and trainer
-natively in the background with MPS access. One command, zero extra terminals.
+Then open `http://localhost:8000` in your Windows browser — Docker Desktop
+forwards ports automatically.
+
+**Windows gotchas:**
+
+- **Keep the repo in the WSL filesystem** (`~/waldo`, not `/mnt/c/...`). Cross-filesystem
+  I/O is 10–20× slower, and ffmpeg frame extraction becomes the bottleneck.
+- **Line endings**: configure git to keep LF (`git config --global core.autocrlf input`)
+  so shell scripts don't break.
+- **File watcher limits**: if `make dev-ui` misses changes, raise the inotify limit:
+  `echo fs.inotify.max_user_watches=524288 | sudo tee -a /etc/sysctl.conf && sudo sysctl -p`
+- **Memory**: Docker Desktop defaults to half of host RAM. Training YOLO on 720p video
+  wants ≥ 16 GB allocated — adjust in `%UserProfile%\.wslconfig`:
+  ```
+  [wsl2]
+  memory=24GB
+  processors=8
+  ```
+  then `wsl --shutdown` and restart.
+
+Waldo has **not** been validated against native Windows (no WSL). Don't try
+it — Ultralytics, Celery's solo pool, and ffmpeg all behave differently there.
+
+### Linux without a GPU (CPU only)
+
+```bash
+make up          # Uses the apple profile; it's CPU-only Dockerfiles
+```
+
+Works for small datasets and smoke tests. Don't expect to train on real video.
+
+### Verify it's running
+
+```
+http://localhost:8000    # Waldo UI
+http://localhost:9001    # MinIO console  (minioadmin / minioadmin)
+```
+
+The app runs database migrations automatically on startup.
+
+## Common commands
+
+```bash
+make up              # Start everything
+make logs            # Tail all containers
+make down            # Stop everything
+make dev-ui          # Vite dev server with hot reload (proxies API)
+make build-ui        # Production build → app/static/
+make migrate         # Run Alembic migrations
+make test            # Python test suite
+make download-models # Download SAM 3 weights
+```
 
 ## Web UI
-
-Served at `http://localhost:8000/` as static files from FastAPI.
 
 | Page | Path | Description |
 |------|------|-------------|
 | Upload | `/upload` | Drag-and-drop video upload |
 | Label | `/label/:videoId` | Text search + click mode, 5 task types |
-| Review | `/review/:jobId` | Annotation grid, accept/reject, stats sidebar |
-| Train | `/train/:jobId` | Model variant picker, hyperparameters, live metrics |
-| Jobs | `/jobs` | All labeling jobs with status and progress |
+| Review | `/review/:jobId` | Annotation reviewer with hotkeys |
+| Train | `/train/:jobId` | Variant picker, hyperparameters, live metrics |
+| Deploy | `/deploy` | Endpoints, test console, model registry, monitoring |
 
-```bash
-make dev-ui    # Vite dev server with hot reload (port 5173, proxies API)
-make build-ui  # Production build → app/static/
-```
+## API
 
-## API Reference
-
-### Labeling
+All endpoints live under `/api/v1` and are documented at `/docs` (OpenAPI). Highlights:
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/v1/upload` | Upload video (multipart form) |
-| `POST` | `/api/v1/label` | Start text-prompt labeling |
-| `POST` | `/api/v1/label/exemplar` | Start click-based labeling |
-| `POST` | `/api/v1/label/segment-points` | Interactive SAM3 segmentation from clicks |
-| `POST` | `/api/v1/upload/images` | Upload standalone images to collection |
-| `POST` | `/api/v1/link-videos` | Link videos from another collection |
-| `GET` | `/api/v1/status/{job_id}` | Get job status + result download URL |
-| `GET` | `/api/v1/status` | List all jobs |
+| `POST` | `/upload` | Upload video |
+| `POST` | `/label` | Start text-prompt labeling |
+| `POST` | `/label/exemplar` | Start click-based labeling |
+| `GET` | `/status/{job_id}` | Job status + result URL |
+| `POST` | `/train` | Start training run |
+| `GET` | `/train/{run_id}` | Status + metrics + loss history |
+| `WS` | `/ws/training/{run_id}` | Live metrics stream |
+| `POST` | `/predict/image?model_id=ID` | Image inference |
+| `POST` | `/predict/video?model_id=ID` | Video inference with tracking |
+| `GET` | `/models` | List trained models |
 
-### Review & Annotations
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/v1/jobs/{job_id}/annotations` | List annotations (filter: `?status=pending`) |
-| `POST` | `/api/v1/annotations` | Create new annotation |
-| `PATCH` | `/api/v1/annotations/{id}` | Accept/reject/edit annotation |
-| `DELETE` | `/api/v1/jobs/{id}` | Delete dataset and annotations |
-| `GET` | `/api/v1/jobs/{job_id}/overview` | Rich dataset overview with thumbnails |
-| `GET` | `/api/v1/jobs/{job_id}/stats` | Dataset statistics (counts, density, class breakdown) |
-| `GET` | `/api/v1/videos/{video_id}/frames` | List frames with thumbnail URLs |
-| `GET` | `/api/v1/frames/{frame_id}` | Frame detail with all annotations |
-
-### Training
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/api/v1/train` | Start YOLO training run |
-| `GET` | `/api/v1/train/{run_id}` | Get training status + metrics + loss history |
-| `GET` | `/api/v1/train` | List all training runs |
-| `POST` | `/api/v1/train/{run_id}/stop` | Request early stop |
-| `DELETE` | `/api/v1/train/{run_id}` | Delete experiment + model |
-| `GET` | `/api/v1/train/variants` | Available model variants + default hyperparams |
-| `GET` | `/api/v1/models` | List trained models in registry |
-| `POST` | `/api/v1/models/{id}/activate` | Activate model for inference |
-| `POST` | `/api/v1/models/{id}/export` | Export model (ONNX, TFLite, CoreML, etc.) |
-| `WS` | `/ws/training/{run_id}` | Real-time training metrics via WebSocket |
-
-### Feedback
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/api/v1/feedback` | Submit false positive feedback |
-| `POST` | `/api/v1/feedback/batch` | Batch submit feedback |
-| `GET` | `/api/v1/feedback` | List feedback entries |
-
-### Example: Full Pipeline
+### Example pipeline
 
 ```bash
 # 1. Upload video
-curl -X POST http://localhost:8000/api/v1/upload -F "file=@dashcam.mp4"
-# → {"video_id": "abc-123", ...}
+curl -X POST http://localhost:8000/api/v1/upload -F "file=@clip.mp4"
 
-# 2. Label with text prompt
+# 2. Label with a text prompt
 curl -X POST http://localhost:8000/api/v1/label \
   -H "Content-Type: application/json" \
-  -d '{"video_id": "abc-123", "text_prompt": "car", "task_type": "segment"}'
-# → {"job_id": "def-456", "status": "pending"}
+  -d '{"video_id": "VIDEO_ID", "text_prompt": "person", "task_type": "segment"}'
 
-# 3. Poll until done
-curl http://localhost:8000/api/v1/status/def-456
-# → {"status": "completed", "result_url": "...", ...}
+# 3. Poll until the labeling job finishes
+curl http://localhost:8000/api/v1/status/JOB_ID
 
-# 4. Train YOLO on the labeled data
+# 4. Train a YOLO model on the dataset
 curl -X POST http://localhost:8000/api/v1/train \
   -H "Content-Type: application/json" \
-  -d '{"job_id": "def-456", "model_variant": "yolo11m-seg", "hyperparameters": {"epochs": 50}}'
-# → {"run_id": "ghi-789", "status": "queued"}
+  -d '{"job_id": "JOB_ID", "model_variant": "yolo26n-seg", "hyperparameters": {"epochs": 50}}'
 
-# 5. Monitor training (or use WebSocket for live metrics)
-curl http://localhost:8000/api/v1/train/ghi-789
-# → {"status": "training", "epoch_current": 23, "metrics": {"mAP50": 0.82, ...}}
+# 5. Watch training (or open the Train page in the UI)
+curl http://localhost:8000/api/v1/train/RUN_ID
 
-# 6. Download trained weights
-curl http://localhost:8000/api/v1/models
-# → [{"weights_url": "...", "metrics": {...}, ...}]
+# 6. Run inference against the trained model
+curl -X POST "http://localhost:8000/api/v1/predict/image?model_id=MODEL_ID" \
+  -H "Authorization: Bearer wld_YOUR_KEY" \
+  -F "file=@test.jpg"
 ```
 
-## YOLO Task Types
+## YOLO task types
 
-SAM 3 always outputs masks. Converters transform them into the format each YOLO task needs:
+SAM 3 always outputs segmentation masks. Waldo's converters reshape them into whatever
+format the selected YOLO task needs:
 
-| Task | Output Format | YOLO Variants |
-|------|---------------|---------------|
-| Segmentation | Polygon vertices (normalized) | yolo11n-seg → yolo11x-seg |
-| Detection | Bounding boxes (cx, cy, w, h) | yolo11n → yolo11x |
-| Classification | Cropped images in class dirs | yolo11n-cls → yolo11x-cls |
-| OBB | 4 rotated corner points | yolo11n-obb → yolo11m-obb |
-| Pose | Bbox + centroid keypoint | yolo11n-pose → yolo11m-pose |
+| Task | Output | YOLO variants |
+|------|--------|---------------|
+| Segmentation | Polygon vertices | `yolo26n-seg` → `yolo26x-seg` |
+| Detection | Bounding boxes | `yolo26n` → `yolo26x` |
+| Classification | Cropped images in class dirs | `yolo26n-cls` → `yolo26x-cls` |
+| OBB | 4 rotated corner points | `yolo26n-obb` → `yolo26m-obb` |
+| Pose | Bbox + centroid keypoint | `yolo26n-pose` → `yolo26m-pose` |
 
 ## Configuration
 
-All configuration via environment variables. See `.env.example`.
+Everything comes from environment variables. See `.env.example`.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DEVICE` | `mps` | Compute device: `mps`, `cuda`, `cpu` |
-| `DTYPE` | `float32` | Model dtype: `float32`, `bfloat16` |
-| `SAM3_MODEL_ID` | `facebook/sam3` | HuggingFace model ID |
-| `HF_TOKEN` | — | Hugging Face access token |
-| `SLACK_WEBHOOK_URL` | — | Slack incoming webhook for training alerts |
-| `NTFY_TOPIC` | — | ntfy.sh topic for push notifications |
-| `ALERT_EMAIL` | — | Email for training completion alerts |
-
-## Database Schema
-
-| Table | Purpose |
-|-------|---------|
-| `projects` | Group videos |
-| `videos` | Video metadata (fps, duration, resolution) |
-| `frames` | Extracted frames with phash dedup |
-| `labeling_jobs` | Labeling job tracking (text/exemplar, task type) |
-| `annotations` | Per-instance labels (polygon, bbox, confidence, status) |
-| `training_runs` | YOLO training lifecycle (epochs, metrics, weights) |
-| `model_registry` | Trained model versions with export formats |
+| `DEVICE` | `mps` | `mps` (Apple), `cuda` (NVIDIA), or `cpu` |
+| `DTYPE` | `float32` | `float32`, `bfloat16`, `float16` |
+| `SAM3_MODEL_ID` | `facebook/sam3.1` | HuggingFace transformers model (Linux/CUDA) |
+| `SAM3_MLX_MODEL_ID` | `mlx-community/sam3.1-bf16` | MLX variant (macOS) |
+| `HF_TOKEN` | — | HuggingFace token for model download |
+| `SLACK_WEBHOOK_URL` | — | Training alerts |
+| `NTFY_TOPIC` | — | Push notifications |
 
 ## Testing
 
 ```bash
-# Unit tests (no infra needed)
+# Unit tests (no infra)
 uv run pytest tests/test_converters.py tests/test_frame_extractor.py -v
 
-# Trainer module tests (requires Redis + MinIO)
+# Trainer tests (Redis + MinIO)
 uv run pytest tests/test_trainer.py -v
 
-# API tests (requires infra + app running)
+# API tests (full stack running)
 uv run pytest tests/test_api.py tests/test_api_extended.py -v
-
-# E2E pipeline test (requires full stack + SAM 3 model)
-uv run pytest tests/test_e2e.py -v
-
-# All Python tests
-uv run pytest -v
-
-# Playwright browser tests (requires full stack + UI built)
-cd ui && npx playwright test
 
 # Everything
 make test && cd ui && npx playwright test
 ```
 
-**Test counts:** 54 Python (pytest) + 25 Playwright (browser + API) = 79 total
-
-## Makefile Targets
-
-| Target | Description |
-|--------|-------------|
-| **`make up`** | **Build UI + start everything in Docker (one command)** |
-| `make down` | Stop all containers |
-| `make logs` | Tail all container logs |
-| `make setup` | Install Python + Node deps locally |
-| `make dev-app` | FastAPI dev server (native, port 8000) |
-| `make dev-labeler` | SAM 3 Celery worker (native, MPS) |
-| `make dev-trainer` | YOLO Celery worker (native, MPS) |
-| `make dev-ui` | Vite dev server (port 5173, hot reload) |
-| `make build-ui` | Build React UI to `app/static/` |
-| `make migrate` | Run Alembic database migrations |
-| `make test` | Run Python test suite |
-| `make test-browser` | Run Playwright browser tests |
-| `make download-models` | Download SAM 3 model |
-
-## Project Structure
+## Project structure
 
 ```
 waldo/
 ├── app/                    # FastAPI application
 │   ├── main.py             # Entrypoint, routers, SPA fallback
-│   ├── ws.py               # WebSocket for live training metrics
-│   ├── static/             # Built React UI
-│   └── api/
-│       ├── upload.py       # Video upload
-│       ├── label.py        # Text + exemplar labeling
-│       ├── status.py       # Job polling
-│       ├── review.py       # Annotation CRUD + stats
-│       ├── frames.py       # Frame listing + detail
-│       └── train.py        # Training runs + model registry + export
+│   ├── api/                # Route handlers
+│   └── static/             # Built React UI
 ├── labeler/                # SAM 3 labeling pipeline
-│   ├── sam3_engine.py      # Text (Sam3VideoModel) + click (Sam3TrackerVideoModel)
-│   ├── text_labeler.py     # Text-prompt pipeline
-│   ├── exemplar_labeler.py # Click/point-prompt pipeline
-│   ├── pipeline.py         # Shared conversion + packaging
+│   ├── sam3_engine.py      # PyTorch path (Linux/CUDA)
+│   ├── video_labeler.py    # MLX path (macOS)
+│   ├── text_labeler.py     # Text-prompt flow
 │   ├── frame_extractor.py  # ffmpeg extraction + phash dedup
-│   └── converters/         # Mask → YOLO format
-│       ├── common.py       # Shared dataset utilities
-│       ├── to_segment.py   # Polygons
-│       ├── to_detect.py    # Bounding boxes
-│       ├── to_classify.py  # Class-directory crops
-│       ├── to_obb.py       # Oriented bounding boxes
-│       └── to_pose.py      # Centroid keypoints
+│   └── converters/         # Mask → YOLO format converters
 ├── trainer/                # YOLO training pipeline
-│   ├── train_manager.py    # Ultralytics training orchestrator
-│   ├── dataset_builder.py  # Dataset preparation from labeling jobs
+│   ├── train_manager.py    # Ultralytics orchestrator
+│   ├── dataset_builder.py  # Dataset prep from DB
 │   ├── metrics_streamer.py # Redis pub/sub for live metrics
-│   ├── exporter.py         # Model export (ONNX, TFLite, CoreML, etc.)
-│   └── notifiers.py        # Slack, ntfy.sh, email alerts
+│   └── exporter.py         # ONNX, TFLite, CoreML export
 ├── lib/                    # Shared library
 │   ├── config.py           # Pydantic settings
-│   ├── db.py               # SQLAlchemy models (7 tables)
+│   ├── db.py               # SQLAlchemy models
 │   ├── storage.py          # MinIO client
-│   └── tasks.py            # Celery tasks (label, train, export)
+│   └── tasks.py            # Celery tasks
 ├── ui/                     # React 19 + Vite + TypeScript + Tailwind
-│   ├── src/
-│   │   ├── api.ts          # Typed API client
-│   │   ├── pages/          # Upload, Label, Review, Train, Jobs
-│   │   └── components/     # Nav, TaskSelector, AnnotationOverlay, ClickCanvas, StatsPanel
-│   └── e2e/                # Playwright browser tests
-├── alembic/                # Database migrations (3 versions)
-├── scripts/                # Setup + model download scripts
-├── tests/                  # Python test suite (54 tests)
-└── docker-compose.yml      # 10 services (3 infra + 7 app profiles)
+├── alembic/                # Database migrations
+├── scripts/                # Setup + maintenance scripts
+├── tests/                  # Python test suite
+└── docker-compose.yml      # All services, apple + nvidia profiles
 ```
+
+## Documentation
+
+- **[docs/GUIDE.md](docs/GUIDE.md)** — Full platform walkthrough with screenshots
+- **[docs/WALKTHROUGH.md](docs/WALKTHROUGH.md)** — Step-by-step first-run tutorial
+
+## License
+
+See [LICENSE](LICENSE).

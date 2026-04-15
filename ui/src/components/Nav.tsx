@@ -5,7 +5,6 @@ import {
   Database,
   FlaskConical,
   Rocket,
-  Play,
   Loader2,
 } from "lucide-react";
 import { listTrainingRuns } from "../api";
@@ -15,7 +14,6 @@ const links = [
   { to: "/datasets", label: "Datasets", icon: Database },
   { to: "/experiments", label: "Experiments", icon: FlaskConical },
   { to: "/deploy", label: "Deploy", icon: Rocket },
-  { to: "/demo", label: "Demo", icon: Play },
 ];
 
 export default function Nav() {

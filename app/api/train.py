@@ -1,6 +1,7 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from lib.auth import get_current_user
 from lib.db import (
     LabelingJob,
     ModelRegistry,
@@ -11,7 +12,15 @@ from lib.storage import get_download_url
 from lib.tasks import export_model_task, train_model
 from trainer.train_manager import AUGMENTATION_PRESETS, DEFAULT_HYPERPARAMS, TASK_TO_DEFAULT_VARIANT, VARIANTS
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
+
+
+def _safe_alias(model: ModelRegistry) -> str | None:
+    """Safely read the alias column — returns None if column doesn't exist yet (pre-migration)."""
+    try:
+        return model.alias
+    except Exception:
+        return None
 
 
 class TrainRequest(BaseModel):
@@ -39,11 +48,16 @@ class TrainingRunStatus(BaseModel):
     total_epochs: int
     metrics: dict
     best_metrics: dict
+    hyperparameters: dict = {}
     loss_history: list = []
     metric_history: list = []
     weights_url: str | None = None
     error_message: str | None = None
     celery_task_id: str | None = None
+    tags: list[str] = []
+    notes: str | None = None
+    started_at: str | None = None
+    completed_at: str | None = None
 
 
 class ModelOut(BaseModel):
@@ -56,6 +70,7 @@ class ModelOut(BaseModel):
     export_formats: dict
     weights_url: str | None = None
     is_active: bool
+    alias: str | None = None
 
 
 class ExportRequest(BaseModel):
@@ -140,11 +155,16 @@ def get_training_status(run_id: str):
             total_epochs=run.total_epochs or 100,
             metrics=run.metrics or {},
             best_metrics=run.best_metrics or {},
+            hyperparameters=run.hyperparameters or {},
             loss_history=run.loss_history or [],
             metric_history=run.metric_history or [],
             weights_url=weights_url,
             error_message=run.error_message,
             celery_task_id=run.celery_task_id,
+            tags=run.tags or [],
+            notes=run.notes,
+            started_at=run.started_at.isoformat() if run.started_at else None,
+            completed_at=run.completed_at.isoformat() if run.completed_at else None,
         )
     finally:
         session.close()
@@ -164,24 +184,49 @@ def list_training_runs(project_id: str | None = Query(None)):
             weights_url = None
             if run.best_weights_minio_key:
                 weights_url = get_download_url(run.best_weights_minio_key)
-            results.append(TrainingRunStatus(
-                run_id=str(run.id),
-                job_id=str(run.job_id) if run.job_id else None,
-                name=run.name,
-                task_type=run.task_type,
-                model_variant=run.model_variant,
-                status=run.status,
-                epoch_current=run.epoch_current or 0,
-                total_epochs=run.total_epochs or 100,
-                metrics=run.metrics or {},
-                best_metrics=run.best_metrics or {},
-                loss_history=run.loss_history or [],
-                metric_history=run.metric_history or [],
-                weights_url=weights_url,
-                error_message=run.error_message,
-                celery_task_id=run.celery_task_id,
-            ))
+            results.append(
+                TrainingRunStatus(
+                    run_id=str(run.id),
+                    job_id=str(run.job_id) if run.job_id else None,
+                    name=run.name,
+                    task_type=run.task_type,
+                    model_variant=run.model_variant,
+                    status=run.status,
+                    epoch_current=run.epoch_current or 0,
+                    total_epochs=run.total_epochs or 100,
+                    metrics=run.metrics or {},
+                    best_metrics=run.best_metrics or {},
+                    loss_history=run.loss_history or [],
+                    metric_history=run.metric_history or [],
+                    weights_url=weights_url,
+                    error_message=run.error_message,
+                    celery_task_id=run.celery_task_id,
+                )
+            )
         return results
+    finally:
+        session.close()
+
+
+class RunUpdate(BaseModel):
+    tags: list[str] | None = None
+    notes: str | None = None
+
+
+@router.patch("/train/{run_id}")
+def update_training_run(run_id: str, update: RunUpdate):
+    """Update tags or notes on a training run."""
+    session = SessionLocal()
+    try:
+        run = session.query(TrainingRun).filter_by(id=run_id).first()
+        if not run:
+            raise HTTPException(status_code=404, detail="Run not found")
+        if update.tags is not None:
+            run.tags = update.tags
+        if update.notes is not None:
+            run.notes = update.notes or None
+        session.commit()
+        return {"status": "updated", "run_id": run_id}
     finally:
         session.close()
 
@@ -211,6 +256,7 @@ def delete_training_run(run_id: str):
 def stop_training(run_id: str):
     """Request early stopping for a training run."""
     from trainer.metrics_streamer import request_stop
+
     session = SessionLocal()
     try:
         run = session.query(TrainingRun).filter_by(id=run_id).first()
@@ -240,6 +286,7 @@ def list_models():
                 export_formats=m.export_formats or {},
                 weights_url=get_download_url(m.weights_minio_key) if m.weights_minio_key else None,
                 is_active=m.is_active or False,
+                alias=_safe_alias(m),
             )
             for m in models
         ]

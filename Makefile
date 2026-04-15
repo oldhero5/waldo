@@ -70,3 +70,18 @@ test-browser:
 
 download-models:
 	bash scripts/download_models.sh
+
+# ── GPU verification (Linux / Windows-via-WSL) ───────────────
+
+# Confirms the NVIDIA driver + container toolkit are wired up on the host.
+# Run this BEFORE `make up PROFILE=nvidia` to catch GPU passthrough issues.
+gpu-check:
+	@echo "==> Host GPU visibility (should show your card):"
+	@docker run --rm --gpus all nvidia/cuda:12.4.0-base-ubuntu22.04 nvidia-smi || \
+	  (echo "GPU passthrough FAILED. Install nvidia-container-toolkit and restart Docker."; exit 1)
+	@echo ""
+	@echo "==> Host looks good. Run 'make up PROFILE=nvidia' to start Waldo with GPU workers."
+
+# Stream only the GPU check output from the running worker container.
+gpu-logs:
+	docker compose --profile nvidia logs waldo-labeler-nvidia waldo-trainer-nvidia 2>&1 | grep -iE "gpu|cuda|nvidia|entrypoint" | head -40

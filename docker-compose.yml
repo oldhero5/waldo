@@ -154,8 +154,15 @@ services:
       MINIO_ENDPOINT: minio:9000
       DEVICE: cuda
       DTYPE: bfloat16
+      # Defense-in-depth: base image already sets these, but explicit beats
+      # implicit if anyone ever rebases off a non-nvidia image.
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
     volumes:
       - model_cache:/root/.cache
+    # PyTorch dataloaders default to shared memory for worker IPC. Docker's
+    # default /dev/shm is 64MB which OOMs real workloads.
+    shm_size: "4gb"
     deploy:
       resources:
         reservations:
@@ -186,8 +193,11 @@ services:
       MINIO_ENDPOINT: minio:9000
       DEVICE: cuda
       DTYPE: bfloat16
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
     volumes:
       - model_cache:/root/.cache
+    shm_size: "4gb"
     deploy:
       resources:
         reservations:

@@ -14,11 +14,20 @@ WORKDIR /app
 COPY pyproject.toml .python-version ./
 RUN uv sync --no-dev --group labeler --no-install-project
 
+# PyPI ships CPU-only torch by default. Replace it with the CUDA 12.4 wheel
+# so the nvidia-container-toolkit GPU passthrough is actually usable.
+RUN uv pip install --upgrade \
+    --index-url https://download.pytorch.org/whl/cu124 \
+    torch torchvision
+
 COPY lib/ lib/
 COPY labeler/ labeler/
 COPY trainer/ trainer/
+COPY scripts/entrypoint-worker.sh /usr/local/bin/entrypoint-worker.sh
+RUN chmod +x /usr/local/bin/entrypoint-worker.sh
 
 ENV DEVICE=cuda
 ENV DTYPE=bfloat16
 
+ENTRYPOINT ["/usr/local/bin/entrypoint-worker.sh"]
 CMD ["uv", "run", "celery", "-A", "lib.tasks", "worker", "--loglevel=info", "--concurrency=1", "--pool=solo"]
