@@ -1,0 +1,33 @@
+---
+# Docker-first pre-commit runner for Linux & Windows developers who don't have
+# Python, Node, or hadolint installed locally.
+#
+# Usage:
+#   docker compose -f docker-compose.precommit.yml run --rm precommit
+#   docker compose -f docker-compose.precommit.yml run --rm precommit run --all-files
+#   docker compose -f docker-compose.precommit.yml run --rm precommit run --files lib/auth.py
+#
+# The image bundles uv + node + git so every hook works inside the container.
+# Hook caches and the .git directory are mounted from the host so installations
+# persist across runs and commits made inside the container appear on the host.
+
+services:
+  precommit:
+    image: waldo-precommit:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.precommit
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+      - precommit-cache:/root/.cache/pre-commit
+      - node-modules:/workspace/ui/node_modules
+    environment:
+      - PRE_COMMIT_HOME=/root/.cache/pre-commit
+      - SKIP=hadolint-docker  # cannot run docker-in-docker by default
+    entrypoint: ["pre-commit"]
+    command: ["run", "--all-files"]
+
+volumes:
+  precommit-cache:
+  node-modules:

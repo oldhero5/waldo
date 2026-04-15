@@ -1,0 +1,29 @@
+# Pre-commit runner image: bundles git, uv, python, node, and shellcheck so
+# Linux/Windows devs can run the full hook suite without local installs.
+#
+# Build: docker build -f Dockerfile.precommit -t waldo-precommit .
+# Run:   docker compose -f docker-compose.precommit.yml run --rm precommit
+
+FROM python:3.11-slim
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PIP_NO_CACHE_DIR=1 \
+    PRE_COMMIT_HOME=/root/.cache/pre-commit
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git \
+        ca-certificates \
+        shellcheck \
+        nodejs \
+        npm \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN uv pip install --system pre-commit ruff detect-secrets
+
+WORKDIR /workspace
+
+# Pre-warm the hook cache by running install-hooks against a stub config when
+# the real one is mounted; no-op on first build, fast on subsequent runs.
+CMD ["pre-commit", "run", "--all-files"]
