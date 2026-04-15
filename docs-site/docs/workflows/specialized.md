@@ -5,7 +5,7 @@ sidebar_position: 3
 
 # Specialized Blocks
 
-Source: [`lib/workflow_blocks/specialized.py`](https://github.com/your-org/waldo/blob/main/lib/workflow_blocks/specialized.py)
+Source: [`lib/workflow_blocks/specialized.py`](https://github.com/oldhero5/waldo/blob/main/lib/workflow_blocks/specialized.py)
 
 Domain-specific detectors that wrap purpose-built models instead of generic YOLO/SAM.
 

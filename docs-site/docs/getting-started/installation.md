@@ -21,7 +21,7 @@ For Apple Silicon, Waldo uses MLX for SAM 3.1 inference natively — no extra se
 ## Clone the repo
 
 ```bash
-git clone https://github.com/your-org/waldo.git
+git clone https://github.com/oldhero5/waldo.git
 cd waldo
 cp .env.example .env
 ```
@@ -43,7 +43,7 @@ That starts:
 - `labeler` — Celery worker for SAM 3 inference
 - `trainer` — Celery worker for YOLO26 training
 
-Wait ~30 seconds for the database to migrate, then visit **<http://localhost:8000>**. On first access, Waldo bootstraps an admin user and prints the password to the container logs:
+Wait ~30 seconds for the database to migrate, then visit **[http://localhost:8000](http://localhost:8000)**. On first access, Waldo bootstraps an admin user and prints the password to the container logs:
 
 ```bash
 docker compose logs app | grep -A 2 "bootstrapped first admin"

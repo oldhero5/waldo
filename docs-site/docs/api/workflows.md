@@ -5,7 +5,7 @@ sidebar_position: 8
 
 # Workflows
 
-Source: [`app/api/workflows.py`](https://github.com/your-org/waldo/blob/main/app/api/workflows.py)
+Source: [`app/api/workflows.py`](https://github.com/oldhero5/waldo/blob/main/app/api/workflows.py)
 
 A workflow is a graph of [workflow blocks](../workflows/overview) that processes an image or video. The visual editor lives at `/workflows`.
 

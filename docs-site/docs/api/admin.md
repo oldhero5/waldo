@@ -5,7 +5,7 @@ sidebar_position: 9
 
 # Admin
 
-Source: [`app/api/admin.py`](https://github.com/your-org/waldo/blob/main/app/api/admin.py)
+Source: [`app/api/admin.py`](https://github.com/oldhero5/waldo/blob/main/app/api/admin.py)
 
 All admin routes require a user with the `admin` role in at least one workspace. Enforced by the `require_admin` dependency.
 

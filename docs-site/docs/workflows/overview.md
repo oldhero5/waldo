@@ -7,7 +7,7 @@ sidebar_position: 1
 
 A workflow is a directed graph that takes input (an image, a video frame, or a stream) and produces output (annotations, alerts, transformed pixels). Each node in the graph is a **block**.
 
-Block source: [`lib/workflow_blocks/`](https://github.com/your-org/waldo/tree/main/lib/workflow_blocks)
+Block source: [`lib/workflow_blocks/`](https://github.com/oldhero5/waldo/tree/main/lib/workflow_blocks)
 
 ## Block categories
 

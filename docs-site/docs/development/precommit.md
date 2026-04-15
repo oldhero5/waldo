@@ -24,7 +24,7 @@ Waldo ships a [pre-commit](https://pre-commit.com/) configuration that runs secu
 | `yamllint` | YAML lint |
 | `shellcheck` | Shell script lint |
 
-Config: [`.pre-commit-config.yaml`](https://github.com/your-org/waldo/blob/main/.pre-commit-config.yaml)
+Config: [`.pre-commit-config.yaml`](https://github.com/oldhero5/waldo/blob/main/.pre-commit-config.yaml)
 
 ## Install (host)
 

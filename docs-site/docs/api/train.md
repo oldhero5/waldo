@@ -5,7 +5,7 @@ sidebar_position: 6
 
 # Train
 
-Source: [`app/api/train.py`](https://github.com/your-org/waldo/blob/main/app/api/train.py)
+Source: [`app/api/train.py`](https://github.com/oldhero5/waldo/blob/main/app/api/train.py)
 
 ## Variants
 

@@ -15,6 +15,22 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: "category",
+      label: "UI Tour",
+      collapsed: false,
+      items: [
+        "ui/overview",
+        "ui/dashboard",
+        "ui/datasets",
+        "ui/upload",
+        "ui/label",
+        "ui/train",
+        "ui/workflows",
+        "ui/deploy",
+        "ui/agent",
+      ],
+    },
+    {
+      type: "category",
       label: "Architecture",
       items: [
         "architecture/overview",
@@ -44,18 +60,6 @@ const sidebars: SidebarsConfig = {
         "workflows/overview",
         "workflows/detection",
         "workflows/specialized",
-      ],
-    },
-    {
-      type: "category",
-      label: "UI Pages",
-      items: [
-        "ui/overview",
-        "ui/datasets",
-        "ui/label",
-        "ui/train",
-        "ui/deploy",
-        "ui/agent",
       ],
     },
     {
