@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Rounded dark slate tile (Pretext background) -->
+  <rect width="64" height="64" rx="12" fill="#1a1814"/>
+  <!-- Solid warm-gold "W" — hand-drawn path so it stays legible down to 16px -->
+  <path
+    d="M10 16 L19 16 L24 40 L32 22 L40 40 L45 16 L54 16 L46 48 L37 48 L32 34 L27 48 L18 48 Z"
+    fill="#c4a882"
+  />
+</svg>

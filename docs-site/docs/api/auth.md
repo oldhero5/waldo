@@ -5,7 +5,7 @@ sidebar_position: 2
 
 # Auth
 
-Source: [`app/api/auth.py`](https://github.com/your-org/waldo/blob/main/app/api/auth.py)
+Source: [`app/api/auth.py`](https://github.com/oldhero5/waldo/blob/main/app/api/auth.py)
 
 ## `POST /api/v1/auth/register`
 

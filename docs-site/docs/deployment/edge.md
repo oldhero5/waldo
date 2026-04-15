@@ -13,7 +13,7 @@ Jetson devices run Ubuntu (L4T) and have a CUDA-capable GPU. The Waldo edge imag
 
 ```bash
 # On the Jetson
-git clone https://github.com/your-org/waldo.git --depth 1
+git clone https://github.com/oldhero5/waldo.git --depth 1
 cd waldo/edge/jetson
 docker compose up -d
 ```
@@ -48,7 +48,7 @@ docker run -d --device /dev/bus/usb \
   -e WALDO_API=https://waldo.example.com \
   -e WALDO_API_KEY=... \
   -e DEVICE_NAME=garage-pi \
-  ghcr.io/your-org/waldo-edge:pi5-coral
+  ghcr.io/oldhero5/waldo-edge:pi5-coral
 ```
 
 ## OTA model updates

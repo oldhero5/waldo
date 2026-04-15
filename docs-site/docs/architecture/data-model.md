@@ -5,7 +5,7 @@ sidebar_position: 2
 
 # Data Model
 
-The schema is defined in [`lib/db.py`](https://github.com/your-org/waldo/blob/main/lib/db.py). Every table uses UUID primary keys.
+The schema is defined in [`lib/db.py`](https://github.com/oldhero5/waldo/blob/main/lib/db.py). Every table uses UUID primary keys.
 
 ## Multi-tenancy
 

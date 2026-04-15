@@ -5,7 +5,7 @@ sidebar_position: 3
 
 # Upload & Projects
 
-Source: [`app/api/upload.py`](https://github.com/your-org/waldo/blob/main/app/api/upload.py)
+Source: [`app/api/upload.py`](https://github.com/oldhero5/waldo/blob/main/app/api/upload.py)
 
 ## Projects
 

@@ -51,6 +51,7 @@ htmlcov/
 Target.mp4
 *.mp4
 !tests/fixtures/*.mp4
+!docs-site/static/img/recordings/*.mp4
 
 # Screenshots (development artifacts)
 docs/screenshots/

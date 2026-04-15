@@ -10,11 +10,16 @@ const config: Config = {
   url: "https://waldo.docs",
   baseUrl: "/",
 
-  organizationName: "waldo",
+  organizationName: "oldhero5",
   projectName: "waldo",
 
   onBrokenLinks: "warn",
-  onBrokenMarkdownLinks: "warn",
+  onBrokenAnchors: "warn",
+  markdown: {
+    hooks: {
+      onBrokenMarkdownLinks: "warn",
+    },
+  },
 
   i18n: {
     defaultLocale: "en",
@@ -28,7 +33,7 @@ const config: Config = {
         docs: {
           sidebarPath: "./sidebars.ts",
           routeBasePath: "/",
-          editUrl: "https://github.com/your-org/waldo/tree/main/docs-site/",
+          editUrl: "https://github.com/oldhero5/waldo/tree/main/docs-site/",
         },
         blog: false,
         theme: {
@@ -45,8 +50,11 @@ const config: Config = {
       logo: { alt: "Waldo", src: "img/favicon.svg" },
       items: [
         { type: "docSidebar", sidebarId: "main", position: "left", label: "Docs" },
+        { to: "/getting-started/quickstart", label: "Quickstart", position: "left" },
+        { to: "/api/overview", label: "API", position: "left" },
+        { to: "/ui/overview", label: "UI Tour", position: "left" },
         {
-          href: "https://github.com/your-org/waldo",
+          href: "https://github.com/oldhero5/waldo",
           label: "GitHub",
           position: "right",
         },
@@ -54,7 +62,36 @@ const config: Config = {
     },
     footer: {
       style: "dark",
-      copyright: `Copyright © ${new Date().getFullYear()} Waldo.`,
+      links: [
+        {
+          title: "Docs",
+          items: [
+            { label: "Quickstart", to: "/getting-started/quickstart" },
+            { label: "Architecture", to: "/architecture/overview" },
+            { label: "API Reference", to: "/api/overview" },
+            { label: "UI Tour", to: "/ui/overview" },
+          ],
+        },
+        {
+          title: "Run",
+          items: [
+            { label: "Docker", to: "/deployment/docker" },
+            { label: "Linux", to: "/deployment/linux" },
+            { label: "Windows", to: "/deployment/windows" },
+            { label: "Edge devices", to: "/deployment/edge" },
+          ],
+        },
+        {
+          title: "Contribute",
+          items: [
+            { label: "Dev setup", to: "/development/setup" },
+            { label: "Pre-commit", to: "/development/precommit" },
+            { label: "Testing", to: "/development/testing" },
+            { label: "GitHub", href: "https://github.com/oldhero5/waldo" },
+          ],
+        },
+      ],
+      copyright: `© ${new Date().getFullYear()} Waldo · Self-hosted video labeling + training.`,
     },
     prism: {
       theme: prismThemes.github,

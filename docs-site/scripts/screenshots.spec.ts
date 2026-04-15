@@ -16,32 +16,42 @@ import { test, expect, Page } from "@playwright/test";
 import * as path from "path";
 
 const PAGES: Array<{ name: string; route: string; waitFor?: string }> = [
-  { name: "dashboard", route: "/dashboard" },
+  { name: "dashboard", route: "/" },
+  { name: "upload", route: "/upload" },
+  { name: "collections", route: "/collections" },
   { name: "datasets", route: "/datasets" },
-  { name: "label", route: "/label" },
-  { name: "review", route: "/review" },
-  { name: "train", route: "/train" },
+  { name: "jobs", route: "/jobs" },
   { name: "experiments", route: "/experiments" },
-  { name: "deploy", route: "/deploy" },
-  { name: "agent", route: "/agent" },
   { name: "workflows", route: "/workflows" },
+  { name: "workflows-editor", route: "/workflows/new" },
+  { name: "deploy", route: "/deploy" },
+  { name: "deploy-models", route: "/deploy/models" },
+  { name: "deploy-endpoints", route: "/deploy/endpoints" },
+  { name: "deploy-test", route: "/deploy/test" },
+  { name: "deploy-monitor", route: "/deploy/monitor" },
+  { name: "deploy-edge", route: "/deploy/edge" },
+  { name: "agent", route: "/agent" },
   { name: "settings", route: "/settings" },
+  { name: "login", route: "/login", waitFor: 'input[type="email"]' },
+  { name: "review", route: "/review/3227d592-5401-4064-b294-49542a6a1a15" },
+  { name: "train", route: "/train/3227d592-5401-4064-b294-49542a6a1a15" },
+  { name: "label", route: "/label/collection/c711d261-e7ef-4f5b-a2d4-7e4267ca3551" },
 ];
 
 const OUT_DIR = path.resolve(__dirname, "..", "static", "img", "screenshots");
 
 async function login(page: Page): Promise<void> {
-  const user = process.env.WALDO_USER;
-  const pass = process.env.WALDO_PASSWORD;
-  if (!user || !pass) {
-    console.warn("WALDO_USER / WALDO_PASSWORD not set — skipping login");
+  // Inject a pre-minted admin JWT into localStorage so the SPA boots authenticated.
+  // Cleaner than the email/password flow (and works around the bcrypt/passlib init bug).
+  const token = process.env.WALDO_TOKEN;
+  if (!token) {
+    console.warn("WALDO_TOKEN not set — skipping login");
     return;
   }
   await page.goto("/login");
-  await page.fill('input[type="email"]', user);
-  await page.fill('input[type="password"]', pass);
-  await page.click('button[type="submit"]');
-  await page.waitForURL((url) => !url.pathname.includes("/login"), { timeout: 10_000 });
+  await page.evaluate((t) => {
+    localStorage.setItem("waldo_token", t);
+  }, token);
 }
 
 test.describe("Waldo screenshot capture", () => {
@@ -53,10 +63,10 @@ test.describe("Waldo screenshot capture", () => {
   for (const p of PAGES) {
     test(`capture ${p.name}`, async ({ page }) => {
       try {
-        await login(page);
+        if (p.name !== "login") await login(page);
         await page.goto(p.route, { waitUntil: "networkidle" });
         if (p.waitFor) await page.waitForSelector(p.waitFor, { timeout: 10_000 });
-        await page.waitForTimeout(800); // let animations settle
+        await page.waitForTimeout(1500); // let animations + lazy data settle
         await page.screenshot({
           path: path.join(OUT_DIR, `${p.name}.png`),
           fullPage: true,

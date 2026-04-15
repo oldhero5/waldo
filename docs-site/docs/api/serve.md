@@ -5,7 +5,7 @@ sidebar_position: 7
 
 # Serve
 
-Source: [`app/api/serve.py`](https://github.com/your-org/waldo/blob/main/app/api/serve.py)
+Source: [`app/api/serve.py`](https://github.com/oldhero5/waldo/blob/main/app/api/serve.py)
 
 The serve module is the largest in the API — it covers prediction endpoints, model management, deployment targets, edge devices, A/B comparisons, and metrics.
 

@@ -5,7 +5,7 @@ sidebar_position: 3
 
 # Configuration
 
-All configuration is environment variables, loaded by [pydantic-settings](https://docs.pydantic.dev/latest/concepts/pydantic_settings/) from `.env` or the process environment. The schema lives in [`lib/config.py`](https://github.com/your-org/waldo/blob/main/lib/config.py).
+All configuration is environment variables, loaded by [pydantic-settings](https://docs.pydantic.dev/latest/concepts/pydantic_settings/) from `.env` or the process environment. The schema lives in [`lib/config.py`](https://github.com/oldhero5/waldo/blob/main/lib/config.py).
 
 ## Core
 

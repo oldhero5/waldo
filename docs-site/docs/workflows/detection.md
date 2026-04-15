@@ -5,7 +5,7 @@ sidebar_position: 2
 
 # Detection Blocks
 
-Source: [`lib/workflow_blocks/detection.py`](https://github.com/your-org/waldo/blob/main/lib/workflow_blocks/detection.py)
+Source: [`lib/workflow_blocks/detection.py`](https://github.com/oldhero5/waldo/blob/main/lib/workflow_blocks/detection.py)
 
 These blocks run object detection or segmentation models against input images.
 

@@ -5,7 +5,7 @@ sidebar_position: 4
 
 # Label
 
-Source: [`app/api/label.py`](https://github.com/your-org/waldo/blob/main/app/api/label.py)
+Source: [`app/api/label.py`](https://github.com/oldhero5/waldo/blob/main/app/api/label.py)
 
 ## `POST /api/v1/label`
 

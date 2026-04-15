@@ -39,7 +39,7 @@ docker run --rm --gpus all nvidia/cuda:12.4.0-base-ubuntu22.04 nvidia-smi
 ## Run Waldo
 
 ```bash
-git clone https://github.com/your-org/waldo.git
+git clone https://github.com/oldhero5/waldo.git
 cd waldo
 cp .env.example .env
 # Edit .env to set passwords + APP_ENV=production

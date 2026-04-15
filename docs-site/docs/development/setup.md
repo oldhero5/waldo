@@ -10,7 +10,7 @@ For day-to-day development, run the dependencies in Docker but the API and UI on
 ## macOS (Apple Silicon)
 
 ```bash
-git clone https://github.com/your-org/waldo.git
+git clone https://github.com/oldhero5/waldo.git
 cd waldo
 cp .env.example .env
 
