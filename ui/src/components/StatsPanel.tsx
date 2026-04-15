@@ -2,53 +2,57 @@ import type { JobStats } from "../api";
 
 export default function StatsPanel({ stats }: { stats: JobStats }) {
   return (
-    <div className="bg-gray-50 rounded-lg p-4 space-y-3 text-sm">
-      <h3 className="font-semibold text-gray-900">Dataset Stats</h3>
-      <div className="grid grid-cols-2 gap-2">
-        <div>
-          <span className="text-gray-500">Annotations</span>
-          <p className="font-medium">{stats.total_annotations}</p>
-        </div>
-        <div>
-          <span className="text-gray-500">Frames</span>
-          <p className="font-medium">
-            {stats.annotated_frames}/{stats.total_frames}
-          </p>
-        </div>
-        <div>
-          <span className="text-gray-500">Density</span>
-          <p className="font-medium">{stats.annotation_density}/frame</p>
-        </div>
-        <div>
-          <span className="text-gray-500">Empty</span>
-          <p className="font-medium">{stats.empty_frames}</p>
-        </div>
+    <div className="rounded-lg p-4 space-y-4" style={{ backgroundColor: "var(--bg-surface)", border: "1px solid var(--border-subtle)" }}>
+      <p className="eyebrow">Dataset Stats</p>
+
+      <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+        {[
+          { label: "Annotations", value: stats.total_annotations },
+          { label: "Frames", value: `${stats.annotated_frames}/${stats.total_frames}` },
+          { label: "Density", value: `${stats.annotation_density}/fr` },
+          { label: "Empty", value: stats.empty_frames },
+        ].map((s) => (
+          <div key={s.label}>
+            <span className="eyebrow block">{s.label}</span>
+            <span style={{ fontSize: 18, fontWeight: 700, fontFamily: "var(--font-serif)", color: "var(--text-primary)", fontVariantNumeric: "tabular-nums" }}>
+              {s.value}
+            </span>
+          </div>
+        ))}
       </div>
 
       {stats.by_class.length > 0 && (
         <div>
-          <span className="text-gray-500">Classes</span>
-          {stats.by_class.map((c) => (
-            <div key={c.name} className="flex justify-between">
-              <span>{c.name}</span>
-              <span className="font-medium">{c.count}</span>
-            </div>
-          ))}
+          <p className="eyebrow mb-1.5">Classes</p>
+          <div className="space-y-1">
+            {stats.by_class.map((c) => (
+              <div key={c.name} className="flex justify-between items-baseline">
+                <span style={{ fontSize: 13, color: "var(--text-primary)" }}>{c.name}</span>
+                <span style={{ fontSize: 13, fontFamily: "var(--font-mono)", fontVariantNumeric: "tabular-nums", color: "var(--text-secondary)" }}>{c.count}</span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
       <div>
-        <span className="text-gray-500">Review Status</span>
-        <div className="flex gap-3 mt-1">
-          <span className="text-green-600">
-            {stats.by_status.accepted || 0} accepted
-          </span>
-          <span className="text-red-600">
-            {stats.by_status.rejected || 0} rejected
-          </span>
-          <span className="text-gray-600">
-            {stats.by_status.pending || 0} pending
-          </span>
+        <p className="eyebrow mb-1.5">Review Status</p>
+        <div className="space-y-1" style={{ fontSize: 12 }}>
+          {[
+            { label: "Accepted", count: stats.by_status.accepted || 0, color: "var(--success)" },
+            { label: "Rejected", count: stats.by_status.rejected || 0, color: "var(--danger)" },
+            { label: "Pending", count: stats.by_status.pending || 0, color: "var(--text-muted)" },
+          ].map((s) => (
+            <div key={s.label} className="flex items-center justify-between">
+              <span className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: s.color }} />
+                <span style={{ color: "var(--text-secondary)", fontSize: 12 }}>{s.label}</span>
+              </span>
+              <span style={{ fontFamily: "var(--font-mono)", fontVariantNumeric: "tabular-nums", color: "var(--text-primary)", fontWeight: 600 }}>
+                {s.count}
+              </span>
+            </div>
+          ))}
         </div>
       </div>
     </div>

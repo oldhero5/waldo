@@ -1,4 +1,5 @@
 """Text-prompt labeling pipeline — uses Sam3VideoModel for detect-and-track."""
+
 import tempfile
 from pathlib import Path
 
@@ -50,13 +51,15 @@ def merge_multiclass_results(
             scores = np.empty(0, dtype=np.float32)
             class_indices = np.empty(0, dtype=int)
 
-        merged.append(SegmentationResult(
-            frame_index=frame_idx,
-            masks=masks,
-            boxes=boxes,
-            scores=scores,
-            class_indices=class_indices,
-        ))
+        merged.append(
+            SegmentationResult(
+                frame_index=frame_idx,
+                masks=masks,
+                boxes=boxes,
+                scores=scores,
+                class_indices=class_indices,
+            )
+        )
 
     return merged
 
@@ -95,22 +98,34 @@ def _process_single_video(session, job, video, engine, tmpdir, class_prompts, fr
         db_frames.append(db_frame)
     session.commit()
 
-    # SAM3 segmentation — once per class, then merge
+    # SAM3 segmentation — once per prompt alias, then merge
+    # Expand prompt aliases: each class may have multiple prompts
     images = [Image.open(fi.file_path) for fi in frame_infos]
+    class_names = []
+    for cp in class_prompts:
+        if cp["name"] not in class_names:
+            class_names.append(cp["name"])
 
-    if len(class_prompts) == 1:
-        seg_results = engine.segment_frames(images, class_prompts[0]["prompt"])
-        # Tag with class index 0
+    # Build flat list of (prompt_str, class_idx) for all aliases
+    prompt_runs: list[tuple[str, int]] = []
+    for cp in class_prompts:
+        cls_idx = class_names.index(cp["name"])
+        aliases = cp.get("prompts") or [cp.get("prompt", cp["name"])]
+        for alias in aliases:
+            prompt_runs.append((alias, cls_idx))
+
+    if len(prompt_runs) == 1:
+        seg_results = engine.segment_frames(images, prompt_runs[0][0])
         for sr in seg_results:
-            sr.class_indices = np.zeros(sr.masks.shape[0], dtype=int)
+            sr.class_indices = np.full(sr.masks.shape[0], prompt_runs[0][1], dtype=int)
     else:
-        per_class_results = []
-        for cls_idx, cp in enumerate(class_prompts):
-            cls_results = engine.segment_frames(images, cp["prompt"])
+        per_prompt_results = []
+        for prompt_str, cls_idx in prompt_runs:
+            cls_results = engine.segment_frames(images, prompt_str)
             for sr in cls_results:
                 sr.class_indices = np.full(sr.masks.shape[0], cls_idx, dtype=int)
-            per_class_results.append(cls_results)
-        seg_results = merge_multiclass_results(per_class_results, len(images))
+            per_prompt_results.append(cls_results)
+        seg_results = merge_multiclass_results(per_prompt_results, len(images))
 
     return seg_results, db_frames, frame_infos
 
@@ -120,7 +135,8 @@ def run_labeling_pipeline(celery_task, job_id: str) -> dict:
     try:
         job = session.query(LabelingJob).filter_by(id=job_id).one()
         class_prompts = _resolve_class_prompts(job)
-        class_names = [cp["name"] for cp in class_prompts]
+        # Deduplicate class names (same class may have multiple prompt aliases)
+        class_names = list(dict.fromkeys(cp["name"] for cp in class_prompts))
 
         # Determine videos to process
         if job.project_id and not job.video_id:
@@ -151,7 +167,12 @@ def run_labeling_pipeline(celery_task, job_id: str) -> dict:
 
             for video in videos:
                 seg_results, db_frames, frame_infos = _process_single_video(
-                    session, job, video, engine, tmpdir, class_prompts,
+                    session,
+                    job,
+                    video,
+                    engine,
+                    tmpdir,
+                    class_prompts,
                     frame_offset=frame_offset,
                     total_frame_estimate=total_estimate,
                 )

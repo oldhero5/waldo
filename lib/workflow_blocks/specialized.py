@@ -1,4 +1,5 @@
 """Specialized CV blocks — OCR, counting, zone analysis."""
+
 from typing import Any
 
 from lib.workflow_blocks.base import BlockBase, BlockResult, Port
@@ -24,16 +25,23 @@ class OCRBlock(BlockBase):
         # Use EasyOCR if available, else fall back to Tesseract
         try:
             import easyocr
+
             reader = easyocr.Reader([lang[:2]], gpu=False)
             results = reader.readtext(image)
             text = "\n".join([r[1] for r in results])
-            regions = [{"bbox": [int(c) for p in r[0] for c in p], "text": r[1], "confidence": float(r[2])} for r in results]
+            regions = [
+                {"bbox": [int(c) for p in r[0] for c in p], "text": r[1], "confidence": float(r[2])} for r in results
+            ]
         except ImportError:
             # Fallback: simple thresholding + contour-based text detection
             gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
             _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
             contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            regions = [{"bbox": list(cv2.boundingRect(c)), "text": "?", "confidence": 0.0} for c in contours if cv2.contourArea(c) > 100]
+            regions = [
+                {"bbox": list(cv2.boundingRect(c)), "text": "?", "confidence": 0.0}
+                for c in contours
+                if cv2.contourArea(c) > 100
+            ]
             text = f"[{len(regions)} text regions detected — install easyocr for full OCR]"
 
         return BlockResult(
@@ -82,7 +90,13 @@ class LineCounterBlock(BlockBase):
 
     def _config_schema(self) -> dict:
         return {
-            "line_y": {"type": "number", "default": 0.5, "min": 0, "max": 1, "label": "Line Y position (0=top, 1=bottom)"},
+            "line_y": {
+                "type": "number",
+                "default": 0.5,
+                "min": 0,
+                "max": 1,
+                "label": "Line Y position (0=top, 1=bottom)",
+            },
             "direction": {"type": "string", "default": "both", "label": "Direction (up, down, both)"},
             "threshold": {"type": "number", "default": 0.05, "label": "Crossing threshold"},
         }
@@ -158,14 +172,13 @@ class LicensePlateBlock(BlockBase):
 
         # Step 1: Detect objects (license plates should be a trained class)
         engine = get_engine()
-        engine._ensure_loaded()
         detections = engine.predict_image(image, conf=conf)
 
         # Step 2: For each detection, crop and attempt OCR
         plates = []
         for det in detections:
-            x1, y1, x2, y2 = [int(v) for v in det.bbox]
-            crop = image[max(0, y1):y2, max(0, x1):x2]
+            x1, y1, x2, y2 = (int(v) for v in det.bbox)
+            crop = image[max(0, y1) : y2, max(0, x1) : x2]
             if crop.size == 0:
                 continue
 
@@ -173,6 +186,7 @@ class LicensePlateBlock(BlockBase):
             text = f"[plate:{det.class_name}]"
             try:
                 import easyocr
+
                 reader = easyocr.Reader(["en"], gpu=False)
                 results = reader.readtext(crop)
                 if results:
@@ -180,12 +194,14 @@ class LicensePlateBlock(BlockBase):
             except ImportError:
                 pass
 
-            plates.append({
-                "bbox": det.bbox,
-                "text": text,
-                "confidence": det.confidence,
-                "class": det.class_name,
-            })
+            plates.append(
+                {
+                    "bbox": det.bbox,
+                    "text": text,
+                    "confidence": det.confidence,
+                    "class": det.class_name,
+                }
+            )
 
         return BlockResult(
             outputs={"plates": plates, "count": len(plates)},

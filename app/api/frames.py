@@ -1,10 +1,11 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from lib.auth import get_current_user
 from lib.db import Annotation, Frame, SessionLocal, Video
 from lib.storage import get_download_url
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
 class FrameOut(BaseModel):

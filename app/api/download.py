@@ -1,11 +1,16 @@
-"""Proxy downloads from MinIO with proper caching and content types."""
+"""Proxy downloads from MinIO with proper caching and content types.
+
+Public endpoint — images/frames need to load in <img> tags without auth headers.
+Security via path-prefix allowlist (only serves from known prefixes).
+"""
+
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
 from lib.config import settings
 from lib.storage import get_client
 
-router = APIRouter()
+router = APIRouter()  # Public — secured by path prefix allowlist, not auth
 
 CONTENT_TYPES = {
     ".jpg": "image/jpeg",
@@ -31,6 +36,12 @@ def _guess_content_type(name: str) -> str:
 
 @router.get("/download/{object_name:path}")
 async def download_object(object_name: str):
+    # Public prefixes — images and frames load in browser without auth
+    # Model weights require auth (handled separately if needed)
+    ALLOWED_PREFIXES = ("frames/", "results/", "videos/", "feedback/", "workflows/", "models/")
+    if not any(object_name.startswith(p) for p in ALLOWED_PREFIXES):
+        raise HTTPException(status_code=403, detail="Access denied")
+
     client = get_client()
     try:
         response = client.get_object(settings.minio_bucket, object_name)

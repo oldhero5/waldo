@@ -13,7 +13,7 @@ interface Message {
 }
 
 const SUGGESTIONS = [
-  "How do I detect surveillance cameras in my video?",
+  "How do I detect people in my video?",
   "Create a workflow that detects objects and counts them",
   "What augmentation settings should I use for small objects?",
   "Explain the difference between segmentation and detection",

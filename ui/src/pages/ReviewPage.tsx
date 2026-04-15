@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   getJobStats,
@@ -9,9 +9,80 @@ import {
   type AnnotationOut,
 } from "../api";
 import AnnotationCanvas from "../components/AnnotationCanvas";
-import AnnotationOverlay from "../components/AnnotationOverlay";
+import { classColor, hslToHex } from "../components/AnnotationOverlay";
 import StatsPanel from "../components/StatsPanel";
 import { Keyboard, CheckCheck, XCircle, ChevronLeft, ChevronRight, Filter, Maximize2 } from "lucide-react";
+
+/** Canvas-based annotation overlay — renders polygons + labels at pixel resolution (not SVG). */
+const FrameOverlay = React.memo(function FrameOverlay({ annotations, hoveredId }: { annotations: AnnotationOut[]; hoveredId: string | null }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const container = containerRef.current;
+    if (!canvas || !container) return;
+
+    const rect = container.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    canvas.style.width = `${rect.width}px`;
+    canvas.style.height = `${rect.height}px`;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, rect.width, rect.height);
+
+    const W = rect.width;
+    const H = rect.height;
+
+    for (const ann of annotations) {
+      if (!ann.polygon || ann.polygon.length < 6) continue;
+      const isHovered = ann.id === hoveredId;
+      const color = ann.status === "accepted" ? "#22c55e" : ann.status === "rejected" ? "#ef4444" : hslToHex(classColor(ann.class_name));
+
+      // Polygon
+      ctx.beginPath();
+      for (let i = 0; i < ann.polygon.length; i += 2) {
+        const px = ann.polygon[i] * W;
+        const py = ann.polygon[i + 1] * H;
+        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      }
+      ctx.closePath();
+      ctx.fillStyle = color + (isHovered ? "55" : "33");
+      ctx.fill();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = isHovered ? 2.5 : 1.5;
+      if (ann.status === "rejected") ctx.setLineDash([4, 4]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Label — same method as AnnotationCanvas (pixel-based)
+      let minY = Infinity, labelX = 0;
+      for (let i = 0; i < ann.polygon.length; i += 2) {
+        const py = ann.polygon[i + 1] * H;
+        if (py < minY) { minY = py; labelX = ann.polygon[i] * W; }
+      }
+      const label = `${ann.class_name} ${ann.confidence != null ? (ann.confidence * 100).toFixed(0) + "%" : ""}`;
+      ctx.font = "bold 11px system-ui, sans-serif";
+      const tw = ctx.measureText(label).width;
+      const lh = 16;
+      const ly = Math.max(lh, minY - 3);
+      ctx.fillStyle = color + "dd";
+      ctx.fillRect(labelX - 2, ly - lh, tw + 8, lh + 2);
+      ctx.fillStyle = "#fff";
+      ctx.fillText(label, labelX + 2, ly - 3);
+    }
+  }, [annotations, hoveredId]);
+
+  return (
+    <div ref={containerRef} className="absolute inset-0">
+      <canvas ref={canvasRef} className="absolute inset-0" />
+    </div>
+  );
+});
 
 const FRAMES_PER_PAGE = 10;
 const STATUS_FILTERS = [
@@ -40,7 +111,7 @@ export default function ReviewPage() {
 
   const { data: annotations } = useQuery({
     queryKey: ["annotations", jobId],
-    queryFn: () => listAnnotations(jobId!),
+    queryFn: () => listAnnotations(jobId!, undefined, undefined, 10000),
     enabled: !!jobId,
   });
 
@@ -51,7 +122,11 @@ export default function ReviewPage() {
   });
 
   const handleReview = async (annotationId: string, status: string) => {
-    await updateAnnotation(annotationId, { status });
+    try {
+      await updateAnnotation(annotationId, { status });
+    } catch (e) {
+      console.error("Failed to update annotation:", e);
+    }
     queryClient.invalidateQueries({ queryKey: ["annotations", jobId] });
     queryClient.invalidateQueries({ queryKey: ["stats", jobId] });
   };
@@ -96,7 +171,11 @@ export default function ReviewPage() {
   const handleBulkAccept = useCallback(async () => {
     if (!filtered) return;
     const pending = filtered.filter((a) => a.status === "pending");
-    await Promise.all(pending.map((a) => updateAnnotation(a.id, { status: "accepted" })));
+    const results = await Promise.allSettled(
+      pending.map((a) => updateAnnotation(a.id, { status: "accepted" }))
+    );
+    const failed = results.filter((r) => r.status === "rejected").length;
+    if (failed > 0) console.error(`${failed} annotation(s) failed to accept`);
     queryClient.invalidateQueries({ queryKey: ["annotations", jobId] });
     queryClient.invalidateQueries({ queryKey: ["stats", jobId] });
   }, [filtered, jobId, queryClient]);
@@ -106,7 +185,11 @@ export default function ReviewPage() {
     const lowConf = confFiltered.filter(
       (a) => a.status === "pending" && a.confidence != null && a.confidence < 0.5
     );
-    await Promise.all(lowConf.map((a) => updateAnnotation(a.id, { status: "rejected" })));
+    const results = await Promise.allSettled(
+      lowConf.map((a) => updateAnnotation(a.id, { status: "rejected" }))
+    );
+    const failed = results.filter((r) => r.status === "rejected").length;
+    if (failed > 0) console.error(`${failed} annotation(s) failed to reject`);
     queryClient.invalidateQueries({ queryKey: ["annotations", jobId] });
     queryClient.invalidateQueries({ queryKey: ["stats", jobId] });
   }, [confFiltered, jobId, queryClient]);
@@ -114,7 +197,6 @@ export default function ReviewPage() {
   // Jump to next pending frame
   const jumpToNextPending = useCallback(() => {
     if (!annotations) return;
-    // Find first frame with pending annotations after current page
     const pendingFrames = new Set<string>();
     annotations.forEach((a) => { if (a.status === "pending") pendingFrames.add(a.frame_id); });
     const allFrameEntries = Array.from(byFrame.entries());
@@ -125,7 +207,6 @@ export default function ReviewPage() {
         return;
       }
     }
-    // Wrap around
     for (let i = 0; i < startIdx && i < allFrameEntries.length; i++) {
       if (pendingFrames.has(allFrameEntries[i][0])) {
         setFramePage(Math.floor(i / FRAMES_PER_PAGE));
@@ -173,16 +254,18 @@ export default function ReviewPage() {
     <div className="min-h-screen pb-20">
 
       <div className="max-w-6xl mx-auto mt-8 px-4">
-        <div className="flex justify-between items-start mb-4">
+        {/* Header */}
+        <div className="flex justify-between items-start mb-6">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Review Labels</h1>
+            <p className="eyebrow" style={{ marginBottom: 4 }}>Annotation review</p>
+            <h1 className="text-2xl font-bold" style={{ color: "var(--text-primary)" }}>Review Labels</h1>
             {job && (
-              <p className="text-gray-500 text-sm mt-1">
-                {job.text_prompt || "Exemplar"} &middot; {job.status}
+              <p className="text-sm mt-1" style={{ color: "var(--text-secondary)" }}>
+                {job.name || job.text_prompt || "Exemplar"} &middot; {job.status}
                 {job.result_url && (
                   <>
                     {" "}&middot;{" "}
-                    <a href={job.result_url} className="text-blue-600 hover:underline">
+                    <a href={job.result_url} className="hover:underline" style={{ color: "var(--accent)" }}>
                       Download
                     </a>
                   </>
@@ -193,7 +276,8 @@ export default function ReviewPage() {
           {job && (
             <Link
               to={`/train/${jobId}`}
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm"
+              className="px-4 py-2 text-white rounded-lg text-sm"
+              style={{ backgroundColor: "var(--accent)" }}
             >
               Train Model
             </Link>
@@ -206,14 +290,14 @@ export default function ReviewPage() {
             <button
               key={f.value}
               onClick={() => { setStatusFilter(f.value); setFramePage(0); }}
-              className={`px-3 py-1.5 rounded-md text-sm transition-colors ${
-                statusFilter === f.value
-                  ? "bg-gray-900 text-white"
-                  : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-              }`}
+              className="px-3 py-1.5 rounded-md text-sm transition-colors"
+              style={statusFilter === f.value
+                ? { backgroundColor: "var(--text-primary)", color: "var(--bg-page)" }
+                : { backgroundColor: "var(--bg-inset)", color: "var(--text-secondary)" }
+              }
             >
               {f.label}
-              <span className="ml-1.5 opacity-60">
+              <span className="ml-1.5" style={{ opacity: 0.6, fontFamily: "var(--font-mono)", fontSize: 11 }}>
                 {statusCounts[f.value as keyof typeof statusCounts]}
               </span>
             </button>
@@ -221,7 +305,8 @@ export default function ReviewPage() {
           {statusCounts.pending > 0 && statusFilter !== "pending" && (
             <button
               onClick={() => { setStatusFilter("pending"); setFramePage(0); }}
-              className="ml-2 flex items-center gap-1 px-3 py-1.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-md text-sm hover:bg-amber-100"
+              className="ml-2 flex items-center gap-1 px-3 py-1.5 rounded-md text-sm"
+              style={{ backgroundColor: "var(--warning-soft)", border: "1px solid var(--warning)", color: "var(--warning)" }}
             >
               <Filter size={12} />
               Show {statusCounts.pending} needing review
@@ -230,49 +315,53 @@ export default function ReviewPage() {
         </div>
 
         {/* Toolbar */}
-        <div className="flex flex-wrap items-center gap-3 mb-5 pb-4 border-b border-gray-100">
+        <div className="flex flex-wrap items-center gap-3 mb-5 pb-4" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
           <button
             onClick={handleBulkAccept}
             disabled={pendingCount === 0}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-green-50 text-green-700 border border-green-200 rounded-lg text-sm hover:bg-green-100 disabled:opacity-40"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm disabled:opacity-40"
+            style={{ backgroundColor: "var(--success-soft)", border: "1px solid var(--success)", color: "var(--success)" }}
           >
             <CheckCheck size={14} />
-            Accept All Pending ({pendingCount})
+            Accept All ({pendingCount})
           </button>
           <button
             onClick={handleBulkRejectLowConf}
             disabled={!annotations?.some((a) => a.status === "pending" && a.confidence != null && a.confidence < 0.5)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-red-50 text-red-700 border border-red-200 rounded-lg text-sm hover:bg-red-100 disabled:opacity-40"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm disabled:opacity-40"
+            style={{ backgroundColor: "var(--danger-soft)", border: "1px solid var(--danger)", color: "var(--danger)" }}
           >
             <XCircle size={14} />
-            Reject Below 50%
+            Reject &lt;50%
           </button>
           <button
             onClick={jumpToNextPending}
             disabled={pendingCount === 0}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 text-blue-700 border border-blue-200 rounded-lg text-sm hover:bg-blue-100 disabled:opacity-40"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm disabled:opacity-40"
+            style={{ backgroundColor: "var(--accent-soft)", border: "1px solid var(--accent)", color: "var(--accent)" }}
           >
             Next Pending
           </button>
+
           <div className="flex items-center gap-2 ml-auto">
-            <label className="text-xs text-gray-500">Min confidence:</label>
+            <label className="eyebrow" style={{ fontSize: 10 }}>Min conf</label>
             <input
               type="range" min={0} max={1} step={0.05} value={confFilter}
               onChange={(e) => { setConfFilter(Number(e.target.value)); setFramePage(0); }}
               className="w-24"
             />
-            <span className="text-xs font-mono text-gray-500 w-8">
+            <span style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text-muted)", width: 28, textAlign: "right" }}>
               {confFilter > 0 ? `${(confFilter * 100).toFixed(0)}%` : "All"}
             </span>
           </div>
-          <div className="flex items-center gap-1.5 text-xs text-gray-400 border-l border-gray-200 pl-3">
-            <Keyboard size={12} />
-            <span>
-              <kbd className="px-1 py-0.5 bg-gray-100 rounded text-[10px]">A</kbd> accept
-              <kbd className="px-1 py-0.5 bg-gray-100 rounded text-[10px] ml-1">R</kbd> reject
-              <kbd className="px-1 py-0.5 bg-gray-100 rounded text-[10px] ml-1">N</kbd> next pending
-              <kbd className="px-1 py-0.5 bg-gray-100 rounded text-[10px] ml-1">&uarr;&darr;</kbd> nav
-            </span>
+
+          <div className="flex items-center gap-1.5 pl-3" style={{ borderLeft: "1px solid var(--border-subtle)", color: "var(--text-muted)", fontSize: 11 }}>
+            <Keyboard size={11} />
+            {["A accept", "R reject", "N next", "\u2191\u2193 nav"].map((hint) => (
+              <span key={hint} className="px-1 py-0.5 rounded" style={{ backgroundColor: "var(--bg-inset)", fontFamily: "var(--font-mono)", fontSize: 10 }}>
+                {hint}
+              </span>
+            ))}
           </div>
         </div>
 
@@ -280,7 +369,7 @@ export default function ReviewPage() {
           {/* Annotation grid */}
           <div className="space-y-4">
             {filtered?.length === 0 && (
-              <p className="text-gray-500 py-8 text-center">
+              <p className="py-8 text-center" style={{ color: "var(--text-muted)" }}>
                 {statusFilter === "pending"
                   ? "No pending annotations — all reviewed!"
                   : "No annotations match the current filters."}
@@ -289,8 +378,8 @@ export default function ReviewPage() {
 
             {/* Frame pagination */}
             {frameEntries.length > FRAMES_PER_PAGE && (
-              <div className="flex items-center justify-between text-sm text-gray-500 pb-2">
-                <span>
+              <div className="flex items-center justify-between text-sm pb-2" style={{ color: "var(--text-muted)" }}>
+                <span style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>
                   Frames {framePage * FRAMES_PER_PAGE + 1}&ndash;
                   {Math.min((framePage + 1) * FRAMES_PER_PAGE, frameEntries.length)} of {frameEntries.length}
                 </span>
@@ -298,30 +387,35 @@ export default function ReviewPage() {
                   <button
                     onClick={() => setFramePage((p) => Math.max(0, p - 1))}
                     disabled={framePage === 0}
-                    className="p-1 rounded hover:bg-gray-100 disabled:opacity-30"
+                    className="p-1 rounded disabled:opacity-30"
+                    style={{ color: "var(--text-secondary)" }}
                   >
                     <ChevronLeft size={16} />
                   </button>
-                  {/* Page number indicators */}
                   {totalPages <= 10 ? (
                     Array.from({ length: totalPages }, (_, i) => (
                       <button
                         key={i}
                         onClick={() => setFramePage(i)}
-                        className={`w-7 h-7 rounded text-xs ${
-                          i === framePage ? "bg-gray-900 text-white" : "hover:bg-gray-100"
-                        }`}
+                        className="w-7 h-7 rounded text-xs"
+                        style={i === framePage
+                          ? { backgroundColor: "var(--text-primary)", color: "var(--bg-page)", fontFamily: "var(--font-mono)" }
+                          : { color: "var(--text-secondary)", fontFamily: "var(--font-mono)" }
+                        }
                       >
                         {i + 1}
                       </button>
                     ))
                   ) : (
-                    <span className="text-xs px-2">Page {framePage + 1}/{totalPages}</span>
+                    <span style={{ fontSize: 12, fontFamily: "var(--font-mono)", padding: "0 8px" }}>
+                      {framePage + 1}/{totalPages}
+                    </span>
                   )}
                   <button
                     onClick={() => setFramePage((p) => Math.min(totalPages - 1, p + 1))}
                     disabled={framePage >= totalPages - 1}
-                    className="p-1 rounded hover:bg-gray-100 disabled:opacity-30"
+                    className="p-1 rounded disabled:opacity-30"
+                    style={{ color: "var(--text-secondary)" }}
                   >
                     <ChevronRight size={16} />
                   </button>
@@ -332,35 +426,28 @@ export default function ReviewPage() {
             {visibleFrames.map(([frameId, frameAnns]) => {
               const first = frameAnns[0];
               return (
-                <div key={frameId} className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+                <div
+                  key={frameId}
+                  className="surface overflow-hidden"
+                  style={{ borderRadius: "var(--radius-lg)" }}
+                >
                   <div className="relative group cursor-pointer" onClick={() => first.frame_url && setInspectFrameId(frameId)}>
-                    {/* Inspect button overlay */}
                     <div className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <span className="flex items-center gap-1 px-2 py-1 bg-gray-900/80 text-white text-xs rounded-lg backdrop-blur">
+                      <span
+                        className="flex items-center gap-1 px-2 py-1 text-xs rounded-lg backdrop-blur"
+                        style={{ backgroundColor: "rgba(0,0,0,0.7)", color: "#fff" }}
+                      >
                         <Maximize2 size={12} /> Inspect
                       </span>
                     </div>
                     {first.frame_url && (
                       <img src={first.frame_url} className="block w-full" loading="lazy" />
                     )}
-                    <svg
-                      className="absolute inset-0 w-full h-full"
-                      viewBox="0 0 1 1"
-                      preserveAspectRatio="none"
-                    >
-                      {frameAnns.map((a) => (
-                        <AnnotationOverlay
-                          key={a.id}
-                          polygon={a.polygon}
-                          status={a.status}
-                          className={a.class_name}
-                          label={`${a.class_name} ${a.confidence != null ? (a.confidence * 100).toFixed(0) + "%" : ""}`}
-                          highlight={hoveredAnn === a.id}
-                        />
-                      ))}
-                    </svg>
+                    <FrameOverlay annotations={frameAnns} hoveredId={hoveredAnn} />
                   </div>
-                  <div className="p-3 bg-gray-50 space-y-1">
+
+                  {/* Per-frame annotation list */}
+                  <div className="p-3 space-y-1" style={{ backgroundColor: "var(--bg-inset)" }}>
                     {frameAnns.map((a) => {
                       const globalIdx = flatAnnotations.indexOf(a);
                       const isFocused = globalIdx === focusedIdx;
@@ -371,9 +458,11 @@ export default function ReviewPage() {
                             if (el) annotationRefs.current.set(a.id, el);
                             else annotationRefs.current.delete(a.id);
                           }}
-                          className={`flex items-center justify-between text-sm px-2 py-1.5 rounded transition-colors cursor-pointer ${
-                            isFocused ? "bg-blue-50 ring-1 ring-blue-300" : hoveredAnn === a.id ? "bg-gray-100" : ""
-                          }`}
+                          className="flex items-center justify-between text-sm px-2.5 py-2 rounded-lg transition-colors cursor-pointer"
+                          style={{
+                            backgroundColor: isFocused ? "var(--accent-soft)" : hoveredAnn === a.id ? "var(--bg-surface-hover)" : undefined,
+                            border: isFocused ? "1px solid var(--accent)" : "1px solid transparent",
+                          }}
                           onClick={() => setFocusedIdx(globalIdx)}
                           onMouseEnter={() => setHoveredAnn(a.id)}
                           onMouseLeave={() => setHoveredAnn(null)}
@@ -383,42 +472,50 @@ export default function ReviewPage() {
                               className="inline-block w-3 h-3 rounded-sm shrink-0"
                               style={{
                                 backgroundColor:
-                                  a.status === "accepted" ? "#22c55e"
-                                    : a.status === "rejected" ? "#ef4444" : "#3b82f6",
+                                  a.status === "accepted" ? "var(--success)"
+                                    : a.status === "rejected" ? "var(--danger)" : "var(--accent)",
                               }}
                             />
-                            <span className="font-medium">{a.class_name}</span>
+                            <span className="font-medium" style={{ color: "var(--text-primary)" }}>{a.class_name}</span>
                             {a.confidence != null && (
-                              <span className="text-gray-400">
+                              <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-muted)" }}>
                                 {(a.confidence * 100).toFixed(0)}%
                               </span>
                             )}
-                            <span className={`text-xs px-1.5 py-0.5 rounded ${
-                              a.status === "accepted" ? "bg-green-100 text-green-700"
-                                : a.status === "rejected" ? "bg-red-100 text-red-700"
-                                  : "bg-gray-100 text-gray-500"
-                            }`}>
+                            <span
+                              className="text-xs px-1.5 py-0.5 rounded"
+                              style={{
+                                backgroundColor:
+                                  a.status === "accepted" ? "var(--success-soft)"
+                                    : a.status === "rejected" ? "var(--danger-soft)" : "var(--bg-inset)",
+                                color:
+                                  a.status === "accepted" ? "var(--success)"
+                                    : a.status === "rejected" ? "var(--danger)" : "var(--text-muted)",
+                                fontFamily: "var(--font-mono)",
+                                fontSize: 10,
+                              }}
+                            >
                               {a.status}
                             </span>
                           </span>
-                          <div className="flex gap-2">
+                          <div className="flex gap-1.5">
                             <button
                               onClick={(e) => { e.stopPropagation(); handleReview(a.id, "accepted"); }}
-                              className={`px-3 py-1 rounded text-xs font-medium ${
-                                a.status === "accepted"
-                                  ? "bg-green-600 text-white"
-                                  : "bg-gray-100 hover:bg-green-50 hover:text-green-700"
-                              }`}
+                              className="px-2.5 py-1 rounded text-xs font-medium transition-colors"
+                              style={a.status === "accepted"
+                                ? { backgroundColor: "var(--success)", color: "#fff" }
+                                : { backgroundColor: "var(--bg-surface)", border: "1px solid var(--border-subtle)", color: "var(--text-secondary)" }
+                              }
                             >
                               Accept
                             </button>
                             <button
                               onClick={(e) => { e.stopPropagation(); handleReview(a.id, "rejected"); }}
-                              className={`px-3 py-1 rounded text-xs font-medium ${
-                                a.status === "rejected"
-                                  ? "bg-red-600 text-white"
-                                  : "bg-gray-100 hover:bg-red-50 hover:text-red-700"
-                              }`}
+                              className="px-2.5 py-1 rounded text-xs font-medium transition-colors"
+                              style={a.status === "rejected"
+                                ? { backgroundColor: "var(--danger)", color: "#fff" }
+                                : { backgroundColor: "var(--bg-surface)", border: "1px solid var(--border-subtle)", color: "var(--text-secondary)" }
+                              }
                             >
                               Reject
                             </button>
@@ -441,14 +538,18 @@ export default function ReviewPage() {
 
       {/* Sticky train bar — show after >50% reviewed */}
       {job && acceptedCount > 0 && annotations && (acceptedCount + (annotations.filter((a) => a.status === "rejected").length)) > annotations.length * 0.5 && (
-        <div className="fixed bottom-0 left-0 right-0 bg-green-600 text-white py-3 px-6 flex items-center justify-between z-50">
+        <div
+          className="fixed bottom-0 left-0 right-0 py-3 px-6 flex items-center justify-between z-50"
+          style={{ backgroundColor: "var(--success)", color: "#fff" }}
+        >
           <span className="text-sm">
             <strong>{acceptedCount}</strong> accepted, <strong>{pendingCount}</strong> remaining to review.
             {pendingCount === 0 && " All reviewed!"}
           </span>
           <Link
             to={`/train/${jobId}`}
-            className="px-5 py-2 bg-white text-green-700 rounded-lg text-sm font-medium hover:bg-green-50"
+            className="px-5 py-2 rounded-lg text-sm font-medium"
+            style={{ backgroundColor: "#fff", color: "var(--success)" }}
           >
             Train Model
           </Link>
@@ -463,8 +564,6 @@ export default function ReviewPage() {
 
         const allFrameIds = frameEntries.map(([id]) => id);
         const currentIdx = allFrameIds.indexOf(inspectFrameId);
-
-        // Collect unique class names
         const allClasses = [...new Set(annotations?.map((a) => a.class_name) || [])].sort();
 
         return (

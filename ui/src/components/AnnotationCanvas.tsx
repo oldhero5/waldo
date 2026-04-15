@@ -41,6 +41,7 @@ export default function AnnotationCanvas({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [imgLoaded, setImgLoaded] = useState(false);
+  const [showBoxes, setShowBoxes] = useState(true);
   const dragging = useRef(false);
   const dragStart = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
 
@@ -65,6 +66,7 @@ export default function AnnotationCanvas({
     const img = new Image();
     img.crossOrigin = "anonymous";
     img.onload = () => { imgRef.current = img; setImgLoaded(true); };
+    img.onerror = () => { console.error("Failed to load image:", imageUrl); setImgLoaded(false); };
     img.src = imageUrl;
     setImgLoaded(false);
     setZoom(1);
@@ -137,27 +139,34 @@ export default function AnnotationCanvas({
       ctx.closePath();
       ctx.fillStyle = color + (isSelected ? "44" : isHovered ? "33" : "22");
       ctx.fill();
-      ctx.strokeStyle = color;
-      ctx.lineWidth = isSelected ? 3 : isHovered ? 2.5 : 1.5;
-      if (ann.status === "rejected") ctx.setLineDash([4, 4]);
-      ctx.stroke();
-      ctx.setLineDash([]);
 
-      // Label
-      let minY = Infinity, labelX = 0;
-      for (let i = 0; i < ann.polygon.length; i += 2) {
-        const py = oy + ann.polygon[i + 1] * imgH;
-        if (py < minY) { minY = py; labelX = ox + ann.polygon[i] * imgW; }
+      if (showBoxes) {
+        ctx.strokeStyle = color;
+        ctx.lineWidth = isSelected ? 3 : isHovered ? 2.5 : 1.5;
+        if (ann.status === "rejected") ctx.setLineDash([4, 4]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Label
+        let minY = Infinity, labelX = 0;
+        for (let i = 0; i < ann.polygon.length; i += 2) {
+          const py = oy + ann.polygon[i + 1] * imgH;
+          if (py < minY) { minY = py; labelX = ox + ann.polygon[i] * imgW; }
+        }
+        const label = `${ann.class_name} ${ann.confidence != null ? (ann.confidence * 100).toFixed(0) + "%" : ""}`;
+        ctx.font = `bold 13px system-ui, sans-serif`;
+        const tw = ctx.measureText(label).width;
+        const lh = 18;
+        const ly = Math.max(lh, minY - 4);
+        ctx.fillStyle = color + "dd";
+        ctx.fillRect(labelX - 2, ly - lh, tw + 8, lh + 2);
+        ctx.fillStyle = "#fff";
+        ctx.fillText(label, labelX + 2, ly - 4);
+      } else if (isSelected || isHovered) {
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        ctx.stroke();
       }
-      const label = `${ann.class_name} ${ann.confidence != null ? (ann.confidence * 100).toFixed(0) + "%" : ""}`;
-      ctx.font = `bold 13px system-ui, sans-serif`;
-      const tw = ctx.measureText(label).width;
-      const lh = 18;
-      const ly = Math.max(lh, minY - 4);
-      ctx.fillStyle = color + "dd";
-      ctx.fillRect(labelX - 2, ly - lh, tw + 8, lh + 2);
-      ctx.fillStyle = "#fff";
-      ctx.fillText(label, labelX + 2, ly - 4);
     }
 
     // Draw SAM3 preview polygon
@@ -199,7 +208,7 @@ export default function AnnotationCanvas({
       ctx.textAlign = "start";
       ctx.textBaseline = "alphabetic";
     }
-  }, [imgLoaded, zoom, pan, annotations, selectedId, hoveredId, previewPolygon, clickPoints]);
+  }, [imgLoaded, zoom, pan, annotations, selectedId, hoveredId, previewPolygon, clickPoints, showBoxes]);
 
   useEffect(() => { draw(); }, [draw]);
 
@@ -321,23 +330,84 @@ export default function AnnotationCanvas({
     }
   }, [previewPolygon, selectedClass, newClassName, frameId, jobId, onAnnotationCreated]);
 
+  // Active annotation: hovered > selected > first pending > first
+  const hoveredAnn = annotations.find((a) => a.id === hoveredId);
+  const selectedAnn = annotations.find((a) => a.id === selectedId);
+  const firstPending = annotations.find((a) => a.status === "pending");
+  const activeAnn = hoveredAnn || selectedAnn || firstPending || annotations[0] || null;
+
+  // Auto-highlight active annotation
+  useEffect(() => {
+    if (mode === "review" && !hoveredId && !selectedId && activeAnn) {
+      setSelectedId(activeAnn.id);
+    }
+  }, [mode, hoveredId, selectedId, activeAnn]);
+
   // Keyboard
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement) return;
       if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
         if (mode === "annotate" && clickPoints.length > 0) {
           setClickPoints([]); setPreviewPolygon(null);
         } else if (mode === "annotate") {
           setMode("review");
+        } else if (zoom > 1.5) {
+          setZoom(1); setPan({ x: 0, y: 0 });
         } else {
           onClose();
         }
       }
       else if (e.key === "ArrowLeft" && onPrev) onPrev();
       else if (e.key === "ArrowRight" && onNext) onNext();
-      else if (e.key === "a" && mode === "review" && selectedId) onAccept(selectedId);
-      else if (e.key === "r" && mode === "review" && selectedId) onReject(selectedId);
+      else if (e.key === "z" && mode === "review" && !e.ctrlKey && !e.metaKey) {
+        // Z toggles zoom: zoom in to active annotation, or zoom out if already zoomed
+        if (zoom > 1.5) {
+          setZoom(1); setPan({ x: 0, y: 0 });
+        } else if (activeAnn && activeAnn.polygon && activeAnn.polygon.length >= 4) {
+          // Zoom to annotation bounding box
+          const canvas = canvasRef.current;
+          const img = imgRef.current;
+          if (canvas && img) {
+            const rect = canvas.getBoundingClientRect();
+            let minX = 1, maxX = 0, minY = 1, maxY = 0;
+            for (let i = 0; i < activeAnn.polygon.length; i += 2) {
+              minX = Math.min(minX, activeAnn.polygon[i]);
+              maxX = Math.max(maxX, activeAnn.polygon[i]);
+              minY = Math.min(minY, activeAnn.polygon[i + 1]);
+              maxY = Math.max(maxY, activeAnn.polygon[i + 1]);
+            }
+            const pad = 0.05;
+            minX = Math.max(0, minX - pad); minY = Math.max(0, minY - pad);
+            maxX = Math.min(1, maxX + pad); maxY = Math.min(1, maxY + pad);
+            const centerX = (minX + maxX) / 2;
+            const centerY = (minY + maxY) / 2;
+            const baseScale = Math.min(rect.width / img.width, rect.height / img.height);
+            const targetZoom = Math.min(0.6 / Math.max(maxX - minX, maxY - minY), 15);
+            const scale = baseScale * targetZoom;
+            const imgW = img.width * scale;
+            const imgH = img.height * scale;
+            setZoom(targetZoom);
+            setPan({ x: rect.width / 2 - centerX * imgW - (rect.width - imgW) / 2, y: rect.height / 2 - centerY * imgH - (rect.height - imgH) / 2 });
+          }
+        }
+      }
+      else if (e.key === "b" && mode === "review") {
+        setShowBoxes((prev) => !prev);
+      }
+      else if ((e.key === "a" || e.key === "r") && mode === "review" && activeAnn) {
+        const targetId = activeAnn.id;
+        if (e.key === "a") onAccept(targetId); else onReject(targetId);
+        // Auto-select next pending annotation
+        const remaining = annotations.filter((a) => a.id !== targetId && a.status === "pending");
+        if (remaining.length > 0) {
+          setSelectedId(remaining[0].id);
+        } else {
+          setSelectedId(null);
+        }
+      }
       else if (e.key === "Enter" && mode === "annotate" && previewPolygon) handleSave();
       else if ((e.key === "z" && (e.ctrlKey || e.metaKey)) && mode === "annotate") {
         setClickPoints((prev) => prev.slice(0, -1));
@@ -345,9 +415,8 @@ export default function AnnotationCanvas({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [onClose, onPrev, onNext, selectedId, onAccept, onReject, mode, clickPoints, previewPolygon, handleSave]);
+  }, [onClose, onPrev, onNext, activeAnn, annotations, onAccept, onReject, mode, clickPoints, previewPolygon, handleSave, zoom]);
 
-  const selected = annotations.find((a) => a.id === selectedId);
   const effectiveClass = newClassName.trim() || selectedClass;
 
   return (
@@ -380,6 +449,27 @@ export default function AnnotationCanvas({
           <button onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }} className="p-1.5 rounded hover:bg-gray-800 text-gray-400"><RotateCcw size={16} /></button>
           <span className="text-xs text-gray-500 ml-1 font-mono">{(zoom * 100).toFixed(0)}%</span>
 
+          <div className="w-px h-5 bg-gray-700 mx-2" />
+
+          {mode === "review" && (
+            <>
+              <button
+                onClick={() => { if (activeAnn?.polygon) { /* zoom toggle handled by Z key */ const e = new KeyboardEvent('keydown', {key: 'z'}); window.dispatchEvent(e); } }}
+                className="flex items-center gap-1 px-2 py-1 rounded text-xs text-gray-300 hover:bg-gray-800"
+                title="Zoom to annotation (Z)"
+              >
+                <ZoomIn size={13} /> <kbd className="text-[9px] opacity-50">Z</kbd>
+              </button>
+              <button
+                onClick={() => setShowBoxes((prev) => !prev)}
+                className={`flex items-center gap-1 px-2 py-1 rounded text-xs ${showBoxes ? "text-gray-300 hover:bg-gray-800" : "text-amber-400 hover:bg-gray-800"}`}
+                title="Toggle boxes/labels (B)"
+              >
+                {showBoxes ? "Boxes" : "Off"} <kbd className="text-[9px] opacity-50">B</kbd>
+              </button>
+            </>
+          )}
+
           {segmenting && (
             <span className="flex items-center gap-1 ml-3 text-blue-400 text-xs">
               <Loader2 size={12} className="animate-spin" /> Segmenting...
@@ -388,7 +478,7 @@ export default function AnnotationCanvas({
         </div>
 
         <div className="flex items-center gap-2 text-xs text-gray-500">
-          {mode === "review" && <span><kbd className="px-1 py-0.5 bg-gray-800 rounded">A</kbd> accept <kbd className="px-1 py-0.5 bg-gray-800 rounded">R</kbd> reject</span>}
+          {mode === "review" && <span><kbd className="px-1 py-0.5 bg-gray-800 rounded">A</kbd> accept <kbd className="px-1 py-0.5 bg-gray-800 rounded">R</kbd> reject <kbd className="px-1 py-0.5 bg-gray-800 rounded">Z</kbd> zoom <kbd className="px-1 py-0.5 bg-gray-800 rounded">B</kbd> boxes</span>}
           {mode === "annotate" && <span>Left-click = positive, Right-click = negative, <kbd className="px-1 py-0.5 bg-gray-800 rounded">Enter</kbd> save</span>}
           <button onClick={onClose} className="p-1.5 rounded hover:bg-gray-800 text-gray-400 ml-2"><X size={18} /></button>
         </div>
@@ -408,20 +498,21 @@ export default function AnnotationCanvas({
           onContextMenu={handleContextMenu}
         />
 
-        {/* Review mode: selected annotation panel */}
-        {mode === "review" && selected && (
-          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-gray-900/95 backdrop-blur border border-gray-700 rounded-xl px-5 py-3 flex items-center gap-4 shadow-xl">
-            <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: classColor(selected.class_name) }} />
-            <span className="text-white font-medium text-sm">{selected.class_name}</span>
-            {selected.confidence != null && <span className="text-gray-400 text-sm">{(selected.confidence * 100).toFixed(0)}%</span>}
-            <div className="h-6 w-px bg-gray-700" />
-            <button onClick={() => onAccept(selected.id)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium ${selected.status === "accepted" ? "bg-green-600 text-white" : "bg-gray-800 text-gray-300 hover:bg-green-600/20"}`}>
-              <Check size={14} /> Accept
+        {/* Review mode: always-visible action panel */}
+        {mode === "review" && activeAnn && (
+          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-gray-900/95 backdrop-blur border border-gray-700 rounded-xl px-4 py-2.5 flex items-center gap-3 shadow-xl">
+            <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: classColor(activeAnn.class_name) }} />
+            <span className="text-white font-medium text-sm">{activeAnn.class_name}</span>
+            {activeAnn.confidence != null && <span className="text-gray-400 text-sm">{(activeAnn.confidence * 100).toFixed(0)}%</span>}
+            <span className="text-gray-500 text-xs">{annotations.filter((a) => a.status === "pending").length} pending</span>
+            <div className="h-5 w-px bg-gray-700" />
+            <button onClick={() => { onAccept(activeAnn.id); const next = annotations.find((a) => a.id !== activeAnn.id && a.status === "pending"); setSelectedId(next?.id || null); }}
+              className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${activeAnn.status === "accepted" ? "bg-green-600 text-white" : "bg-gray-800 text-gray-300 hover:bg-green-600 hover:text-white"}`}>
+              <Check size={13} /> Accept <kbd className="text-[10px] opacity-50 ml-1">A</kbd>
             </button>
-            <button onClick={() => onReject(selected.id)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium ${selected.status === "rejected" ? "bg-red-600 text-white" : "bg-gray-800 text-gray-300 hover:bg-red-600/20"}`}>
-              <XCircle size={14} /> Reject
+            <button onClick={() => { onReject(activeAnn.id); const next = annotations.find((a) => a.id !== activeAnn.id && a.status === "pending"); setSelectedId(next?.id || null); }}
+              className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${activeAnn.status === "rejected" ? "bg-red-600 text-white" : "bg-gray-800 text-gray-300 hover:bg-red-600 hover:text-white"}`}>
+              <XCircle size={13} /> Reject <kbd className="text-[10px] opacity-50 ml-1">R</kbd>
             </button>
           </div>
         )}

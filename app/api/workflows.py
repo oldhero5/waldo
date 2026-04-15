@@ -1,16 +1,18 @@
 """Workflow API — create, save, run, and deploy visual ML pipelines."""
+
 import asyncio
 import re
 
 import cv2
 import numpy as np
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
+from lib.auth import get_current_user
 from lib.db import SavedWorkflow, SessionLocal
 from lib.workflow_engine import execute_workflow, get_block_schemas
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
 class WorkflowGraph(BaseModel):
@@ -51,6 +53,7 @@ def _slugify(text: str) -> str:
 
 # ── Block catalog ────────────────────────────────────────────
 
+
 @router.get("/workflows/blocks")
 def list_blocks():
     """Return all available workflow block types with their schemas."""
@@ -58,6 +61,7 @@ def list_blocks():
 
 
 # ── CRUD ─────────────────────────────────────────────────────
+
 
 @router.post("/workflows", status_code=201, response_model=SavedWorkflowOut)
 def save_workflow(req: SaveWorkflowRequest):
@@ -80,7 +84,9 @@ def save_workflow(req: SaveWorkflowRequest):
         session.refresh(wf)
 
         return SavedWorkflowOut(
-            id=str(wf.id), name=wf.name, slug=wf.slug,
+            id=str(wf.id),
+            name=wf.name,
+            slug=wf.slug,
             description=wf.description,
             block_count=len(req.graph.nodes),
             is_deployed=wf.is_deployed,
@@ -97,7 +103,9 @@ def list_saved_workflows():
         wfs = session.query(SavedWorkflow).order_by(SavedWorkflow.created_at.desc()).all()
         return [
             SavedWorkflowOut(
-                id=str(wf.id), name=wf.name, slug=wf.slug,
+                id=str(wf.id),
+                name=wf.name,
+                slug=wf.slug,
                 description=wf.description,
                 block_count=len(wf.graph.get("nodes", [])) if wf.graph else 0,
                 is_deployed=wf.is_deployed,
@@ -117,9 +125,13 @@ def get_saved_workflow(slug: str):
         if not wf:
             raise HTTPException(status_code=404, detail="Workflow not found")
         return {
-            "id": str(wf.id), "name": wf.name, "slug": wf.slug,
-            "description": wf.description, "graph": wf.graph,
-            "is_deployed": wf.is_deployed, "created_at": wf.created_at.isoformat(),
+            "id": str(wf.id),
+            "name": wf.name,
+            "slug": wf.slug,
+            "description": wf.description,
+            "graph": wf.graph,
+            "is_deployed": wf.is_deployed,
+            "created_at": wf.created_at.isoformat(),
         }
     finally:
         session.close()
@@ -140,6 +152,7 @@ def delete_workflow(slug: str):
 
 
 # ── Deploy ───────────────────────────────────────────────────
+
 
 @router.post("/workflows/saved/{slug}/deploy")
 def deploy_workflow(slug: str):
@@ -186,6 +199,7 @@ async def serve_workflow(slug: str, file: UploadFile = File(...)):
 
 
 # ── Run (ad-hoc) ─────────────────────────────────────────────
+
 
 @router.post("/workflows/run", response_model=WorkflowRunResponse)
 async def run_workflow_inline(req: WorkflowRunRequest):

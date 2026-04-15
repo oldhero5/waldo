@@ -9,7 +9,6 @@ function classColor(className: string): string {
 }
 
 function hslToHex(hsl: string): string {
-  // Parse hsl(h, s%, l%) and convert to hex for SVG
   const match = hsl.match(/hsl\((\d+),\s*(\d+)%,\s*(\d+)%\)/);
   if (!match) return "#22c55e";
   const h = Number(match[1]) / 360;
@@ -48,7 +47,6 @@ export default function AnnotationOverlay({
     points.push(`${polygon[i]},${polygon[i + 1]}`);
   }
 
-  // Color priority: explicit color > class-based > status-based
   const baseColor = color
     ? color
     : className
@@ -59,19 +57,9 @@ export default function AnnotationOverlay({
           ? "#ef4444"
           : "#3b82f6";
 
-  // Compute centroid for label placement
-  let cx = 0, cy = 0;
-  const n = polygon.length / 2;
-  for (let i = 0; i < polygon.length; i += 2) {
-    cx += polygon[i];
-    cy += polygon[i + 1];
-  }
-  cx /= n;
-  cy /= n;
-
   // Find top-most point for label
   let minY = 1;
-  let minYx = cx;
+  let minYx = 0;
   for (let i = 0; i < polygon.length; i += 2) {
     if (polygon[i + 1] < minY) {
       minY = polygon[i + 1];
@@ -89,7 +77,6 @@ export default function AnnotationOverlay({
       />
       {label && (
         <>
-          {/* Label background */}
           <rect
             x={minYx - 0.002}
             y={minY - 0.028}
@@ -99,7 +86,6 @@ export default function AnnotationOverlay({
             fill={baseColor}
             opacity={0.85}
           />
-          {/* Label text */}
           <text
             x={minYx + 0.003}
             y={minY - 0.008}

@@ -3,33 +3,30 @@
  * Persistent on desktop, collapsible on mobile.
  */
 import { useEffect, useState } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   Home,
   Upload,
   Database,
   FlaskConical,
   Rocket,
-  Play,
   Settings,
   Workflow,
   ChevronDown,
   Loader2,
-  BarChart3,
   MessageCircle,
+  CheckCircle2,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
-import { listTrainingRuns } from "../api";
+import { getComparisonResult, listTrainingRuns } from "../api";
 
 const NAV_ITEMS = [
   { to: "/", label: "Home", icon: Home, exact: true },
   { to: "/upload", label: "Upload", icon: Upload },
   { to: "/datasets", label: "Datasets", icon: Database },
-  { to: "/workflows", label: "Workflows", icon: Workflow },
+  { to: "/workflows", label: "Workflows", icon: Workflow, badge: "beta" },
   { to: "/experiments", label: "Experiments", icon: FlaskConical },
-  { to: "/monitoring", label: "Monitoring", icon: BarChart3 },
   { to: "/deploy", label: "Deploy", icon: Rocket },
-  { to: "/demo", label: "Demo", icon: Play },
 ];
 
 const BOTTOM_ITEMS = [
@@ -151,6 +148,70 @@ function WorkspaceSwitcher() {
 }
 
 
+function ComparisonIndicator() {
+  const navigate = useNavigate();
+  const [sessionId, setSessionId] = useState<string | null>(() => sessionStorage.getItem("waldo_compare_session"));
+  const [_meta, setMeta] = useState<{ modelA: string; modelB: string; fileName: string } | null>(null);
+  const [done, setDone] = useState(false);
+
+  // Read metadata from sessionStorage
+  useEffect(() => {
+    const raw = sessionStorage.getItem("waldo_compare_meta");
+    if (raw) {
+      try { setMeta(JSON.parse(raw)); } catch { /* ignore */ }
+    }
+  }, [sessionId]);
+
+  // Listen for sessionStorage changes (from CompareDemo setting the session)
+  useEffect(() => {
+    const onStorage = () => {
+      const id = sessionStorage.getItem("waldo_compare_session");
+      setSessionId(id);
+      setDone(false);
+    };
+    // Poll sessionStorage since storage events don't fire within the same tab
+    const interval = setInterval(onStorage, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Poll for results
+  useEffect(() => {
+    if (!sessionId || done) return;
+    const interval = setInterval(async () => {
+      try {
+        const data = await getComparisonResult(sessionId);
+        if (data.status === "completed") {
+          setDone(true);
+        }
+      } catch { /* ignore */ }
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [sessionId, done]);
+
+  if (!sessionId) return null;
+
+  return (
+    <button
+      onClick={() => {
+        navigate("/deploy/test");
+        // Switch to compare mode — the CompareDemo will pick up the session from sessionStorage
+      }}
+      className="flex items-center gap-2 mx-1 mt-2 px-3 py-2 rounded-lg text-xs font-medium w-full text-left"
+      style={{
+        backgroundColor: done ? "var(--success-soft)" : "var(--warning-soft)",
+        color: done ? "var(--success)" : "var(--warning)",
+      }}
+    >
+      {done ? <CheckCircle2 size={13} /> : <Loader2 size={13} className="animate-spin" />}
+      <span className="truncate flex-1">
+        {done ? "Comparison ready" : "Comparing..."}
+      </span>
+      {done && <span className="text-[9px]">View</span>}
+    </button>
+  );
+}
+
+
 export default function Sidebar() {
   const loc = useLocation();
 
@@ -182,8 +243,9 @@ export default function Sidebar() {
       <nav className="flex-1 px-2 mt-1">
         <div className="space-y-0.5">
           {NAV_ITEMS.map((item) => {
-            const active = isActive(item.to, item.exact);
+            const active = isActive(item.to, (item as any).exact);
             const Icon = item.icon;
+            const badge = (item as any).badge as string | undefined;
             return (
               <Link
                 key={item.to}
@@ -211,6 +273,23 @@ export default function Sidebar() {
               >
                 <Icon size={16} strokeWidth={active ? 2 : 1.5} />
                 {item.label}
+                {badge && (
+                  <span
+                    style={{
+                      fontSize: 9,
+                      fontFamily: "var(--font-mono)",
+                      letterSpacing: "0.06em",
+                      textTransform: "uppercase",
+                      padding: "1px 5px",
+                      borderRadius: 4,
+                      backgroundColor: "var(--warning-soft)",
+                      color: "var(--warning)",
+                      marginLeft: "auto",
+                    }}
+                  >
+                    {badge}
+                  </span>
+                )}
               </Link>
             );
           })}
@@ -227,6 +306,9 @@ export default function Sidebar() {
             <span className="truncate">Training {activeRun.epoch_current}/{activeRun.total_epochs}</span>
           </Link>
         )}
+
+        {/* Active comparison task */}
+        <ComparisonIndicator />
       </nav>
 
       {/* Bottom section */}

@@ -4,20 +4,30 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from PIL import Image
 from pydantic import BaseModel
 
+from lib.auth import get_current_user
 from lib.db import Annotation, Frame, LabelingJob, Project, SessionLocal, Video
 from lib.storage import download_file
 from lib.tasks import label_video, label_video_exemplar
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
 class ClassPrompt(BaseModel):
     name: str
-    prompt: str
+    prompt: str | None = None  # Single prompt (backward compat)
+    prompts: list[str] | None = None  # Multiple prompt aliases for one class
+
+    def get_prompts(self) -> list[str]:
+        """Return all prompts for this class."""
+        if self.prompts:
+            return self.prompts
+        if self.prompt:
+            return [self.prompt]
+        return [self.name]
 
 
 class LabelRequest(BaseModel):
@@ -129,7 +139,114 @@ def start_exemplar_labeling(req: ExemplarRequest):
         session.close()
 
 
+# ── Prompt preview — quick test on a few frames ──────────────────────
+
+
+class PreviewRequest(BaseModel):
+    video_id: str | None = None
+    project_id: str | None = None
+    prompts: list[str]  # One or more prompt strings to test
+    max_frames: int = 5
+    threshold: float = 0.35
+
+
+class PreviewDetection(BaseModel):
+    bbox: list[float]
+    score: float
+    label: str
+    polygon: list[float] | None = None
+
+
+class PreviewFrame(BaseModel):
+    frame_idx: int
+    image_b64: str  # base64 JPEG — rendered inline via data: URL
+    timestamp_s: float
+    width: int
+    height: int
+    detections: list[PreviewDetection]
+
+
+class PreviewResponse(BaseModel):
+    frames: list[PreviewFrame]
+    total_detections: int
+
+
+@router.post("/label/preview", response_model=PreviewResponse)
+async def preview_prompts(req: PreviewRequest):
+    """Prompt playground — dispatches a small SAM3.1 run to the Celery worker
+    and returns detections + base64 JPEGs for inline preview.
+
+    Runs synchronously with a 90s timeout. Reuses the worker's cached MLX
+    predictor so subsequent calls are ~150ms/frame after the first load.
+    Nothing is persisted.
+    """
+    import asyncio
+
+    session = SessionLocal()
+    try:
+        # Resolve the video to sample from.
+        if req.video_id:
+            video = session.query(Video).filter_by(id=req.video_id).first()
+            if not video:
+                raise HTTPException(status_code=404, detail="Video not found")
+        elif req.project_id:
+            project = session.query(Project).filter_by(id=req.project_id).first()
+            if not project:
+                raise HTTPException(status_code=404, detail="Project not found")
+            video = session.query(Video).filter_by(project_id=project.id).first()
+            if not video:
+                raise HTTPException(status_code=404, detail="No videos in project")
+        else:
+            raise HTTPException(status_code=400, detail="video_id or project_id required")
+        video_id_str = str(video.id)
+    finally:
+        session.close()
+
+    if not req.prompts:
+        raise HTTPException(status_code=400, detail="prompts must be non-empty")
+
+    from lib.tasks import app as celery_app
+
+    def _dispatch_and_wait():
+        async_result = celery_app.send_task(
+            "waldo.label_playground",
+            args=[video_id_str, req.prompts, req.threshold, req.max_frames],
+        )
+        return async_result.get(timeout=90)
+
+    try:
+        result = await asyncio.to_thread(_dispatch_and_wait)
+    except Exception as e:
+        raise HTTPException(
+            status_code=504 if "timeout" in str(e).lower() else 500,
+            detail=f"Playground failed: {e}",
+        )
+
+    frames_out: list[PreviewFrame] = []
+    for f in result.get("frames", []):
+        frames_out.append(
+            PreviewFrame(
+                frame_idx=f["frame_index"],
+                image_b64=f["image_b64"],
+                timestamp_s=f["timestamp_s"],
+                width=f["width"],
+                height=f["height"],
+                detections=[
+                    PreviewDetection(
+                        bbox=d["bbox"],
+                        score=d["score"],
+                        label=d["label"],
+                        polygon=d.get("polygon"),
+                    )
+                    for d in f["detections"]
+                ],
+            )
+        )
+    return PreviewResponse(frames=frames_out, total_detections=result.get("total_detections", 0))
+
+
 # ── Interactive SAM3 segmentation from click points ──────────────────
+
 
 class SegmentPointsRequest(BaseModel):
     frame_id: str
@@ -214,6 +331,7 @@ async def segment_with_points(req: SegmentPointsRequest):
 
 
 # ── Create annotation ────────────────────────────────────────────────
+
 
 class AnnotationCreateRequest(BaseModel):
     frame_id: str

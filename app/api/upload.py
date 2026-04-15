@@ -3,16 +3,17 @@ import uuid
 from io import BytesIO
 from pathlib import Path
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from PIL import Image
 from pydantic import BaseModel
 
 from labeler.frame_extractor import get_video_metadata
+from lib.auth import get_current_user
 from lib.db import Frame, LabelingJob, Project, SessionLocal, Video
 from lib.storage import get_download_url, upload_bytes, upload_file
 from lib.tasks import label_video
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
 class UploadResponse(BaseModel):
@@ -133,10 +134,14 @@ def link_existing_videos(req: LinkVideosRequest):
                 continue  # Already in target
 
             # Check for duplicate by filename
-            existing = session.query(Video).filter_by(
-                project_id=target_project.id,
-                filename=source_video.filename,
-            ).first()
+            existing = (
+                session.query(Video)
+                .filter_by(
+                    project_id=target_project.id,
+                    filename=source_video.filename,
+                )
+                .first()
+            )
             if existing:
                 continue
 
@@ -165,10 +170,15 @@ def link_existing_videos(req: LinkVideosRequest):
         session.close()
 
 
+MAX_VIDEO_SIZE_BYTES = 10 * 1024 * 1024 * 1024  # 10 GB
+
+
 async def _upload_single_video(session, project: Project, file: UploadFile) -> UploadResponse:
     """Handle uploading a single video file: save to temp, extract metadata, upload to MinIO, create DB record."""
     with tempfile.NamedTemporaryFile(delete=False, suffix=Path(file.filename).suffix) as tmp:
         content = await file.read()
+        if len(content) > MAX_VIDEO_SIZE_BYTES:
+            raise HTTPException(status_code=413, detail=f"Video exceeds 10 GB limit ({len(content) / 1024**3:.1f} GB)")
         tmp.write(content)
         tmp_path = tmp.name
 
@@ -176,10 +186,14 @@ async def _upload_single_video(session, project: Project, file: UploadFile) -> U
         meta = get_video_metadata(tmp_path)
 
         # Duplicate detection: same filename + same duration + same resolution = likely duplicate
-        existing = session.query(Video).filter_by(
-            project_id=project.id,
-            filename=file.filename,
-        ).first()
+        existing = (
+            session.query(Video)
+            .filter_by(
+                project_id=project.id,
+                filename=file.filename,
+            )
+            .first()
+        )
         if existing and existing.duration_s and meta.duration_s:
             if abs((existing.duration_s or 0) - (meta.duration_s or 0)) < 0.5:
                 # Same file — return existing without re-uploading
@@ -281,11 +295,7 @@ _ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tiff", 
 
 def _get_or_create_images_video(session, project: Project) -> Video:
     """Get or create a placeholder 'images' Video entry for standalone image uploads."""
-    video = (
-        session.query(Video)
-        .filter_by(project_id=project.id, filename="__standalone_images__")
-        .first()
-    )
+    video = session.query(Video).filter_by(project_id=project.id, filename="__standalone_images__").first()
     if not video:
         video = Video(
             project_id=project.id,
@@ -331,7 +341,7 @@ async def upload_images(
                 raise HTTPException(
                     status_code=400,
                     detail=f"Unsupported image type '{ext}' for file '{file.filename}'. "
-                           f"Allowed: {', '.join(sorted(_ALLOWED_IMAGE_EXTENSIONS))}",
+                    f"Allowed: {', '.join(sorted(_ALLOWED_IMAGE_EXTENSIONS))}",
                 )
 
             content = await file.read()

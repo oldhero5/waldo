@@ -51,39 +51,35 @@ export default function UploadPage() {
 
       <div className="max-w-xl mx-auto mt-16 px-4">
         <p className="eyebrow" style={{ marginBottom: 4 }}>Data ingestion</p>
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">Upload Video</h1>
-        <p className="text-gray-500 mb-8">
+        <h1 className="text-3xl font-bold mb-2" style={{ color: "var(--text-primary)" }}>Upload Video</h1>
+        <p className="mb-8" style={{ color: "var(--text-secondary)" }}>
           Upload one or more videos to extract frames and start labeling.
         </p>
 
         <div className="mb-4">
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Collection Name
-          </label>
+          <span className="eyebrow block mb-1">Collection Name</span>
           <input
             type="text"
             value={projectName}
             onChange={(e) => setProjectName(e.target.value)}
             placeholder="e.g. parking-lot-cam"
-            className="border rounded-lg px-4 py-2 w-full"
+            className="rounded-lg px-4 py-2 w-full outline-none"
+            style={{ border: "1px solid var(--border-default)", backgroundColor: "var(--bg-inset)", color: "var(--text-primary)" }}
+            onFocus={(e) => (e.currentTarget.style.borderColor = "var(--accent)")}
+            onBlur={(e) => (e.currentTarget.style.borderColor = "var(--border-default)")}
           />
-          <p className="text-xs text-gray-400 mt-1">
+          <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
             Groups videos together. Defaults to "default" if left blank.
           </p>
         </div>
 
         <div
-          className={`border-2 border-dashed rounded-xl p-12 text-center transition ${
-            dragOver
-              ? "border-blue-500 bg-blue-50"
-              : completed
-                ? "border-green-300 bg-green-50"
-                : "border-gray-300 hover:border-gray-400"
-          }`}
-          onDragOver={(e) => {
-            e.preventDefault();
-            setDragOver(true);
+          className="rounded-xl p-12 text-center transition"
+          style={{
+            border: dragOver ? "2px dashed var(--accent)" : completed ? "2px dashed var(--success)" : "2px dashed var(--border-default)",
+            backgroundColor: dragOver ? "var(--accent-soft)" : completed ? "var(--success-soft)" : "transparent",
           }}
+          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
           onDragLeave={() => setDragOver(false)}
           onDrop={(e) => {
             e.preventDefault();
@@ -94,19 +90,21 @@ export default function UploadPage() {
         >
           {completed ? (
             <div>
-              <CheckCircle size={40} className="mx-auto mb-3 text-green-600" />
-              <p className="text-green-700 font-medium mb-1">Upload successful</p>
-              <p className="text-sm text-gray-500 mb-4">{completed.filename}</p>
+              <CheckCircle size={40} className="mx-auto mb-3" style={{ color: "var(--success)" }} />
+              <p className="font-medium mb-1" style={{ color: "var(--success)" }}>Upload successful</p>
+              <p className="text-sm mb-4" style={{ color: "var(--text-muted)" }}>{completed.filename}</p>
               <div className="flex gap-3 justify-center">
                 <button
                   onClick={() => navigate(`/label/${completed.videoId}`)}
-                  className="px-6 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium"
+                  className="px-6 py-2 text-white rounded-lg font-medium"
+                  style={{ backgroundColor: "var(--success)" }}
                 >
                   Continue to Label
                 </button>
                 <button
                   onClick={() => setCompleted(null)}
-                  className="px-4 py-2 border rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+                  className="px-4 py-2 rounded-lg text-sm"
+                  style={{ border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}
                 >
                   Upload Another
                 </button>
@@ -114,18 +112,18 @@ export default function UploadPage() {
             </div>
           ) : uploading ? (
             <div>
-              <Upload size={32} className="mx-auto mb-3 text-gray-400 animate-pulse" />
-              <p className="text-gray-600">Uploading...</p>
+              <Upload size={32} className="mx-auto mb-3 animate-pulse" style={{ color: "var(--text-muted)" }} />
+              <p style={{ color: "var(--text-secondary)" }}>Uploading...</p>
               {uploadProgress && (
-                <p className="text-sm text-gray-400 mt-1">
+                <p style={{ fontSize: 12, color: "var(--text-muted)", fontFamily: "var(--font-mono)", marginTop: 4 }}>
                   {uploadProgress.done}/{uploadProgress.total} files
                 </p>
               )}
             </div>
           ) : (
             <>
-              <Upload size={32} className="mx-auto mb-3 text-gray-400" />
-              <p className="text-gray-600 mb-4">
+              <Upload size={32} className="mx-auto mb-3" style={{ color: "var(--text-muted)" }} />
+              <p className="mb-4" style={{ color: "var(--text-secondary)" }}>
                 Drag and drop video files here, or click to browse
               </p>
               <input
@@ -141,11 +139,12 @@ export default function UploadPage() {
               />
               <label
                 htmlFor="file-input"
-                className="inline-block px-6 py-2 bg-blue-600 text-white rounded-lg cursor-pointer hover:bg-blue-700"
+                className="inline-block px-6 py-2 text-white rounded-lg cursor-pointer"
+                style={{ backgroundColor: "var(--accent)" }}
               >
                 Choose Files
               </label>
-              <p className="text-xs text-gray-400 mt-4">
+              <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 16 }}>
                 Supports MP4, AVI, MOV, MKV &middot; Multiple files for batch upload
               </p>
             </>
@@ -153,7 +152,7 @@ export default function UploadPage() {
         </div>
 
         {error && (
-          <p className="mt-4 text-red-600 text-sm">{error}</p>
+          <p className="mt-4 text-sm" style={{ color: "var(--danger)" }}>{error}</p>
         )}
       </div>
     </div>
