@@ -148,6 +148,13 @@ class PreviewRequest(BaseModel):
     prompts: list[str]  # One or more prompt strings to test
     max_frames: int = 5
     threshold: float = 0.35
+    # Contiguous-window mode (preserves tracking) — if duration_sec is set,
+    # the worker samples frames from [start_sec, start_sec + duration_sec]
+    # at sample_fps samples/sec and runs SimpleTracker across them so object
+    # IDs persist. Leave duration_sec null to use the legacy even-sampling.
+    start_sec: float = 0.0
+    duration_sec: float | None = None
+    sample_fps: float = 4.0
 
 
 class PreviewDetection(BaseModel):
@@ -155,6 +162,7 @@ class PreviewDetection(BaseModel):
     score: float
     label: str
     polygon: list[float] | None = None
+    track_id: int | None = None
 
 
 class PreviewFrame(BaseModel):
@@ -169,6 +177,10 @@ class PreviewFrame(BaseModel):
 class PreviewResponse(BaseModel):
     frames: list[PreviewFrame]
     total_detections: int
+    unique_track_count: int = 0
+    fps: float = 0.0
+    video_duration_s: float = 0.0
+    mode: str = "sample"
 
 
 @router.post("/label/preview", response_model=PreviewResponse)
@@ -210,9 +222,18 @@ async def preview_prompts(req: PreviewRequest):
     def _dispatch_and_wait():
         async_result = celery_app.send_task(
             "waldo.label_playground",
-            args=[video_id_str, req.prompts, req.threshold, req.max_frames],
+            kwargs={
+                "video_id": video_id_str,
+                "prompts": req.prompts,
+                "threshold": req.threshold,
+                "frame_count": req.max_frames,
+                "start_sec": req.start_sec,
+                "duration_sec": req.duration_sec,
+                "sample_fps": req.sample_fps,
+            },
         )
-        return async_result.get(timeout=90)
+        # Window mode can process up to 120 frames — give it headroom.
+        return async_result.get(timeout=180)
 
     try:
         result = await asyncio.to_thread(_dispatch_and_wait)
@@ -237,12 +258,20 @@ async def preview_prompts(req: PreviewRequest):
                         score=d["score"],
                         label=d["label"],
                         polygon=d.get("polygon"),
+                        track_id=d.get("track_id"),
                     )
                     for d in f["detections"]
                 ],
             )
         )
-    return PreviewResponse(frames=frames_out, total_detections=result.get("total_detections", 0))
+    return PreviewResponse(
+        frames=frames_out,
+        total_detections=result.get("total_detections", 0),
+        unique_track_count=result.get("unique_track_count", 0),
+        fps=result.get("fps", 0.0),
+        video_duration_s=result.get("video_duration_s", 0.0),
+        mode=result.get("mode", "sample"),
+    )
 
 
 # ── Interactive SAM3 segmentation from click points ──────────────────

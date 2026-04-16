@@ -2,29 +2,47 @@
 
 import logging
 import os
-import secrets
 from datetime import UTC, datetime, timedelta
 
+import bcrypt
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 
 from lib.config import settings
 from lib.db import ApiKey, SessionLocal, User, WorkspaceMember
 
 logger = logging.getLogger(__name__)
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer(auto_error=False)
+
+# bcrypt's hard limit is 72 bytes — anything longer is silently truncated by
+# the algorithm. We truncate explicitly so hash/verify stay consistent and
+# the 4.x strict-mode exception never fires. We use bcrypt directly instead
+# of passlib because passlib 1.7.4 reads `bcrypt.__about__.__version__` which
+# bcrypt >=4.0 removed, breaking all hash/verify calls with a misleading
+# "password too long" error.
+_BCRYPT_MAX_BYTES = 72
+
+
+def _to_bytes(password: str) -> bytes:
+    data = password.encode("utf-8")
+    if len(data) > _BCRYPT_MAX_BYTES:
+        data = data[:_BCRYPT_MAX_BYTES]
+    return data
 
 
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    return bcrypt.hashpw(_to_bytes(password), bcrypt.gensalt()).decode("utf-8")
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return pwd_context.verify(plain, hashed)
+    if not hashed:
+        return False
+    try:
+        return bcrypt.checkpw(_to_bytes(plain), hashed.encode("utf-8"))
+    except ValueError:
+        return False
 
 
 def create_access_token(user_id: str, expires_delta: timedelta | None = None) -> str:
@@ -90,10 +108,10 @@ def bootstrap_admin_if_empty() -> None:
     Call from app startup, NOT from request handlers — never auto-create users
     on an unauthenticated request, that's how default-credential takeovers happen.
 
-    Password resolution:
+    Password resolution (dev only — production always requires the env var):
       1. ADMIN_BOOTSTRAP_PASSWORD env var if set
-      2. Otherwise, generate a random 32-char password and log it once
-    Email resolution: ADMIN_BOOTSTRAP_EMAIL env var, default 'admin@localhost'.
+      2. Otherwise, the dev default 'waldopass' so the first login Just Works
+    Email resolution: ADMIN_BOOTSTRAP_EMAIL env var, default 'admin@waldo.ai'.
     """
     from lib.db import Project, Workspace
 
@@ -102,13 +120,13 @@ def bootstrap_admin_if_empty() -> None:
         if session.query(User).count() > 0:
             return
 
-        email = os.environ.get("ADMIN_BOOTSTRAP_EMAIL", "admin@localhost")
+        email = os.environ.get("ADMIN_BOOTSTRAP_EMAIL", "admin@waldo.ai")
         password = os.environ.get("ADMIN_BOOTSTRAP_PASSWORD")
         generated = False
         if not password:
             if settings.is_production():
                 raise RuntimeError("Production startup requires ADMIN_BOOTSTRAP_PASSWORD when no users exist.")
-            password = secrets.token_urlsafe(24)
+            password = "waldopass"  # pragma: allowlist secret — dev-only default
             generated = True
 
         workspace = session.query(Workspace).first()

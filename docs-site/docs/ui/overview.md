@@ -31,6 +31,7 @@ The dashboard is the landing page after sign-in. It shows your video count, tota
 | Datasets | `/datasets` | `pages/DatasetsPage.tsx` |
 | Label | `/label/:videoId` | `pages/LabelPage.tsx` |
 | Review | `/review/:jobId` | `pages/ReviewPage.tsx` |
+| Playground | `/playground` | `pages/PlaygroundPage.tsx` |
 | Jobs | `/jobs` | `pages/JobsPage.tsx` |
 | Train | `/train/:jobId` | `pages/TrainPage.tsx` |
 | Experiments | `/experiments` | `pages/ExperimentsPage.tsx` |

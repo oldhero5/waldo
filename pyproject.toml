@@ -31,6 +31,10 @@ labeler = [
     "numpy",
     "torchvision>=0.25.0",
     "kernels>=0.12.2",
+    # MLX path (Apple Silicon only) — SAM 3.1 native via mlx-vlm.
+    # Platform marker keeps the Linux Docker labeler build from pulling these.
+    "mlx>=0.20; platform_system=='Darwin'",
+    "mlx-vlm>=0.4.4; platform_system=='Darwin'",
 ]
 trainer = [
     "ultralytics",

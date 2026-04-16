@@ -44,6 +44,7 @@ class VideoOut(BaseModel):
     height: int | None
     frame_count: int | None
     created_at: str
+    url: str | None = None
 
 
 def _get_or_create_project(session, project_name: str) -> Project:
@@ -396,6 +397,7 @@ def list_project_videos(project_id: str):
                 height=v.height,
                 frame_count=v.frame_count,
                 created_at=v.created_at.isoformat(),
+                url=get_download_url(v.minio_key) if v.minio_key else None,
             )
             for v in videos
         ]

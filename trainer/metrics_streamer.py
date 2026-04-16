@@ -1,4 +1,5 @@
 """Stream training metrics to Redis for real-time WebSocket consumption."""
+
 import json
 
 import redis
@@ -41,6 +42,54 @@ def _has_nan(metrics: dict) -> bool:
         except (TypeError, ValueError):
             pass
     return False
+
+
+def _inject_per_class_metrics(metrics: dict, source) -> None:
+    """Pull per-class precision/recall/mAP from an Ultralytics trainer or validator.
+
+    YOLO's DetMetrics.box exposes per-class precision (`p`), recall (`r`),
+    per-class mAP50 (`ap50`) and mAP50-95 (`ap`) as numpy arrays, plus
+    `ap_class_index` which maps array positions → class indices. `names` is
+    on the validator or the trainer. We write into `metrics` under the key
+    pattern `per_class/{class_name}/{metric}` — the TrainPage already parses
+    this pattern to populate the per-class performance card.
+
+    Safe to call on any object: failures are swallowed so a missing attribute
+    never blocks training.
+    """
+    try:
+        validator = getattr(source, "validator", None) or source
+        v_metrics = getattr(validator, "metrics", None)
+        if v_metrics is None:
+            return
+        box = getattr(v_metrics, "box", None)
+        if box is None or not hasattr(box, "ap_class_index"):
+            return
+        names = getattr(validator, "names", None) or getattr(source, "names", None) or {}
+        import numpy as _np
+
+        idxs = _np.asarray(box.ap_class_index).tolist()
+        p_arr = getattr(box, "p", None)
+        r_arr = getattr(box, "r", None)
+        ap50_arr = getattr(box, "ap50", None)
+        ap_arr = getattr(box, "ap", None)
+        for i, cls_idx in enumerate(idxs):
+            if isinstance(names, dict):
+                cname = names.get(int(cls_idx), str(cls_idx))
+            elif isinstance(names, list | tuple):
+                cname = names[int(cls_idx)] if int(cls_idx) < len(names) else str(cls_idx)
+            else:
+                cname = str(cls_idx)
+            if p_arr is not None and i < len(p_arr):
+                metrics[f"per_class/{cname}/precision"] = float(p_arr[i])
+            if r_arr is not None and i < len(r_arr):
+                metrics[f"per_class/{cname}/recall"] = float(r_arr[i])
+            if ap50_arr is not None and i < len(ap50_arr):
+                metrics[f"per_class/{cname}/mAP50"] = float(ap50_arr[i])
+            if ap_arr is not None and i < len(ap_arr):
+                metrics[f"per_class/{cname}/mAP50-95"] = float(ap_arr[i])
+    except Exception:
+        pass
 
 
 def should_stop_training(run_id: str) -> bool:
@@ -93,6 +142,7 @@ def make_ultralytics_callback(run_id: str, session, training_run):
         try:
             if hasattr(trainer, "loss_items") and trainer.loss_items is not None:
                 import torch
+
                 items = trainer.loss_items
                 if isinstance(items, torch.Tensor):
                     items = items.detach().cpu().tolist()
@@ -103,14 +153,15 @@ def make_ultralytics_callback(run_id: str, session, training_run):
                         if i < len(items):
                             batch_losses[name] = round(float(items[i]), 4)
                 else:
-                    for i, v in enumerate(items if isinstance(items, (list, tuple)) else [items]):
+                    for i, v in enumerate(items if isinstance(items, list | tuple) else [items]):
                         batch_losses[f"loss_{i}"] = round(float(v), 4)
             elif hasattr(trainer, "tloss") and trainer.tloss is not None:
                 import torch
+
                 tloss = trainer.tloss
                 if isinstance(tloss, torch.Tensor):
                     tloss = tloss.detach().cpu().tolist()
-                if isinstance(tloss, (list, tuple)):
+                if isinstance(tloss, list | tuple):
                     for i, v in enumerate(tloss):
                         batch_losses[f"loss_{i}"] = round(float(v), 4)
                 else:
@@ -121,11 +172,17 @@ def make_ultralytics_callback(run_id: str, session, training_run):
         # Check for user-requested stop (every batch, not just every epoch)
         if should_stop_training(run_id):
             trainer.stop = True
-            publish_metrics(run_id, {
-                "run_id": run_id, "epoch": epoch, "total_epochs": total_epochs,
-                "batch": batch_counter[0], "total_batches": total_batches,
-                "status": "stopping",
-            })
+            publish_metrics(
+                run_id,
+                {
+                    "run_id": run_id,
+                    "epoch": epoch,
+                    "total_epochs": total_epochs,
+                    "batch": batch_counter[0],
+                    "total_batches": total_batches,
+                    "status": "stopping",
+                },
+            )
             return
 
         payload = {
@@ -153,18 +210,25 @@ def make_ultralytics_callback(run_id: str, session, training_run):
             for k, v in trainer.metrics.items():
                 metrics[k] = float(v) if hasattr(v, "__float__") else v
 
+        # Pull per-class precision/recall/mAP out of the validator so the
+        # UI's Per-Class Performance card can render during live training.
+        _inject_per_class_metrics(metrics, trainer)
+
         epoch = trainer.epoch + 1
         total = trainer.epochs
 
         # Check for user-requested stop
         if should_stop_training(run_id):
-            publish_metrics(run_id, {
-                "run_id": run_id,
-                "epoch": epoch,
-                "total_epochs": total,
-                "status": "stopping",
-                "metrics": metrics,
-            })
+            publish_metrics(
+                run_id,
+                {
+                    "run_id": run_id,
+                    "epoch": epoch,
+                    "total_epochs": total,
+                    "status": "stopping",
+                    "metrics": metrics,
+                },
+            )
             trainer.stop = True  # Ultralytics respects this flag
             return
 
@@ -174,13 +238,16 @@ def make_ultralytics_callback(run_id: str, session, training_run):
         if _has_nan(loss_vals):
             nan_count[0] += 1
             if nan_count[0] >= NAN_ABORT_THRESHOLD:
-                publish_metrics(run_id, {
-                    "run_id": run_id,
-                    "epoch": epoch,
-                    "total_epochs": total,
-                    "status": "failed",
-                    "error": f"Training diverged: NaN loss for {NAN_ABORT_THRESHOLD} consecutive epochs",
-                })
+                publish_metrics(
+                    run_id,
+                    {
+                        "run_id": run_id,
+                        "epoch": epoch,
+                        "total_epochs": total,
+                        "status": "failed",
+                        "error": f"Training diverged: NaN loss for {NAN_ABORT_THRESHOLD} consecutive epochs",
+                    },
+                )
                 training_run.status = "failed"
                 training_run.error_message = f"NaN loss for {NAN_ABORT_THRESHOLD} consecutive epochs"
                 session.commit()
@@ -234,9 +301,9 @@ def make_ultralytics_callback(run_id: str, session, training_run):
 
                 # Priority: val predictions > val labels > train batches
                 candidates = (
-                    sorted(save_dir.glob("val_batch*_pred.jpg")) +
-                    sorted(save_dir.glob("val_batch*_labels.jpg")) +
-                    sorted(save_dir.glob("train_batch*.jpg"))
+                    sorted(save_dir.glob("val_batch*_pred.jpg"))
+                    + sorted(save_dir.glob("val_batch*_labels.jpg"))
+                    + sorted(save_dir.glob("train_batch*.jpg"))
                 )
                 if candidates:
                     img = cv2.imread(str(candidates[-1]))
@@ -297,11 +364,14 @@ def make_ultralytics_callback(run_id: str, session, training_run):
             _, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 75])
             preview = base64.b64encode(buf).decode("ascii")
 
-            publish_metrics(run_id, {
-                "run_id": run_id,
-                "val_preview": preview,
-                "status": "training",
-            })
+            publish_metrics(
+                run_id,
+                {
+                    "run_id": run_id,
+                    "val_preview": preview,
+                    "status": "training",
+                },
+            )
         except Exception:
             pass  # Never fail training over a preview
 
@@ -318,6 +388,22 @@ def make_ultralytics_callback(run_id: str, session, training_run):
         if hasattr(trainer, "metrics"):
             for k, v in trainer.metrics.items():
                 payload["metrics"][k] = float(v) if hasattr(v, "__float__") else v
+        _inject_per_class_metrics(payload["metrics"], trainer)
+
+        # Persist final per-class metrics into best_metrics so they survive
+        # as the canonical "training result" view.
+        try:
+            for k, v in payload["metrics"].items():
+                if k.startswith("per_class/"):
+                    training_run.best_metrics = {
+                        **(training_run.best_metrics or {}),
+                        **{k2: v2 for k2, v2 in payload["metrics"].items() if k2.startswith("per_class/")},
+                    }
+                    break
+            session.commit()
+        except Exception:
+            session.rollback()
+
         publish_metrics(run_id, payload)
 
     return {

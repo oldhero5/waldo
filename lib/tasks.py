@@ -79,15 +79,28 @@ def label_playground(
     prompts: list[str],
     threshold: float = 0.35,
     frame_count: int = 8,
+    start_sec: float = 0.0,
+    duration_sec: float | None = None,
+    sample_fps: float = 4.0,
 ) -> dict:
-    """Ephemeral prompt test — runs SAM3.1 on a handful of sample frames.
+    """Ephemeral prompt test — runs SAM3.1 on a short window of the video.
 
-    Returns detections + base64 JPEGs so the UI can render a preview grid.
-    Nothing is persisted.
+    When `duration_sec` is set, processes a contiguous range so SimpleTracker
+    can assign consistent track_ids across the sampled frames. Otherwise,
+    falls back to the legacy evenly-spaced sampler. Returns base64 JPEGs +
+    detections with track_ids. Nothing is persisted.
     """
     from labeler.video_labeler import run_playground
 
-    return run_playground(video_id, prompts, threshold, frame_count)
+    return run_playground(
+        video_id,
+        prompts,
+        threshold=threshold,
+        frame_count=frame_count,
+        start_sec=start_sec,
+        duration_sec=duration_sec,
+        sample_fps=sample_fps,
+    )
 
 
 @app.task(name="waldo.train_model", bind=True, queue="training")
