@@ -1,25 +1,51 @@
-PROFILE ?= apple
+# ── OS detection — picks the right backend automatically ────
+# macOS (Darwin) → MLX via mlx-vlm, workers run natively so MPS/Metal is reachable.
+# Linux / Windows (WSL) → PyTorch SAM 3, workers run inside Docker.
+# Override PROFILE manually for nvidia: `make up PROFILE=nvidia`.
+UNAME_S := $(shell uname -s)
 
-.PHONY: setup up up-gpu down down-gpu logs dev-app dev-labeler dev-trainer dev-ui build-ui migrate test test-browser download-models
+ifeq ($(UNAME_S),Darwin)
+  PROFILE ?= apple
+  BACKEND := mlx
+else
+  PROFILE ?= apple
+  BACKEND := pytorch
+endif
+
+.PHONY: setup up up-mac up-linux up-gpu down down-gpu logs dev-app dev-labeler dev-trainer dev-ui build-ui migrate test test-browser download-models
 
 # ── Docker (primary) ─────────────────────────────────────────
 
+# `make up` auto-routes: Darwin → up-mac (native MLX workers),
+# everything else → up-linux (everything in Docker with PyTorch).
 up: build-ui
+ifeq ($(BACKEND),mlx)
+	@$(MAKE) --no-print-directory up-mac
+else
+	@$(MAKE) --no-print-directory up-linux
+endif
+
+up-linux:
+	@echo "==> Linux/Windows path: PyTorch workers in Docker"
 	docker compose --profile $(PROFILE) up -d --build
 	@echo ""
 	@echo "Waldo is running at http://localhost:8000"
 	@echo "MinIO console at http://localhost:9001"
 
-up-gpu: build-ui
-	@echo "==> Starting infra + app in Docker..."
+up-mac:
+	@echo "==> macOS path: infra+app in Docker, MLX workers native"
 	docker compose up -d --build
-	@echo "==> Starting native GPU workers..."
-	@source .env && nohup uv run celery -A lib.tasks worker --loglevel=info --concurrency=1 --pool=solo > /tmp/waldo-labeler.log 2>&1 &
-	@source .env && nohup uv run celery -A lib.tasks worker --loglevel=info --concurrency=1 --pool=solo -Q training > /tmp/waldo-trainer.log 2>&1 &
+	@docker compose stop waldo-labeler waldo-trainer 2>/dev/null || true
+	@-pkill -f "celery.*lib.tasks" 2>/dev/null; sleep 1
+	@set -a && . ./.env && set +a && nohup uv run celery -A lib.tasks worker --loglevel=info --concurrency=1 --pool=solo -Q celery > /tmp/waldo-labeler.log 2>&1 & disown
+	@set -a && . ./.env && set +a && nohup uv run celery -A lib.tasks worker --loglevel=info --concurrency=1 --pool=solo -Q training > /tmp/waldo-trainer.log 2>&1 & disown
 	@echo ""
 	@echo "Waldo is running at http://localhost:8000"
-	@echo "  Labeler (MPS): logs at /tmp/waldo-labeler.log"
+	@echo "  Labeler (MLX): logs at /tmp/waldo-labeler.log"
 	@echo "  Trainer (MPS): logs at /tmp/waldo-trainer.log"
+
+# Legacy alias — kept so old muscle memory still works.
+up-gpu: up-mac
 
 down:
 	docker compose --profile $(PROFILE) down

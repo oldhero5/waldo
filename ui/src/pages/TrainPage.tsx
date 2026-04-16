@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
+  getDatasetStats,
   getJobStatus,
   getTrainingStatus,
   getVariants,
@@ -12,7 +13,7 @@ import {
   activateModel,
 } from "../api";
 import TaskSelector from "../components/TaskSelector";
-import { Info, AlertTriangle, StopCircle, TrendingDown, Eye, RotateCcw, CheckCircle } from "lucide-react";
+import { Info, AlertTriangle, StopCircle, TrendingDown, Eye, RotateCcw, CheckCircle, Sparkles } from "lucide-react";
 import LineChart from "../components/LineChart";
 import { humanizeMetricKey, formatMetricValue } from "../lib/metrics";
 
@@ -91,6 +92,14 @@ export default function TrainPage() {
     queryKey: ["job", jobId],
     queryFn: () => getJobStatus(jobId!),
     enabled: !!jobId,
+  });
+
+  // Pre-flight dataset quality — class balance, recommendations, warnings.
+  const { data: datasetStats } = useQuery({
+    queryKey: ["dataset-stats", jobId],
+    queryFn: () => getDatasetStats(jobId!),
+    enabled: !!jobId && !runId,
+    staleTime: 30_000,
   });
 
   const { data: variants } = useQuery({
@@ -176,6 +185,15 @@ export default function TrainPage() {
 
   const effectiveJobId = jobId || resolvedJobId || runStatus?.job_id;
 
+  const applyRecommended = useCallback(() => {
+    if (!datasetStats) return;
+    setEpochs(datasetStats.recommended_epochs);
+    setBatchSize(datasetStats.recommended_batch);
+    setImgsz(datasetStats.recommended_imgsz);
+    setAugPreset(datasetStats.recommended_augmentation);
+    setVariant(datasetStats.recommended_variant);
+  }, [datasetStats]);
+
   const handleTrain = useCallback(async () => {
     if (!effectiveJobId) return;
     setError("");
@@ -239,6 +257,175 @@ export default function TrainPage() {
               For best results, aim for 100-200+ labeled frames per class.
               Training may still work but accuracy will be limited.
             </span>
+          </div>
+        )}
+
+        {/* Pre-flight dataset quality panel — class balance, imbalance, recommendations */}
+        {!runId && datasetStats && datasetStats.total_annotations > 0 && (
+          <div
+            className="surface p-5 mb-5"
+            style={{ borderRadius: "var(--radius-lg)" }}
+          >
+            <div className="flex items-center justify-between mb-3">
+              <p className="eyebrow">Dataset quality</p>
+              <button
+                onClick={applyRecommended}
+                className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs"
+                style={{
+                  backgroundColor: "var(--accent-soft)",
+                  color: "var(--accent)",
+                  border: "1px solid var(--accent)",
+                }}
+              >
+                <Sparkles size={12} />
+                Apply recommended
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+              <div>
+                <span className="eyebrow block">Annotated</span>
+                <span style={{ fontFamily: "var(--font-serif)", fontSize: 20, fontWeight: 700, color: "var(--text-primary)" }}>
+                  {datasetStats.annotated_frames}
+                </span>
+                <span style={{ fontSize: 11, color: "var(--text-muted)", marginLeft: 4 }}>
+                  /{datasetStats.total_frames} frames
+                </span>
+              </div>
+              <div>
+                <span className="eyebrow block">Annotations</span>
+                <span style={{ fontFamily: "var(--font-serif)", fontSize: 20, fontWeight: 700, color: "var(--text-primary)" }}>
+                  {datasetStats.total_annotations}
+                </span>
+              </div>
+              <div>
+                <span className="eyebrow block">Classes</span>
+                <span style={{ fontFamily: "var(--font-serif)", fontSize: 20, fontWeight: 700, color: "var(--text-primary)" }}>
+                  {datasetStats.class_count}
+                </span>
+              </div>
+              <div>
+                <span className="eyebrow block">Imbalance</span>
+                <span
+                  style={{
+                    fontFamily: "var(--font-serif)",
+                    fontSize: 20,
+                    fontWeight: 700,
+                    color: datasetStats.imbalance_ratio >= 5 ? "var(--warning)" : "var(--text-primary)",
+                  }}
+                >
+                  {datasetStats.imbalance_ratio.toFixed(1)}×
+                </span>
+              </div>
+            </div>
+
+            {/* Class balance bars */}
+            {datasetStats.classes.length > 0 && (
+              <div className="space-y-1.5 mb-4">
+                {datasetStats.classes.map((c) => {
+                  const pct = datasetStats.max_class_count
+                    ? (c.count / datasetStats.max_class_count) * 100
+                    : 0;
+                  return (
+                    <div key={c.name} className="flex items-center gap-3 text-xs">
+                      <span
+                        style={{
+                          width: 120,
+                          fontFamily: "var(--font-mono)",
+                          color: "var(--text-secondary)",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                        title={c.name}
+                      >
+                        {c.name}
+                      </span>
+                      <div
+                        className="flex-1 h-5 rounded-md overflow-hidden"
+                        style={{ backgroundColor: "var(--bg-inset)" }}
+                      >
+                        <div
+                          className="h-full transition-all"
+                          style={{
+                            width: `${pct}%`,
+                            backgroundColor: "var(--accent)",
+                            minWidth: 2,
+                          }}
+                        />
+                      </div>
+                      <span
+                        style={{
+                          width: 64,
+                          textAlign: "right",
+                          fontFamily: "var(--font-mono)",
+                          color: "var(--text-primary)",
+                          fontVariantNumeric: "tabular-nums",
+                        }}
+                      >
+                        {c.count}
+                      </span>
+                      <span
+                        style={{
+                          width: 48,
+                          textAlign: "right",
+                          fontFamily: "var(--font-mono)",
+                          color: "var(--text-muted)",
+                          fontVariantNumeric: "tabular-nums",
+                        }}
+                      >
+                        {(c.share * 100).toFixed(0)}%
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Warnings */}
+            {datasetStats.warnings.length > 0 && (
+              <div className="space-y-1.5 mb-3">
+                {datasetStats.warnings.map((w, i) => (
+                  <div
+                    key={i}
+                    className="flex items-start gap-2 text-xs rounded-lg p-2"
+                    style={{
+                      backgroundColor: "var(--warning-soft)",
+                      color: "var(--warning)",
+                      border: "1px solid var(--border-subtle)",
+                    }}
+                  >
+                    <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+                    <span>{w}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Recommendation summary */}
+            <div
+              className="text-xs flex flex-wrap gap-x-4 gap-y-1"
+              style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}
+            >
+              <span>
+                Recommended:{" "}
+                <span style={{ color: "var(--text-secondary)" }}>
+                  {datasetStats.recommended_variant}
+                </span>
+              </span>
+              <span>
+                epochs=<span style={{ color: "var(--text-secondary)" }}>{datasetStats.recommended_epochs}</span>
+              </span>
+              <span>
+                batch=<span style={{ color: "var(--text-secondary)" }}>{datasetStats.recommended_batch}</span>
+              </span>
+              <span>
+                imgsz=<span style={{ color: "var(--text-secondary)" }}>{datasetStats.recommended_imgsz}</span>
+              </span>
+              <span>
+                aug=<span style={{ color: "var(--text-secondary)" }}>{datasetStats.recommended_augmentation}</span>
+              </span>
+            </div>
           </div>
         )}
 

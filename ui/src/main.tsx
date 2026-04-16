@@ -19,6 +19,7 @@ const DeployPage = lazy(() => import("./pages/DeployPage"));
 const ExperimentsPage = lazy(() => import("./pages/ExperimentsPage"));
 const JobsPage = lazy(() => import("./pages/JobsPage"));
 const LabelPage = lazy(() => import("./pages/LabelPage"));
+const PlaygroundPage = lazy(() => import("./pages/PlaygroundPage"));
 const ReviewPage = lazy(() => import("./pages/ReviewPage"));
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
 const TrainPage = lazy(() => import("./pages/TrainPage"));
@@ -56,6 +57,7 @@ function AuthenticatedRoutes() {
           <Route path="/datasets" element={<DatasetsPage />} />
           <Route path="/label/collection/:projectId" element={<LabelPage />} />
           <Route path="/label/:videoId" element={<LabelPage />} />
+          <Route path="/playground" element={<PlaygroundPage />} />
           <Route path="/review/:jobId" element={<ReviewPage />} />
           <Route path="/train/:jobId" element={<TrainPage />} />
           <Route path="/jobs" element={<JobsPage />} />

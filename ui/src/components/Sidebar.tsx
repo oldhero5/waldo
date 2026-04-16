@@ -16,6 +16,7 @@ import {
   Loader2,
   MessageCircle,
   CheckCircle2,
+  Wand2,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { getComparisonResult, listTrainingRuns } from "../api";
@@ -24,6 +25,7 @@ const NAV_ITEMS = [
   { to: "/", label: "Home", icon: Home, exact: true },
   { to: "/upload", label: "Upload", icon: Upload },
   { to: "/datasets", label: "Datasets", icon: Database },
+  { to: "/playground", label: "Playground", icon: Wand2, badge: "new" },
   { to: "/workflows", label: "Workflows", icon: Workflow, badge: "beta" },
   { to: "/experiments", label: "Experiments", icon: FlaskConical },
   { to: "/deploy", label: "Deploy", icon: Rocket },

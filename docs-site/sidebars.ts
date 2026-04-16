@@ -23,6 +23,7 @@ const sidebars: SidebarsConfig = {
         "ui/datasets",
         "ui/upload",
         "ui/label",
+        "ui/playground",
         "ui/train",
         "ui/workflows",
         "ui/deploy",

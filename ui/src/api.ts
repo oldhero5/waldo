@@ -93,6 +93,7 @@ export interface PreviewDetection {
   score: number;
   label: string;
   polygon: number[] | null;
+  track_id: number | null;
 }
 
 export interface PreviewFrame {
@@ -107,10 +108,23 @@ export interface PreviewFrame {
 export interface PreviewResponse {
   frames: PreviewFrame[];
   total_detections: number;
+  unique_track_count: number;
+  fps: number;
+  video_duration_s: number;
+  mode: "sample" | "window";
 }
 
 export async function previewPrompts(
-  opts: { videoId?: string; projectId?: string; prompts: string[]; maxFrames?: number; threshold?: number }
+  opts: {
+    videoId?: string;
+    projectId?: string;
+    prompts: string[];
+    maxFrames?: number;
+    threshold?: number;
+    startSec?: number;
+    durationSec?: number | null;
+    sampleFps?: number;
+  }
 ): Promise<PreviewResponse> {
   const res = await authFetch(`${BASE}/label/preview`, {
     method: "POST",
@@ -119,10 +133,48 @@ export async function previewPrompts(
       video_id: opts.videoId || null,
       project_id: opts.projectId || null,
       prompts: opts.prompts,
-      max_frames: opts.maxFrames || 5,
-      threshold: opts.threshold || 0.35,
+      max_frames: opts.maxFrames ?? 5,
+      threshold: opts.threshold ?? 0.35,
+      start_sec: opts.startSec ?? 0.0,
+      duration_sec: opts.durationSec ?? null,
+      sample_fps: opts.sampleFps ?? 4.0,
     }),
   });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export interface DatasetStatsClass {
+  name: string;
+  count: number;
+  share: number;
+}
+
+export interface DatasetStats {
+  job_id: string;
+  job_name: string | null;
+  task_type: string;
+  total_frames: number;
+  annotated_frames: number;
+  empty_frames: number;
+  total_annotations: number;
+  class_count: number;
+  classes: DatasetStatsClass[];
+  min_class_count: number;
+  max_class_count: number;
+  imbalance_ratio: number;
+  small_object_ratio: number;
+  avg_bbox_area: number;
+  recommended_variant: string;
+  recommended_epochs: number;
+  recommended_batch: number;
+  recommended_imgsz: number;
+  recommended_augmentation: string;
+  warnings: string[];
+}
+
+export async function getDatasetStats(jobId: string): Promise<DatasetStats> {
+  const res = await authFetch(`${BASE}/train/dataset-stats/${jobId}`);
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -345,6 +397,7 @@ export interface VideoOut {
   height: number | null;
   frame_count: number | null;
   created_at: string;
+  url: string | null;
 }
 
 export interface ClassPrompt {
