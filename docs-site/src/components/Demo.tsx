@@ -32,7 +32,16 @@ export default function Demo({ src, poster, caption, width = "100%" }: DemoProps
         loop
         playsInline
         preload="metadata"
-        style={{ width, display: "block" }}
+        width={1280}
+        height={800}
+        style={{
+          width,
+          height: "auto",
+          aspectRatio: "16 / 10",
+          display: "block",
+          backgroundColor: "transparent",
+          outline: "none",
+        }}
       />
       {caption ? (
         <figcaption
