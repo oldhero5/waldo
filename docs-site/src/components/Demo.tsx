@@ -32,12 +32,12 @@ export default function Demo({ src, poster, caption, width = "100%" }: DemoProps
         loop
         playsInline
         preload="metadata"
-        width={1280}
-        height={800}
+        width={1152}
+        height={656}
         style={{
           width,
           height: "auto",
-          aspectRatio: "16 / 10",
+          aspectRatio: "1152 / 656",
           display: "block",
           backgroundColor: "transparent",
           outline: "none",
