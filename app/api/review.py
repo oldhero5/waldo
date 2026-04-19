@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy import distinct, func, or_, text
 
 from lib.auth import get_current_user
-from lib.db import Annotation, Frame, LabelingJob, SessionLocal
+from lib.db import Annotation, Frame, LabelingJob, SessionLocal, Video
 from lib.storage import download_file, get_download_url, upload_file
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
@@ -595,9 +595,8 @@ def get_job_stats(job_id: str):
 
         # Count actual frames in the DB for this job's videos/project
         if job.project_id:
-            from lib.db import Video
-
-            video_ids = [v.id for v in session.query(Video).filter_by(project_id=job.project_id).all()]
+            # Select only Video.id to avoid loading full ORM objects just for IDs
+            video_ids = [row[0] for row in session.query(Video.id).filter_by(project_id=job.project_id).all()]
             total_frames = (
                 session.query(Frame).filter(Frame.video_id.in_(video_ids)).count() if video_ids else annotated_frames
             )
