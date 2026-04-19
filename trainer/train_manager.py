@@ -1,4 +1,5 @@
 """YOLO26 training orchestrator — wraps Ultralytics training API."""
+
 import logging
 import tempfile
 from datetime import datetime
@@ -66,7 +67,7 @@ DEFAULT_HYPERPARAMS = {
     "epochs": 100,
     "imgsz": 640,
     "batch": 8,
-    "patience": 2,   # Stop after 2 epochs of no improvement (user can override)
+    "patience": 2,  # Stop after 2 epochs of no improvement (user can override)
     "save_period": 10,
     "optimizer": "auto",
     "lr0": 0.01,
@@ -194,7 +195,32 @@ def run_training(celery_task, run_id: str) -> dict:
                     model = YOLO(VARIANTS.get(variant, f"{variant}.pt"))
             else:
                 weights = VARIANTS.get(variant, f"{variant}.pt")
-                model = YOLO(weights)
+
+                # --- auto-resume from last.pt if a prior run was interrupted ---
+                # Determine the canonical output directory for this run.
+                auto_resume = False
+                run_train_dir = Path(f"/tmp/waldo-runs/{run_id}/train/weights")  # noqa: S108
+                last_pt = run_train_dir / "last.pt"
+                epoch_current = getattr(run, "epoch_current", 0) or 0
+                if epoch_current > 0 and last_pt.exists():
+                    try:
+                        logger.info(
+                            "Auto-resuming training run %s from %s (epoch %d)",
+                            run_id,
+                            last_pt,
+                            epoch_current,
+                        )
+                        model = YOLO(str(last_pt))
+                        auto_resume = True
+                    except Exception as resume_err:
+                        logger.warning(
+                            "Could not load last.pt (%s); falling back to pretrained %s",
+                            resume_err,
+                            weights,
+                        )
+
+                if not auto_resume:
+                    model = YOLO(weights)
 
             # Phase 3: Setup callbacks for real-time metrics
             callbacks = make_ultralytics_callback(str(run.id), session, run)
@@ -207,10 +233,16 @@ def run_training(celery_task, run_id: str) -> dict:
             # Phase 4: Train
             _update_run(session, run, status="training")
             celery_task.update_state(state="TRAINING")
-            publish_metrics(str(run.id), {
-                "run_id": str(run.id), "status": "training", "epoch": 0,
-                "total_epochs": run.total_epochs, "metrics": {},
-            })
+            publish_metrics(
+                str(run.id),
+                {
+                    "run_id": str(run.id),
+                    "status": "training",
+                    "epoch": 0,
+                    "total_epochs": run.total_epochs,
+                    "metrics": {},
+                },
+            )
 
             hp = all_hp  # Already constructed in Phase 2
 
@@ -228,8 +260,11 @@ def run_training(celery_task, run_id: str) -> dict:
             elif device == "cuda":
                 device = 0
 
-            train_dir = tmpdir / "runs"
-            results = model.train(
+            # Use a stable, run-scoped directory so auto-resume can locate last.pt
+            train_dir = Path(f"/tmp/waldo-runs/{run_id}")  # noqa: S108
+            train_dir.mkdir(parents=True, exist_ok=True)
+
+            train_kwargs: dict = dict(
                 data=data_yaml,
                 epochs=hp["epochs"],
                 imgsz=hp["imgsz"],
@@ -247,6 +282,10 @@ def run_training(celery_task, run_id: str) -> dict:
                 # Augmentation
                 **aug_params,
             )
+            if auto_resume:
+                train_kwargs["resume"] = True
+
+            results = model.train(**train_kwargs)
 
             # Phase 5: Collect results
             _update_run(session, run, status="validating")
@@ -270,6 +309,7 @@ def run_training(celery_task, run_id: str) -> dict:
 
             # Read class names from data.yaml
             import yaml
+
             class_names_list = None
             data_yaml_path = Path(data_yaml)
             if data_yaml_path.exists():
@@ -295,7 +335,8 @@ def run_training(celery_task, run_id: str) -> dict:
             session.add(model_entry)
 
             _update_run(
-                session, run,
+                session,
+                run,
                 status="completed",
                 best_metrics=final_metrics,
                 best_weights_minio_key=weights_key,
@@ -312,9 +353,14 @@ def run_training(celery_task, run_id: str) -> dict:
         try:
             run = session.query(TrainingRun).filter_by(id=run_id).one()
             _update_run(session, run, status="failed", error_message=str(e))
-            publish_metrics(str(run.id), {
-                "run_id": str(run.id), "status": "failed", "error": str(e),
-            })
+            publish_metrics(
+                str(run.id),
+                {
+                    "run_id": str(run.id),
+                    "status": "failed",
+                    "error": str(e),
+                },
+            )
         except Exception:
             pass
         raise
