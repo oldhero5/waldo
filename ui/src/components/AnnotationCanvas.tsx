@@ -3,7 +3,7 @@
  * - Review mode: accept/reject existing annotations
  * - Annotate mode: click positive/negative points → SAM3 → preview → save
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AnnotationOut } from "../api";
 import { segmentPoints, createAnnotation } from "../api";
 import { X, ZoomIn, ZoomOut, RotateCcw, Check, XCircle, Plus, Loader2, MousePointer, Pencil, GripVertical } from "lucide-react";
@@ -76,6 +76,27 @@ export default function AnnotationCanvas({
     setPreviewPolygon(null);
   }, [imageUrl]);
 
+  // Memoize per-annotation polygon geometry (normalized coords, not screen space).
+  // Keyed on annotation id + serialized polygon — recomputes only when annotations change,
+  // NOT on every zoom/pan update (those only affect the screen-space transform applied at draw time).
+  const annPolygonCache = useMemo(() => {
+    const cache = new Map<string, { pts: [number, number][]; minY: number; labelNx: number }>();
+    for (const ann of annotations) {
+      if (!ann.polygon || ann.polygon.length < 6) continue;
+      const pts: [number, number][] = [];
+      let minY = Infinity;
+      let labelNx = 0;
+      for (let i = 0; i < ann.polygon.length; i += 2) {
+        const nx = ann.polygon[i];
+        const ny = ann.polygon[i + 1];
+        pts.push([nx, ny]);
+        if (ny < minY) { minY = ny; labelNx = nx; }
+      }
+      cache.set(ann.id, { pts, minY, labelNx });
+    }
+    return cache;
+  }, [annotations]);
+
   // Coordinate helpers
   const getImageLayout = useCallback(() => {
     const canvas = canvasRef.current;
@@ -123,18 +144,19 @@ export default function AnnotationCanvas({
 
     ctx.drawImage(img, ox, oy, imgW, imgH);
 
-    // Draw existing annotations
+    // Draw existing annotations — geometry from memoized cache, only screen transform is hot
     for (const ann of annotations) {
-      if (!ann.polygon || ann.polygon.length < 6) continue;
+      const cached = annPolygonCache.get(ann.id);
+      if (!cached) continue;
       const isSelected = ann.id === selectedId;
       const isHovered = ann.id === hoveredId;
       const color = ann.status === "accepted" ? "#22c55e" : ann.status === "rejected" ? "#ef4444" : classColor(ann.class_name);
 
       ctx.beginPath();
-      for (let i = 0; i < ann.polygon.length; i += 2) {
-        const px = ox + ann.polygon[i] * imgW;
-        const py = oy + ann.polygon[i + 1] * imgH;
-        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      for (let pi = 0; pi < cached.pts.length; pi++) {
+        const px = ox + cached.pts[pi][0] * imgW;
+        const py = oy + cached.pts[pi][1] * imgH;
+        if (pi === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
       }
       ctx.closePath();
       ctx.fillStyle = color + (isSelected ? "44" : isHovered ? "33" : "22");
@@ -147,12 +169,9 @@ export default function AnnotationCanvas({
         ctx.stroke();
         ctx.setLineDash([]);
 
-        // Label
-        let minY = Infinity, labelX = 0;
-        for (let i = 0; i < ann.polygon.length; i += 2) {
-          const py = oy + ann.polygon[i + 1] * imgH;
-          if (py < minY) { minY = py; labelX = ox + ann.polygon[i] * imgW; }
-        }
+        // Label — screen-space transform of cached normalized coords
+        const labelX = ox + cached.labelNx * imgW;
+        const minY = oy + cached.minY * imgH;
         const label = `${ann.class_name} ${ann.confidence != null ? (ann.confidence * 100).toFixed(0) + "%" : ""}`;
         ctx.font = `bold 13px system-ui, sans-serif`;
         const tw = ctx.measureText(label).width;
@@ -208,7 +227,7 @@ export default function AnnotationCanvas({
       ctx.textAlign = "start";
       ctx.textBaseline = "alphabetic";
     }
-  }, [imgLoaded, zoom, pan, annotations, selectedId, hoveredId, previewPolygon, clickPoints, showBoxes]);
+  }, [imgLoaded, zoom, pan, annPolygonCache, annotations, selectedId, hoveredId, previewPolygon, clickPoints, showBoxes]);
 
   useEffect(() => { draw(); }, [draw]);
 
@@ -250,9 +269,9 @@ export default function AnnotationCanvas({
 
     for (let ai = annotations.length - 1; ai >= 0; ai--) {
       const ann = annotations[ai];
-      if (!ann.polygon || ann.polygon.length < 6) continue;
-      const pts: [number, number][] = [];
-      for (let i = 0; i < ann.polygon.length; i += 2) pts.push([ann.polygon[i], ann.polygon[i + 1]]);
+      const cached = annPolygonCache.get(ann.id);
+      if (!cached) continue;
+      const { pts } = cached;
       let inside = false;
       for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
         const [xi, yi] = pts[i];
@@ -263,7 +282,7 @@ export default function AnnotationCanvas({
       if (inside) return ann;
     }
     return null;
-  }, [annotations, getImageLayout, screenToNorm]);
+  }, [annotations, annPolygonCache, getImageLayout, screenToNorm]);
 
   // Mouse handlers
   const handleMouseDown = useCallback((e: React.MouseEvent) => {

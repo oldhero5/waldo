@@ -84,6 +84,24 @@ const FrameOverlay = React.memo(function FrameOverlay({ annotations, hoveredId }
   );
 });
 
+/** Defers FrameOverlay canvas setup until the card scrolls into view (IntersectionObserver). */
+function useLazyVisible(rootMargin = "200px"): [React.RefObject<HTMLDivElement | null>, boolean] {
+  const ref = useRef<HTMLDivElement>(null);
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    if (visible) return; // once visible, stay rendered
+    const obs = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) { setVisible(true); obs.disconnect(); } },
+      { rootMargin }
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [rootMargin, visible]);
+  return [ref, visible];
+}
+
 const FRAMES_PER_PAGE = 10;
 const STATUS_FILTERS = [
   { value: "all", label: "All" },
@@ -91,6 +109,129 @@ const STATUS_FILTERS = [
   { value: "accepted", label: "Accepted" },
   { value: "rejected", label: "Rejected" },
 ];
+
+interface FrameCardProps {
+  frameId: string;
+  frameAnns: AnnotationOut[];
+  hoveredAnn: string | null;
+  focusedIdx: number;
+  flatAnnotations: AnnotationOut[];
+  annotationRefs: React.RefObject<Map<string, HTMLDivElement>>;
+  onInspect: (id: string) => void;
+  onFocus: (idx: number) => void;
+  onHover: (id: string | null) => void;
+  onReview: (id: string, status: string) => void;
+}
+
+/** Frame card with IntersectionObserver-gated FrameOverlay — canvas only mounts when visible. */
+const LazyFrameCard = React.memo(function LazyFrameCard({
+  frameId, frameAnns, hoveredAnn, focusedIdx, flatAnnotations, annotationRefs, onInspect, onFocus, onHover, onReview,
+}: FrameCardProps) {
+  const [cardRef, inView] = useLazyVisible("300px");
+  const first = frameAnns[0];
+
+  return (
+    <div
+      ref={cardRef}
+      className="surface overflow-hidden"
+      style={{ borderRadius: "var(--radius-lg)" }}
+    >
+      <div className="relative group cursor-pointer" onClick={() => first.frame_url && onInspect(frameId)}>
+        <div className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
+          <span
+            className="flex items-center gap-1 px-2 py-1 text-xs rounded-lg backdrop-blur"
+            style={{ backgroundColor: "rgba(0,0,0,0.7)", color: "#fff" }}
+          >
+            <Maximize2 size={12} /> Inspect
+          </span>
+        </div>
+        {first.frame_url && (
+          <img src={first.frame_url} className="block w-full" loading="lazy" />
+        )}
+        {inView && <FrameOverlay annotations={frameAnns} hoveredId={hoveredAnn} />}
+      </div>
+
+      {/* Per-frame annotation list */}
+      <div className="p-3 space-y-1" style={{ backgroundColor: "var(--bg-inset)" }}>
+        {frameAnns.map((a) => {
+          const globalIdx = flatAnnotations.indexOf(a);
+          const isFocused = globalIdx === focusedIdx;
+          return (
+            <div
+              key={a.id}
+              ref={(el) => {
+                if (el) annotationRefs.current!.set(a.id, el);
+                else annotationRefs.current!.delete(a.id);
+              }}
+              className="flex items-center justify-between text-sm px-2.5 py-2 rounded-lg transition-colors cursor-pointer"
+              style={{
+                backgroundColor: isFocused ? "var(--accent-soft)" : hoveredAnn === a.id ? "var(--bg-surface-hover)" : undefined,
+                border: isFocused ? "1px solid var(--accent)" : "1px solid transparent",
+              }}
+              onClick={() => onFocus(globalIdx)}
+              onMouseEnter={() => onHover(a.id)}
+              onMouseLeave={() => onHover(null)}
+            >
+              <span className="flex items-center gap-2">
+                <span
+                  className="inline-block w-3 h-3 rounded-sm shrink-0"
+                  style={{
+                    backgroundColor:
+                      a.status === "accepted" ? "var(--success)"
+                        : a.status === "rejected" ? "var(--danger)" : "var(--accent)",
+                  }}
+                />
+                <span className="font-medium" style={{ color: "var(--text-primary)" }}>{a.class_name}</span>
+                {a.confidence != null && (
+                  <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-muted)" }}>
+                    {(a.confidence * 100).toFixed(0)}%
+                  </span>
+                )}
+                <span
+                  className="text-xs px-1.5 py-0.5 rounded"
+                  style={{
+                    backgroundColor:
+                      a.status === "accepted" ? "var(--success-soft)"
+                        : a.status === "rejected" ? "var(--danger-soft)" : "var(--bg-inset)",
+                    color:
+                      a.status === "accepted" ? "var(--success)"
+                        : a.status === "rejected" ? "var(--danger)" : "var(--text-muted)",
+                    fontFamily: "var(--font-mono)",
+                    fontSize: 10,
+                  }}
+                >
+                  {a.status}
+                </span>
+              </span>
+              <div className="flex gap-1.5">
+                <button
+                  onClick={(e) => { e.stopPropagation(); onReview(a.id, "accepted"); }}
+                  className="px-2.5 py-1 rounded text-xs font-medium transition-colors"
+                  style={a.status === "accepted"
+                    ? { backgroundColor: "var(--success)", color: "#fff" }
+                    : { backgroundColor: "var(--bg-surface)", border: "1px solid var(--border-subtle)", color: "var(--text-secondary)" }
+                  }
+                >
+                  Accept
+                </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); onReview(a.id, "rejected"); }}
+                  className="px-2.5 py-1 rounded text-xs font-medium transition-colors"
+                  style={a.status === "rejected"
+                    ? { backgroundColor: "var(--danger)", color: "#fff" }
+                    : { backgroundColor: "var(--bg-surface)", border: "1px solid var(--border-subtle)", color: "var(--text-secondary)" }
+                  }
+                >
+                  Reject
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+});
 
 export default function ReviewPage() {
   const { jobId } = useParams<{ jobId: string }>();
@@ -423,110 +564,21 @@ export default function ReviewPage() {
               </div>
             )}
 
-            {visibleFrames.map(([frameId, frameAnns]) => {
-              const first = frameAnns[0];
-              return (
-                <div
-                  key={frameId}
-                  className="surface overflow-hidden"
-                  style={{ borderRadius: "var(--radius-lg)" }}
-                >
-                  <div className="relative group cursor-pointer" onClick={() => first.frame_url && setInspectFrameId(frameId)}>
-                    <div className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <span
-                        className="flex items-center gap-1 px-2 py-1 text-xs rounded-lg backdrop-blur"
-                        style={{ backgroundColor: "rgba(0,0,0,0.7)", color: "#fff" }}
-                      >
-                        <Maximize2 size={12} /> Inspect
-                      </span>
-                    </div>
-                    {first.frame_url && (
-                      <img src={first.frame_url} className="block w-full" loading="lazy" />
-                    )}
-                    <FrameOverlay annotations={frameAnns} hoveredId={hoveredAnn} />
-                  </div>
-
-                  {/* Per-frame annotation list */}
-                  <div className="p-3 space-y-1" style={{ backgroundColor: "var(--bg-inset)" }}>
-                    {frameAnns.map((a) => {
-                      const globalIdx = flatAnnotations.indexOf(a);
-                      const isFocused = globalIdx === focusedIdx;
-                      return (
-                        <div
-                          key={a.id}
-                          ref={(el) => {
-                            if (el) annotationRefs.current.set(a.id, el);
-                            else annotationRefs.current.delete(a.id);
-                          }}
-                          className="flex items-center justify-between text-sm px-2.5 py-2 rounded-lg transition-colors cursor-pointer"
-                          style={{
-                            backgroundColor: isFocused ? "var(--accent-soft)" : hoveredAnn === a.id ? "var(--bg-surface-hover)" : undefined,
-                            border: isFocused ? "1px solid var(--accent)" : "1px solid transparent",
-                          }}
-                          onClick={() => setFocusedIdx(globalIdx)}
-                          onMouseEnter={() => setHoveredAnn(a.id)}
-                          onMouseLeave={() => setHoveredAnn(null)}
-                        >
-                          <span className="flex items-center gap-2">
-                            <span
-                              className="inline-block w-3 h-3 rounded-sm shrink-0"
-                              style={{
-                                backgroundColor:
-                                  a.status === "accepted" ? "var(--success)"
-                                    : a.status === "rejected" ? "var(--danger)" : "var(--accent)",
-                              }}
-                            />
-                            <span className="font-medium" style={{ color: "var(--text-primary)" }}>{a.class_name}</span>
-                            {a.confidence != null && (
-                              <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-muted)" }}>
-                                {(a.confidence * 100).toFixed(0)}%
-                              </span>
-                            )}
-                            <span
-                              className="text-xs px-1.5 py-0.5 rounded"
-                              style={{
-                                backgroundColor:
-                                  a.status === "accepted" ? "var(--success-soft)"
-                                    : a.status === "rejected" ? "var(--danger-soft)" : "var(--bg-inset)",
-                                color:
-                                  a.status === "accepted" ? "var(--success)"
-                                    : a.status === "rejected" ? "var(--danger)" : "var(--text-muted)",
-                                fontFamily: "var(--font-mono)",
-                                fontSize: 10,
-                              }}
-                            >
-                              {a.status}
-                            </span>
-                          </span>
-                          <div className="flex gap-1.5">
-                            <button
-                              onClick={(e) => { e.stopPropagation(); handleReview(a.id, "accepted"); }}
-                              className="px-2.5 py-1 rounded text-xs font-medium transition-colors"
-                              style={a.status === "accepted"
-                                ? { backgroundColor: "var(--success)", color: "#fff" }
-                                : { backgroundColor: "var(--bg-surface)", border: "1px solid var(--border-subtle)", color: "var(--text-secondary)" }
-                              }
-                            >
-                              Accept
-                            </button>
-                            <button
-                              onClick={(e) => { e.stopPropagation(); handleReview(a.id, "rejected"); }}
-                              className="px-2.5 py-1 rounded text-xs font-medium transition-colors"
-                              style={a.status === "rejected"
-                                ? { backgroundColor: "var(--danger)", color: "#fff" }
-                                : { backgroundColor: "var(--bg-surface)", border: "1px solid var(--border-subtle)", color: "var(--text-secondary)" }
-                              }
-                            >
-                              Reject
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })}
+            {visibleFrames.map(([frameId, frameAnns]) => (
+              <LazyFrameCard
+                key={frameId}
+                frameId={frameId}
+                frameAnns={frameAnns}
+                hoveredAnn={hoveredAnn}
+                focusedIdx={focusedIdx}
+                flatAnnotations={flatAnnotations}
+                annotationRefs={annotationRefs}
+                onInspect={setInspectFrameId}
+                onFocus={setFocusedIdx}
+                onHover={setHoveredAnn}
+                onReview={handleReview}
+              />
+            ))}
           </div>
 
           {/* Stats sidebar */}
