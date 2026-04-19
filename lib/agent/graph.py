@@ -1,4 +1,5 @@
 """LangGraph agent — ReAct loop with Waldo tools, powered by local Ollama."""
+
 import logging
 from typing import Annotated
 

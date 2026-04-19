@@ -71,7 +71,4 @@ def get_presigned_url(object_name: str, expires_hours: int = 1) -> str:
 
 def list_objects(prefix: str = "") -> list[str]:
     client = get_client()
-    return [
-        obj.object_name
-        for obj in client.list_objects(settings.minio_bucket, prefix=prefix, recursive=True)
-    ]
+    return [obj.object_name for obj in client.list_objects(settings.minio_bucket, prefix=prefix, recursive=True)]

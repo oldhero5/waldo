@@ -1,4 +1,5 @@
 """Build a YOLO-ready dataset from a completed labeling job's annotations."""
+
 import logging
 import random
 import zipfile
@@ -112,6 +113,7 @@ def _apply_feedback_corrections(dataset_dir: Path) -> None:
 
         # Read data.yaml to get class names
         import yaml
+
         yaml_path = dataset_dir / "data.yaml"
         if not yaml_path.exists():
             return
@@ -150,6 +152,7 @@ def _apply_feedback_corrections(dataset_dir: Path) -> None:
 
                 # Get image dimensions for denormalizing
                 import cv2
+
                 img = cv2.imread(str(img_path))
                 if img is None:
                     continue
@@ -221,7 +224,9 @@ def _ensure_background_images(dataset_dir: Path) -> None:
         if empty_count > 0:
             logger.info(
                 "%s: %d/%d images are background (negative) samples",
-                split, empty_count, total_count,
+                split,
+                empty_count,
+                total_count,
             )
 
 
@@ -247,16 +252,18 @@ def _parse_label_file(label_path: Path) -> list[dict]:
         cx = sum(xs) / len(xs)
         cy = sum(ys) / len(ys)
 
-        annotations.append({
-            "cls": cls,
-            "coords": coords,
-            "cx": cx,
-            "cy": cy,
-            "w": obj_w,
-            "h": obj_h,
-            "area": obj_w * obj_h,
-            "raw": line.strip(),
-        })
+        annotations.append(
+            {
+                "cls": cls,
+                "coords": coords,
+                "cx": cx,
+                "cy": cy,
+                "w": obj_w,
+                "h": obj_h,
+                "area": obj_w * obj_h,
+                "raw": line.strip(),
+            }
+        )
 
     return annotations
 
@@ -272,7 +279,10 @@ def _has_small_objects(dataset_dir: Path) -> bool:
                 if ann["area"] < SMALL_OBJECT_AREA_THRESHOLD:
                     logger.info(
                         "Found small annotation: %.4f x %.4f (area=%.6f) in %s",
-                        ann["w"], ann["h"], ann["area"], label_path.name,
+                        ann["w"],
+                        ann["h"],
+                        ann["area"],
+                        label_path.name,
                     )
                     return True
     return False
@@ -291,8 +301,13 @@ def _augment_small_objects(dataset_dir: Path) -> None:
 
     crop_id = 0
     jitter_offsets = [
-        (0, 0), (0.3, 0), (-0.3, 0), (0, 0.3), (0, -0.3),
-        (0.2, 0.2), (-0.2, -0.2),
+        (0, 0),
+        (0.3, 0),
+        (-0.3, 0),
+        (0, 0.3),
+        (0, -0.3),
+        (0.2, 0.2),
+        (-0.2, -0.2),
     ]
 
     for split in ("train", "val"):
@@ -301,8 +316,6 @@ def _augment_small_objects(dataset_dir: Path) -> None:
 
         if not img_dir.exists() or not label_dir.exists():
             continue
-
-
 
         for img_path in sorted(img_dir.glob("*")):
             if img_path.suffix.lower() not in (".jpg", ".jpeg", ".png"):

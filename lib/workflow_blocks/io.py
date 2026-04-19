@@ -1,4 +1,5 @@
 """I/O blocks — image input, video input, JSON output."""
+
 from typing import Any
 
 import cv2

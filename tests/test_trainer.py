@@ -1,9 +1,9 @@
 """Tests for trainer module: dataset_builder, notifiers, metrics_streamer, train_manager."""
-import json
+
 import tempfile
 import zipfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -48,6 +48,7 @@ class TestDatasetBuilder:
 
             # Upload to MinIO and test prepare
             from lib.storage import ensure_bucket, upload_file
+
             ensure_bucket()
             upload_file("test/dataset.zip", zip_path)
 
@@ -126,11 +127,13 @@ class TestNotifiers:
 class TestExporter:
     def test_supported_formats(self):
         from trainer.exporter import SUPPORTED_FORMATS
+
         assert "onnx" in SUPPORTED_FORMATS
         assert "tflite" in SUPPORTED_FORMATS
         assert "coreml" in SUPPORTED_FORMATS
 
     def test_unsupported_format_raises(self):
         from trainer.exporter import export_model
+
         with pytest.raises(ValueError, match="Unsupported format"):
             export_model("fake-id", "invalid_format")

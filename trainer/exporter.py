@@ -1,4 +1,5 @@
 """Export trained YOLO models to various formats with validation."""
+
 import tempfile
 from pathlib import Path
 
@@ -52,8 +53,7 @@ def export_model(model_id: str, fmt: str) -> str:
             # Validate exported model
             if not _validate_export(model, export_path, fmt):
                 raise RuntimeError(
-                    f"Export validation failed for {fmt}: "
-                    "exported model produces significantly different results"
+                    f"Export validation failed for {fmt}: exported model produces significantly different results"
                 )
 
             # Upload exported model

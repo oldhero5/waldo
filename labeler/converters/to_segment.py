@@ -1,4 +1,5 @@
 """Mask → YOLO segmentation polygon format."""
+
 from pathlib import Path
 
 import cv2
@@ -49,6 +50,4 @@ def write_yolo_dataset(
     class_names: list[str],
     val_split: float = 0.1,
 ) -> Path:
-    return write_yolo_label_dataset(
-        output_dir, frame_paths, annotation_lines, class_names, val_split, task="segment"
-    )
+    return write_yolo_label_dataset(output_dir, frame_paths, annotation_lines, class_names, val_split, task="segment")

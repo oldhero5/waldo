@@ -1,4 +1,5 @@
 """Platform integration blocks — connect workflows to datasets, models, training, and deployment."""
+
 from typing import Any
 
 from lib.workflow_blocks.base import BlockBase, BlockResult, Port
@@ -32,12 +33,18 @@ class DatasetInputBlock(BlockBase):
             if not job:
                 raise ValueError(f"Dataset {dataset_id} not found")
 
-            frames = session.query(Frame).filter(
-                Frame.id.in_(
-                    session.query(Frame.id).join(LabelingJob, Frame.video_id == LabelingJob.video_id)
-                    .filter(LabelingJob.id == dataset_id)
+            frames = (
+                session.query(Frame)
+                .filter(
+                    Frame.id.in_(
+                        session.query(Frame.id)
+                        .join(LabelingJob, Frame.video_id == LabelingJob.video_id)
+                        .filter(LabelingJob.id == dataset_id)
+                    )
                 )
-            ).limit(sample_count).all()
+                .limit(sample_count)
+                .all()
+            )
 
             if not frames:
                 raise ValueError("No frames found in dataset")

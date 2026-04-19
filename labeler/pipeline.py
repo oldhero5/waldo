@@ -1,4 +1,5 @@
 """Shared labeling pipeline utilities — frame extraction, conversion, dataset packaging."""
+
 import zipfile
 from pathlib import Path
 
@@ -140,7 +141,8 @@ def _convert_label_format(session, job, seg_results, db_frames, frame_infos, cla
             session.add(annotation)
 
         _update_job(
-            session, job,
+            session,
+            job,
             processed_frames=seg_result.frame_index + 1,
             progress=(seg_result.frame_index + 1) / len(frame_infos),
         )
@@ -160,9 +162,7 @@ def _convert_classify(session, job, seg_results, db_frames, frame_infos, class_n
             if seg_result.class_indices is not None
             else [0] * seg_result.masks.shape[0]
         )
-        crops = to_classify.masks_to_crops(
-            seg_result.masks, frame_img, class_names, class_indices
-        )
+        crops = to_classify.masks_to_crops(seg_result.masks, frame_img, class_names, class_indices)
         crops_per_frame.append(crops)
 
         # Store annotations in DB (bbox-only for classify)
@@ -199,7 +199,8 @@ def _convert_classify(session, job, seg_results, db_frames, frame_infos, class_n
             session.add(annotation)
 
         _update_job(
-            session, job,
+            session,
+            job,
             processed_frames=seg_result.frame_index + 1,
             progress=(seg_result.frame_index + 1) / len(frame_infos),
         )

@@ -1,4 +1,5 @@
 """Crop block — extracts image regions from detection bboxes."""
+
 from typing import Any
 
 from lib.workflow_blocks.base import BlockBase, BlockResult, Port
@@ -26,7 +27,7 @@ class CropBlock(BlockBase):
 
         crops = []
         for det in detections:
-            x1, y1, x2, y2 = [int(v) for v in det.bbox]
+            x1, y1, x2, y2 = (int(v) for v in det.bbox)
             # Add padding
             x1 = max(0, x1 - padding)
             y1 = max(0, y1 - padding)

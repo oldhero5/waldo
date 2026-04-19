@@ -39,15 +39,10 @@ def detect_with_backbone_fast(
     det = predictor.model.detector_model
 
     # FPN neck (~3ms)
-    src, pos_flat, det_features, spatial = _get_det_features(
-        predictor.model, backbone_features
-    )
+    src, pos_flat, det_features, spatial = _get_det_features(predictor.model, backbone_features)
     H_f, W_f = spatial
 
-    W, H = (
-        image_size if isinstance(image_size, tuple)
-        else (image_size[1], image_size[0])
-    )
+    W, H = image_size if isinstance(image_size, tuple) else (image_size[1], image_size[0])
 
     all_boxes, all_masks, all_scores, all_labels = [], [], [], []
 
@@ -59,9 +54,7 @@ def detect_with_backbone_fast(
         if cached is not None:
             encoded = cached["encoded"]
         else:
-            encoded = _run_detr_encoder(
-                predictor.model, src, pos_flat, inputs_embeds, attention_mask
-            )
+            encoded = _run_detr_encoder(predictor.model, src, pos_flat, inputs_embeds, attention_mask)
             if encoder_cache is not None:
                 encoder_cache[prompt] = {"encoded": encoded}
 
@@ -82,9 +75,7 @@ def detect_with_backbone_fast(
             pred_boxes_cxcywh[..., 2],
             pred_boxes_cxcywh[..., 3],
         )
-        pred_boxes_xyxy = mx.stack(
-            [cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2], axis=-1
-        )
+        pred_boxes_xyxy = mx.stack([cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2], axis=-1)
 
         # Scoring in MLX
         all_logits = det.dot_product_scoring(hs, inputs_embeds, attention_mask)

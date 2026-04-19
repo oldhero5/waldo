@@ -14,10 +14,16 @@ def synthetic_clip():
         path = f.name
     subprocess.run(
         [
-            "ffmpeg", "-y",
-            "-f", "lavfi", "-i",
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
             "color=c=blue:size=320x240:rate=10:duration=3",
-            "-c:v", "libx264", "-pix_fmt", "yuv420p",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
             path,
         ],
         capture_output=True,

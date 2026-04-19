@@ -23,6 +23,8 @@ from mlx_vlm.generate import wired_limit
 from mlx_vlm.models.sam3.generate import Sam3Predictor
 from mlx_vlm.models.sam3_1.generate import (
     _detect_with_backbone as detect_original,
+)
+from mlx_vlm.models.sam3_1.generate import (
     _get_backbone_features,
 )
 from mlx_vlm.models.sam3_1.processing_sam3_1 import Sam31Processor
@@ -131,7 +133,11 @@ def main():
             # Original
             t0 = time.perf_counter()
             result_orig = detect_original(
-                predictor, backbone, prompts, img.size, THRESHOLD,
+                predictor,
+                backbone,
+                prompts,
+                img.size,
+                THRESHOLD,
                 encoder_cache={},
             )
             mx.synchronize()
@@ -145,7 +151,11 @@ def main():
             # Optimized
             t0 = time.perf_counter()
             result_fast = detect_with_backbone_fast(
-                predictor, backbone, prompts, img.size, THRESHOLD,
+                predictor,
+                backbone,
+                prompts,
+                img.size,
+                THRESHOLD,
                 encoder_cache={},
             )
             mx.synchronize()
@@ -158,21 +168,21 @@ def main():
             status = "OK" if ok else "FAIL"
             print(
                 f"  {img_id}: {status} | "
-                f"orig={dt_orig*1000:.1f}ms ({len(result_orig.scores)} dets) | "
-                f"fast={dt_fast*1000:.1f}ms ({len(result_fast.scores)} dets)"
+                f"orig={dt_orig * 1000:.1f}ms ({len(result_orig.scores)} dets) | "
+                f"fast={dt_fast * 1000:.1f}ms ({len(result_fast.scores)} dets)"
             )
             if not ok:
                 all_ok = False
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Results across {len(images)} images:")
-    print(f"  Original:  {np.mean(orig_times)*1000:.1f} ms/frame avg, {orig_total_dets} total dets")
-    print(f"  Optimized: {np.mean(fast_times)*1000:.1f} ms/frame avg, {fast_total_dets} total dets")
+    print(f"  Original:  {np.mean(orig_times) * 1000:.1f} ms/frame avg, {orig_total_dets} total dets")
+    print(f"  Optimized: {np.mean(fast_times) * 1000:.1f} ms/frame avg, {fast_total_dets} total dets")
     speedup = np.mean(orig_times) / max(np.mean(fast_times), 1e-9)
     savings = (np.mean(orig_times) - np.mean(fast_times)) * 1000
     print(f"  Speedup:   {speedup:.2f}x ({savings:.1f} ms saved per frame)")
     print(f"  Match:     {'ALL IDENTICAL' if all_ok else 'DIFFERENCES FOUND'}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     return 0 if all_ok else 1
 

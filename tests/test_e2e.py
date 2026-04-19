@@ -7,6 +7,7 @@ Requires:
 - Running labeler (make dev-labeler)
 - SAM 3 model downloaded (make download-models)
 """
+
 import io
 import time
 import zipfile

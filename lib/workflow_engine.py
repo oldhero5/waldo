@@ -1,4 +1,5 @@
 """Workflow DAG executor — topologically sorts nodes and runs blocks."""
+
 import logging
 import time
 from typing import Any
@@ -31,23 +32,37 @@ def _load_blocks():
 
     for cls in [
         # I/O
-        ImageInputBlock, OutputBlock, WebhookBlock,
+        ImageInputBlock,
+        OutputBlock,
+        WebhookBlock,
         # Platform
-        DatasetInputBlock, TrainTriggerBlock,
+        DatasetInputBlock,
+        TrainTriggerBlock,
         # Models
-        DetectionBlock, ModelSelectorBlock,
+        DetectionBlock,
+        ModelSelectorBlock,
         # Transforms
-        CropBlock, FilterBlock, ResizeBlock,
+        CropBlock,
+        FilterBlock,
+        ResizeBlock,
         # Visualization
-        BoundingBoxVisualization, BlurVisualization, CountVisualization,
+        BoundingBoxVisualization,
+        BlurVisualization,
+        CountVisualization,
         # Logic
-        ConditionalBlock, ExpressionBlock,
+        ConditionalBlock,
+        ExpressionBlock,
         # Classical CV
-        GrayscaleBlock, ContourDetectionBlock, DominantColorBlock,
+        GrayscaleBlock,
+        ContourDetectionBlock,
+        DominantColorBlock,
         # AI
         LLMBlock,
         # Specialized
-        OCRBlock, LicensePlateBlock, LineCounterBlock, ZoneCounterBlock,
+        OCRBlock,
+        LicensePlateBlock,
+        LineCounterBlock,
+        ZoneCounterBlock,
     ]:
         BLOCK_REGISTRY[cls.name] = cls
 

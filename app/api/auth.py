@@ -1,4 +1,5 @@
 """Authentication endpoints — register, login, token refresh, user info."""
+
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
