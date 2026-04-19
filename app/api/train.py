@@ -3,6 +3,7 @@ from collections import Counter
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import func
+from sqlalchemy.orm import joinedload
 
 from lib.auth import get_current_user
 from lib.db import (
@@ -274,7 +275,8 @@ def get_variants():
 def start_training(req: TrainRequest):
     session = SessionLocal()
     try:
-        job = session.query(LabelingJob).filter_by(id=req.job_id).first()
+        # joinedload video so job.video.project_id doesn't trigger a lazy SELECT
+        job = session.query(LabelingJob).filter_by(id=req.job_id).options(joinedload(LabelingJob.video)).first()
         if not job:
             raise HTTPException(status_code=404, detail="Labeling job not found")
         if job.status != "completed":
