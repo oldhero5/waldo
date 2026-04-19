@@ -1,4 +1,5 @@
 import uuid
+from collections.abc import Generator
 from datetime import datetime
 
 from sqlalchemy import (
@@ -376,9 +377,31 @@ class DemoFeedback(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
-engine = create_engine(settings.postgres_dsn)
-SessionLocal = sessionmaker(bind=engine)
+engine = create_engine(
+    settings.postgres_dsn,
+    pool_size=settings.db_pool_size,
+    max_overflow=settings.db_max_overflow,
+    pool_recycle=settings.db_pool_recycle,
+    pool_pre_ping=True,
+    pool_timeout=settings.db_pool_timeout,
+)
+SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
 
 def get_session() -> Session:
     return SessionLocal()
+
+
+def get_db() -> Generator[Session, None, None]:
+    """FastAPI dependency — yields a scoped session, commits on success, rolls back on error.
+
+    Use with `Depends(get_db)` to replace manual `SessionLocal() / try / finally close()` blocks.
+    """
+    session = SessionLocal()
+    try:
+        yield session
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
