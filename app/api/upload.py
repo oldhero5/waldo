@@ -104,8 +104,12 @@ def _auto_label_if_applicable(session, project: Project, video: Video) -> None:
         task = label_video.delay(str(child_job.id), merge_into=str(master_job.id))
         child_job.celery_task_id = task.id
         session.commit()
-    except Exception:
-        pass  # Don't fail the upload if auto-labeling fails
+    except Exception as e:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "auto_label skipped for video %s in project %s: %s", video.id, project.id, e
+        )
 
 
 class LinkVideosRequest(BaseModel):
@@ -172,15 +176,26 @@ def link_existing_videos(req: LinkVideosRequest):
 
 
 MAX_VIDEO_SIZE_BYTES = 10 * 1024 * 1024 * 1024  # 10 GB
+_UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024  # 8 MB per chunk — keeps RAM bounded on multi-GB uploads
 
 
 async def _upload_single_video(session, project: Project, file: UploadFile) -> UploadResponse:
-    """Handle uploading a single video file: save to temp, extract metadata, upload to MinIO, create DB record."""
+    """Stream upload to disk in bounded-RAM chunks, then push to MinIO. Never buffers the whole file in memory."""
+    written = 0
     with tempfile.NamedTemporaryFile(delete=False, suffix=Path(file.filename).suffix) as tmp:
-        content = await file.read()
-        if len(content) > MAX_VIDEO_SIZE_BYTES:
-            raise HTTPException(status_code=413, detail=f"Video exceeds 10 GB limit ({len(content) / 1024**3:.1f} GB)")
-        tmp.write(content)
+        while True:
+            chunk = await file.read(_UPLOAD_CHUNK_BYTES)
+            if not chunk:
+                break
+            written += len(chunk)
+            if written > MAX_VIDEO_SIZE_BYTES:
+                tmp.close()
+                Path(tmp.name).unlink(missing_ok=True)
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"Video exceeds 10 GB limit ({written / 1024**3:.1f} GB)",
+                )
+            tmp.write(chunk)
         tmp_path = tmp.name
 
     try:
