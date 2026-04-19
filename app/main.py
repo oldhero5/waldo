@@ -84,7 +84,45 @@ app.include_router(ws_router)
 
 @app.get("/health")
 def health():
+    """Liveness probe — returns 200 if the process is up. Cheap; no deps."""
     return {"status": "ok"}
+
+
+@app.get("/ready")
+def ready():
+    """Readiness probe — 200 only if DB + Redis are reachable. Returns 503 otherwise."""
+    import redis
+    from sqlalchemy import text
+
+    from lib.db import engine
+
+    checks: dict[str, str] = {}
+    ok = True
+
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        checks["postgres"] = "ok"
+    except Exception as e:
+        checks["postgres"] = f"error: {type(e).__name__}"
+        ok = False
+
+    try:
+        r = redis.Redis.from_url(settings.redis_url, socket_timeout=2)
+        r.ping()
+        checks["redis"] = "ok"
+    except Exception as e:
+        checks["redis"] = f"error: {type(e).__name__}"
+        ok = False
+
+    status_code = 200 if ok else 503
+    return Response(
+        content=f'{{"status":"{"ok" if ok else "degraded"}","checks":{{'
+        + ",".join(f'"{k}":"{v}"' for k, v in checks.items())
+        + "}}",
+        media_type="application/json",
+        status_code=status_code,
+    )
 
 
 # Serve React UI as static files (must be last so API routes take priority)

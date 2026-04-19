@@ -11,10 +11,26 @@ app.conf.update(
     result_serializer="json",
     accept_content=["json"],
     task_track_started=True,
+    # Reliability: lost workers (OOM, SIGKILL) must re-queue the task, not drop it silently.
+    task_reject_on_worker_lost=True,
+    # Per-task defaults — decorators below opt individual tasks into retries and bound runtimes.
+    broker_connection_retry_on_startup=True,
+    result_expires=24 * 3600,
 )
 
+# Shared retry config applied to long-running jobs that must survive transient failures
+# (Redis hiccup, DB blip, MinIO timeout). Hard time limits prevent stuck workers from
+# wedging the queue indefinitely.
+_RETRY_OPTS = {
+    "autoretry_for": (Exception,),
+    "retry_backoff": True,
+    "retry_backoff_max": 600,  # cap backoff at 10 minutes
+    "retry_jitter": True,
+    "max_retries": 3,
+}
 
-@app.task(name="waldo.label_video", bind=True)
+
+@app.task(name="waldo.label_video", bind=True, **_RETRY_OPTS, soft_time_limit=6 * 3600, time_limit=6 * 3600 + 300)
 def label_video(self, job_id: str, merge_into: str | None = None) -> dict:
     # Use MLX video pipeline for project-based jobs (faster, supports SAM3.1)
     # Fall back to PyTorch text pipeline for single-video frame-extraction jobs
@@ -66,7 +82,13 @@ def label_video(self, job_id: str, merge_into: str | None = None) -> dict:
     return result
 
 
-@app.task(name="waldo.label_video_exemplar", bind=True)
+@app.task(
+    name="waldo.label_video_exemplar",
+    bind=True,
+    **_RETRY_OPTS,
+    soft_time_limit=6 * 3600,
+    time_limit=6 * 3600 + 300,
+)
 def label_video_exemplar(self, job_id: str) -> dict:
     from labeler.exemplar_labeler import run_exemplar_pipeline
 
@@ -103,14 +125,21 @@ def label_playground(
     )
 
 
-@app.task(name="waldo.train_model", bind=True, queue="training")
+@app.task(
+    name="waldo.train_model",
+    bind=True,
+    queue="training",
+    **_RETRY_OPTS,
+    soft_time_limit=24 * 3600,
+    time_limit=24 * 3600 + 300,
+)
 def train_model(self, run_id: str) -> dict:
     from trainer.train_manager import run_training
 
     return run_training(self, run_id)
 
 
-@app.task(name="waldo.export_model", bind=True)
+@app.task(name="waldo.export_model", bind=True, **_RETRY_OPTS, soft_time_limit=30 * 60, time_limit=35 * 60)
 def export_model_task(self, model_id: str, fmt: str) -> dict:
     from trainer.exporter import export_model
 
