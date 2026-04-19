@@ -1,10 +1,13 @@
 import json
+import logging
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
 import imagehash
 from PIL import Image
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -32,8 +35,10 @@ def get_video_metadata(video_path: str | Path) -> VideoMeta:
     result = subprocess.run(
         [
             "ffprobe",
-            "-v", "quiet",
-            "-print_format", "json",
+            "-v",
+            "quiet",
+            "-print_format",
+            "json",
             "-show_format",
             "-show_streams",
             str(video_path),
@@ -69,17 +74,38 @@ def extract_frames(
     fps: float = 1.0,
     dedup_threshold: int = 8,
 ) -> list[FrameInfo]:
+    """Extract frames from *video_path* at *fps*, deduplicating near-identical frames.
+
+    Results are cached by video signature (size + mtime + duration) under
+    ``/tmp/waldo-frame-cache/``.  On a cache hit the costly ffmpeg + phash
+    pipeline is skipped entirely.  Cache TTL is 48 hours (purged on import of
+    ``lib.frame_cache``).
+    """
+    from lib.frame_cache import load_cached_frames, save_cached_frames
+
     video_path = Path(video_path)
     output_dir = Path(output_dir)
+
+    # --- cache lookup ---
+    cached = load_cached_frames(video_path)
+    if cached is not None:
+        # Re-use cached frames; ensure output_dir exists for callers that expect it.
+        output_dir.mkdir(parents=True, exist_ok=True)
+        return cached
+
+    # --- cache miss: run ffmpeg + phash pipeline ---
     output_dir.mkdir(parents=True, exist_ok=True)
 
     pattern = str(output_dir / "frame_%06d.jpg")
     subprocess.run(
         [
             "ffmpeg",
-            "-i", str(video_path),
-            "-vf", f"fps={fps}",
-            "-q:v", "2",
+            "-i",
+            str(video_path),
+            "-vf",
+            f"fps={fps}",
+            "-q:v",
+            "2",
             pattern,
         ],
         capture_output=True,
@@ -113,5 +139,8 @@ def extract_frames(
                 height=h,
             )
         )
+
+    # --- persist to cache ---
+    save_cached_frames(video_path, frames)
 
     return frames
