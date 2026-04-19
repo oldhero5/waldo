@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   getJobStatus,
@@ -9,12 +9,64 @@ import {
   startLabeling,
   type ClassPrompt,
   type FrameOut,
+  type PreviewDetection,
   type PreviewResponse,
 } from "../api";
 import ClickCanvas from "../components/ClickCanvas";
 import TaskSelector from "../components/TaskSelector";
 
 type Mode = "text" | "exemplar";
+
+/** Canvas-based detection overlay — replaces inline SVG polygons to avoid 800+ DOM nodes. */
+function DetectionOverlay({ detections }: { detections: PreviewDetection[] }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const container = containerRef.current;
+    if (!canvas || !container) return;
+
+    const rect = container.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    const W = rect.width || container.offsetWidth || 1;
+    const H = rect.height || container.offsetHeight || 1;
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    canvas.style.width = `${W}px`;
+    canvas.style.height = `${H}px`;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, W, H);
+
+    // Use CSS variable accent colour via a temporary element for compatibility
+    const accentColor = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#2563eb";
+
+    for (const d of detections) {
+      if (!d.polygon || d.polygon.length < 6) continue;
+      ctx.beginPath();
+      for (let i = 0; i < d.polygon.length; i += 2) {
+        const px = d.polygon[i] * W;
+        const py = d.polygon[i + 1] * H;
+        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      }
+      ctx.closePath();
+      ctx.fillStyle = "rgba(37,99,235,0.2)";
+      ctx.fill();
+      ctx.strokeStyle = accentColor;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+  }, [detections]);
+
+  return (
+    <div ref={containerRef} className="absolute inset-0 pointer-events-none">
+      <canvas ref={canvasRef} className="absolute inset-0" style={{ width: "100%", height: "100%" }} />
+    </div>
+  );
+}
 
 interface ClickPoint {
   x: number;
@@ -333,21 +385,7 @@ export default function LabelPage() {
                     {preview.frames.map((f) => (
                       <div key={f.frame_idx} className="relative rounded-lg overflow-hidden" style={{ border: "1px solid var(--border-default)" }}>
                         <img src={`data:image/jpeg;base64,${f.image_b64}`} alt={`Frame ${f.frame_idx}`} className="w-full aspect-video object-cover" />
-                        <svg className="absolute inset-0 w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none">
-                          {f.detections.map((d, di) =>
-                            d.polygon ? (
-                              <polygon
-                                key={di}
-                                points={Array.from({ length: d.polygon.length / 2 }, (_, i) =>
-                                  `${d.polygon![i * 2] * 100},${d.polygon![i * 2 + 1] * 100}`
-                                ).join(" ")}
-                                fill="rgba(37,99,235,0.2)"
-                                stroke="var(--accent)"
-                                strokeWidth={0.5}
-                              />
-                            ) : null
-                          )}
-                        </svg>
+                        <DetectionOverlay detections={f.detections} />
                         <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent px-2 py-1">
                           <span style={{ fontSize: 10, color: "#fff", fontFamily: "var(--font-mono)" }}>
                             {f.detections.length} detection{f.detections.length !== 1 ? "s" : ""}
