@@ -1,4 +1,5 @@
 """Classical computer vision blocks — no ML required."""
+
 from typing import Any
 
 import cv2
@@ -40,7 +41,10 @@ class ResizeBlock(BlockBase):
         scale = target_width / w
         new_h = int(h * scale)
         resized = cv2.resize(image, (target_width, new_h))
-        return BlockResult(outputs={"image": resized, "scale": scale}, metadata={"original": f"{w}x{h}", "resized": f"{target_width}x{new_h}"})
+        return BlockResult(
+            outputs={"image": resized, "scale": scale},
+            metadata={"original": f"{w}x{h}", "resized": f"{target_width}x{new_h}"},
+        )
 
     def _config_schema(self) -> dict:
         return {"width": {"type": "number", "default": 640, "label": "Target width (px)"}}
@@ -70,7 +74,10 @@ class ContourDetectionBlock(BlockBase):
         filtered = [c for c in contours if cv2.contourArea(c) >= min_area]
         cv2.drawContours(result, filtered, -1, (0, 255, 0), 2)
 
-        return BlockResult(outputs={"image": result, "count": len(filtered)}, metadata={"total_contours": len(contours), "filtered": len(filtered)})
+        return BlockResult(
+            outputs={"image": result, "count": len(filtered)},
+            metadata={"total_contours": len(contours), "filtered": len(filtered)},
+        )
 
     def _config_schema(self) -> dict:
         return {

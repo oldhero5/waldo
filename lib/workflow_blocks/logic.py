@@ -1,4 +1,5 @@
 """Logic and branching blocks — control workflow execution flow."""
+
 from typing import Any
 
 from lib.workflow_blocks.base import BlockBase, BlockResult, Port
@@ -28,13 +29,13 @@ class ConditionalBlock(BlockBase):
         if operator == "exists":
             passed = value is not None and value != 0 and value != [] and value != ""
         elif operator == "gt":
-            passed = isinstance(value, (int, float)) and value > threshold
+            passed = isinstance(value, int | float) and value > threshold
         elif operator == "lt":
-            passed = isinstance(value, (int, float)) and value < threshold
+            passed = isinstance(value, int | float) and value < threshold
         elif operator == "eq":
             passed = value == threshold
         elif operator == "gte":
-            passed = isinstance(value, (int, float)) and value >= threshold
+            passed = isinstance(value, int | float) and value >= threshold
 
         return BlockResult(
             outputs={"passed": data if passed else None, "result": passed},
@@ -82,6 +83,10 @@ class ExpressionBlock(BlockBase):
 
     def _config_schema(self) -> dict:
         return {
-            "operation": {"type": "string", "default": "add", "label": "Operation (add, subtract, multiply, divide, format)"},
+            "operation": {
+                "type": "string",
+                "default": "add",
+                "label": "Operation (add, subtract, multiply, divide, format)",
+            },
             "template": {"type": "string", "default": "{a}", "label": "Format template (for format operation)"},
         }

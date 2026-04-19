@@ -1,4 +1,5 @@
 """Filter block — filter detections by confidence, class, or size."""
+
 from typing import Any
 
 from lib.workflow_blocks.base import BlockBase, BlockResult, Port

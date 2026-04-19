@@ -1,4 +1,5 @@
 """Base class for all workflow blocks."""
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
@@ -7,6 +8,7 @@ from typing import Any
 @dataclass
 class Port:
     """Describes an input or output port on a block."""
+
     name: str
     type: str  # "image", "detections", "text", "any", "number"
     description: str = ""
@@ -16,6 +18,7 @@ class Port:
 @dataclass
 class BlockResult:
     """Output from a block execution."""
+
     outputs: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)  # timing, counts, etc.
 
@@ -54,7 +57,10 @@ class BlockBase(ABC):
             "display_name": self.display_name,
             "description": self.description,
             "category": self.category,
-            "inputs": [{"name": p.name, "type": p.type, "description": p.description, "required": p.required} for p in self.input_ports],
+            "inputs": [
+                {"name": p.name, "type": p.type, "description": p.description, "required": p.required}
+                for p in self.input_ports
+            ],
             "outputs": [{"name": p.name, "type": p.type, "description": p.description} for p in self.output_ports],
             "config_schema": self._config_schema(),
         }

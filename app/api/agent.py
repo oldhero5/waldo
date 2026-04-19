@@ -86,13 +86,13 @@ Given the user's workspace state below, respond with ONLY valid JSON (no markdow
 "suggestions": ["actionable suggestion 1", "actionable suggestion 2", "actionable suggestion 3"]}}
 
 Workspace state:
-- Videos uploaded: {body.get('videos', 0)}
-- Annotations created: {body.get('annotations', 0)}
-- Datasets completed: {body.get('datasets', 0)}
-- Models trained: {body.get('models', 0)}
-- Best mAP50: {body.get('best_map', '—')}
-- Active training: {body.get('training', False)}
-- Model deployed: {body.get('deployed', False)}
+- Videos uploaded: {body.get("videos", 0)}
+- Annotations created: {body.get("annotations", 0)}
+- Datasets completed: {body.get("datasets", 0)}
+- Models trained: {body.get("models", 0)}
+- Best mAP50: {body.get("best_map", "—")}
+- Active training: {body.get("training", False)}
+- Model deployed: {body.get("deployed", False)}
 
 Rules for suggestions:
 - Be specific to their state (don't suggest uploading if they have 1000+ annotations)

@@ -1,4 +1,5 @@
 """LLM block — calls local Ollama for text generation/analysis."""
+
 from typing import Any
 
 import httpx
@@ -57,5 +58,9 @@ class LLMBlock(BlockBase):
     def _config_schema(self) -> dict:
         return {
             "model": {"type": "string", "default": "llama3.2", "label": "Ollama model"},
-            "system_prompt": {"type": "text", "default": "You are a helpful computer vision assistant.", "label": "System prompt"},
+            "system_prompt": {
+                "type": "text",
+                "default": "You are a helpful computer vision assistant.",
+                "label": "System prompt",
+            },
         }

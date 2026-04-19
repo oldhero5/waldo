@@ -2,6 +2,7 @@
 
 Requires running infrastructure (Postgres, Redis, MinIO).
 """
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -9,6 +10,7 @@ from fastapi.testclient import TestClient
 @pytest.fixture
 def client():
     from app.main import app
+
     return TestClient(app)
 
 
@@ -16,6 +18,7 @@ def client():
 def uploaded_video(client):
     """Upload a test video and return video_id."""
     from pathlib import Path
+
     clip = Path(__file__).parent / "fixtures" / "test_clip.mp4"
     with open(clip, "rb") as f:
         resp = client.post("/api/v1/upload", files={"file": ("test.mp4", f, "video/mp4")})
@@ -27,11 +30,15 @@ def uploaded_video(client):
 def completed_job(client, uploaded_video):
     """Create and wait for a labeling job to complete. Returns job_id."""
     import time
-    resp = client.post("/api/v1/label", json={
-        "video_id": uploaded_video,
-        "text_prompt": "test_object",
-        "task_type": "segment",
-    })
+
+    resp = client.post(
+        "/api/v1/label",
+        json={
+            "video_id": uploaded_video,
+            "text_prompt": "test_object",
+            "task_type": "segment",
+        },
+    )
     assert resp.status_code == 202
     job_id = resp.json()["job_id"]
 
@@ -122,20 +129,26 @@ class TestTrainAPI:
         assert isinstance(resp.json(), list)
 
     def test_start_training_job_not_found(self, client):
-        resp = client.post("/api/v1/train", json={
-            "job_id": "00000000-0000-0000-0000-000000000000",
-            "name": "test",
-        })
+        resp = client.post(
+            "/api/v1/train",
+            json={
+                "job_id": "00000000-0000-0000-0000-000000000000",
+                "name": "test",
+            },
+        )
         assert resp.status_code == 404
 
     def test_start_training(self, client, completed_job):
-        resp = client.post("/api/v1/train", json={
-            "job_id": completed_job,
-            "name": "pytest_train",
-            "model_variant": "yolo11n-seg",
-            "task_type": "segment",
-            "hyperparameters": {"epochs": 1},
-        })
+        resp = client.post(
+            "/api/v1/train",
+            json={
+                "job_id": completed_job,
+                "name": "pytest_train",
+                "model_variant": "yolo11n-seg",
+                "task_type": "segment",
+                "hyperparameters": {"epochs": 1},
+            },
+        )
         assert resp.status_code == 202
         body = resp.json()
         assert body["run_id"]
@@ -162,11 +175,15 @@ class TestTrainAPI:
     def test_label_with_detect_task(self, client, uploaded_video):
         """Test labeling with detection task type."""
         import time
-        resp = client.post("/api/v1/label", json={
-            "video_id": uploaded_video,
-            "text_prompt": "object",
-            "task_type": "detect",
-        })
+
+        resp = client.post(
+            "/api/v1/label",
+            json={
+                "video_id": uploaded_video,
+                "text_prompt": "object",
+                "task_type": "detect",
+            },
+        )
         assert resp.status_code == 202
         job_id = resp.json()["job_id"]
 

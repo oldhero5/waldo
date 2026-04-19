@@ -1,4 +1,5 @@
 """Exemplar/click labeling pipeline — uses Sam3TrackerVideoModel for point-prompt tracking."""
+
 import tempfile
 from pathlib import Path
 
@@ -70,9 +71,7 @@ def run_exemplar_pipeline(celery_task, job_id: str) -> dict:
 
             class_name = job.text_prompt or "object"
             class_names = [class_name]
-            result_key = convert_and_store(
-                session, job, seg_results, db_frames, frame_infos, class_names, tmpdir
-            )
+            result_key = convert_and_store(session, job, seg_results, db_frames, frame_infos, class_names, tmpdir)
 
             _update_job(session, job, status="completed", result_minio_key=result_key, progress=1.0)
             return {"status": "completed", "result_minio_key": result_key}

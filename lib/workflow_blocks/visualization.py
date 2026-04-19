@@ -1,4 +1,5 @@
 """Visualization blocks — render detections on images for visual output."""
+
 from typing import Any
 
 import cv2
@@ -27,7 +28,7 @@ class BoundingBoxVisualization(BlockBase):
 
         for i, det in enumerate(detections):
             color = colors[det.class_index % len(colors)]
-            x1, y1, x2, y2 = [int(v) for v in det.bbox]
+            x1, y1, x2, y2 = (int(v) for v in det.bbox)
             cv2.rectangle(image, (x1, y1), (x2, y2), color, thickness)
             label = f"{det.class_name} {det.confidence:.0%}"
             (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, 1)
@@ -62,7 +63,7 @@ class BlurVisualization(BlockBase):
             kernel += 1
 
         for det in detections:
-            x1, y1, x2, y2 = [int(v) for v in det.bbox]
+            x1, y1, x2, y2 = (int(v) for v in det.bbox)
             x1, y1 = max(0, x1), max(0, y1)
             x2, y2 = min(image.shape[1], x2), min(image.shape[0], y2)
             roi = image[y1:y2, x1:x2]

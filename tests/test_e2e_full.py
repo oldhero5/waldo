@@ -7,6 +7,7 @@ Requires:
 - Running labeler + trainer workers
 - SAM 3 model downloaded
 """
+
 import io
 import time
 
@@ -99,6 +100,7 @@ class TestFullLoopE2E:
         # Create a test image
         test_img = np.random.randint(0, 255, (640, 640, 3), dtype=np.uint8)
         import cv2
+
         _, img_bytes = cv2.imencode(".jpg", test_img)
         resp = self.client.post(
             "/api/v1/predict/image",

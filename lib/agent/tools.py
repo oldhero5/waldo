@@ -1,4 +1,5 @@
 """Waldo tools for the LangGraph agent — maps natural language to API actions."""
+
 from langchain_core.tools import tool
 
 from lib.db import (
@@ -34,13 +35,19 @@ def list_datasets() -> str:
     """List all completed labeling jobs (datasets) with annotation counts."""
     session = SessionLocal()
     try:
-        jobs = session.query(LabelingJob).filter_by(status="completed").order_by(LabelingJob.created_at.desc()).limit(10).all()
+        jobs = (
+            session.query(LabelingJob)
+            .filter_by(status="completed")
+            .order_by(LabelingJob.created_at.desc())
+            .limit(10)
+            .all()
+        )
         if not jobs:
             return "No datasets found. Label a video first."
         lines = []
         for j in jobs:
             ann_count = session.query(Annotation).filter_by(job_id=j.id).count()
-            lines.append(f"- \"{j.text_prompt}\": {ann_count} annotations, {j.total_frames} frames")
+            lines.append(f'- "{j.text_prompt}": {ann_count} annotations, {j.total_frames} frames')
         return f"Datasets ({len(jobs)}):\n" + "\n".join(lines)
     finally:
         session.close()

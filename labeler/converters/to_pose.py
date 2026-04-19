@@ -1,4 +1,5 @@
 """Mask → YOLO pose format with centroid keypoint."""
+
 from pathlib import Path
 
 import cv2
@@ -44,10 +45,7 @@ def masks_to_yolo_pose(
                 kp_y = y_center
 
             # visible=2 means visible and labeled
-            lines.append(
-                f"{cls_idx} {x_center:.6f} {y_center:.6f} {nw:.6f} {nh:.6f} "
-                f"{kp_x:.6f} {kp_y:.6f} 2"
-            )
+            lines.append(f"{cls_idx} {x_center:.6f} {y_center:.6f} {nw:.6f} {nh:.6f} {kp_x:.6f} {kp_y:.6f} 2")
 
     return lines
 
@@ -59,6 +57,4 @@ def write_yolo_dataset(
     class_names: list[str],
     val_split: float = 0.1,
 ) -> Path:
-    return write_yolo_label_dataset(
-        output_dir, frame_paths, annotation_lines, class_names, val_split, task="pose"
-    )
+    return write_yolo_label_dataset(output_dir, frame_paths, annotation_lines, class_names, val_split, task="pose")

@@ -1,16 +1,17 @@
 """Tests for all five YOLO converter modules."""
+
 import tempfile
 from pathlib import Path
 
-import cv2
 import numpy as np
-import pytest
 
-from labeler.converters.to_classify import masks_to_crops, write_yolo_dataset as write_cls
-from labeler.converters.to_detect import masks_to_yolo_bboxes, write_yolo_dataset as write_det
-from labeler.converters.to_obb import masks_to_yolo_obb, write_yolo_dataset as write_obb
-from labeler.converters.to_pose import masks_to_yolo_pose, write_yolo_dataset as write_pose
-from labeler.converters.to_segment import masks_to_yolo_polygons, write_yolo_dataset as write_seg
+from labeler.converters.to_classify import masks_to_crops
+from labeler.converters.to_classify import write_yolo_dataset as write_cls
+from labeler.converters.to_detect import masks_to_yolo_bboxes
+from labeler.converters.to_obb import masks_to_yolo_obb
+from labeler.converters.to_pose import masks_to_yolo_pose
+from labeler.converters.to_segment import masks_to_yolo_polygons
+from labeler.converters.to_segment import write_yolo_dataset as write_seg
 
 
 def _make_circle_mask(h: int, w: int, cy: int, cx: int, r: int) -> np.ndarray:
@@ -32,6 +33,7 @@ TINY = _make_circle_mask(H, W, cy=10, cx=10, r=2)
 
 
 # ── Segmentation ────────────────────────────────────────────
+
 
 class TestSegmentation:
     def test_basic(self):
@@ -76,13 +78,14 @@ class TestSegmentation:
 
 # ── Detection ───────────────────────────────────────────────
 
+
 class TestDetection:
     def test_basic(self):
         lines = masks_to_yolo_bboxes(np.array([CIRCLE]), class_indices=[0])
         assert len(lines) == 1
         parts = lines[0].split()
         assert parts[0] == "0"
-        cx, cy, bw, bh = [float(x) for x in parts[1:]]
+        cx, cy, bw, bh = (float(x) for x in parts[1:])
         assert 0 < cx < 1 and 0 < cy < 1
         assert 0 < bw < 1 and 0 < bh < 1
 
@@ -95,13 +98,14 @@ class TestDetection:
         assert len(lines) == 1
         parts = lines[0].split()
         assert parts[0] == "2"
-        cx, cy, bw, bh = [float(x) for x in parts[1:]]
+        cx, cy, bw, bh = (float(x) for x in parts[1:])
         # Rect is at x1=30,y1=20 to x2=120,y2=80, so center ~ (75/300, 50/200)
         assert abs(cx - 75 / W) < 0.02
         assert abs(cy - 50 / H) < 0.02
 
 
 # ── OBB ─────────────────────────────────────────────────────
+
 
 class TestOBB:
     def test_basic(self):
@@ -125,6 +129,7 @@ class TestOBB:
 
 
 # ── Pose ────────────────────────────────────────────────────
+
 
 class TestPose:
     def test_basic(self):
@@ -155,12 +160,11 @@ class TestPose:
 
 # ── Classification ──────────────────────────────────────────
 
+
 class TestClassification:
     def test_masks_to_crops(self):
         frame = np.random.randint(0, 255, (H, W, 3), dtype=np.uint8)
-        crops = masks_to_crops(
-            np.array([CIRCLE, RECT]), frame, ["car", "truck"], [0, 1]
-        )
+        crops = masks_to_crops(np.array([CIRCLE, RECT]), frame, ["car", "truck"], [0, 1])
         assert len(crops) == 2
         for crop_img, cls_name in crops:
             assert crop_img.ndim == 3
@@ -179,9 +183,7 @@ class TestClassification:
                 [(frame[10:60, 10:60], "car")],
             ]
             fake_frames = [Path(tmpdir) / f"f{i}.jpg" for i in range(2)]
-            result = write_cls(
-                Path(tmpdir) / "out", fake_frames, crops_per_frame, ["car", "truck"]
-            )
+            result = write_cls(Path(tmpdir) / "out", fake_frames, crops_per_frame, ["car", "truck"])
             assert (result / "data.yaml").exists()
             all_imgs = list(result.rglob("*.jpg"))
             assert len(all_imgs) == 3
@@ -191,9 +193,11 @@ class TestClassification:
 
 # ── data.yaml variants ─────────────────────────────────────
 
+
 class TestDataYaml:
     def test_segment_yaml(self):
         from labeler.converters.common import generate_data_yaml
+
         y = generate_data_yaml(["car", "truck"], task="segment")
         assert "nc: 2" in y
         assert "path: ." in y
@@ -201,6 +205,7 @@ class TestDataYaml:
 
     def test_pose_yaml(self):
         from labeler.converters.common import generate_data_yaml
+
         y = generate_data_yaml(["person"], task="pose")
         assert "kpt_shape: [1, 3]" in y
         assert "nc: 1" in y
