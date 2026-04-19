@@ -143,7 +143,11 @@ function DatasetCard({ job, onDeleted, selected, onToggleSelect }: {
     let added = 0;
     let skipped = 0;
     const fileArr = Array.from(files);
-    const CONCURRENCY = 3;
+    const CONCURRENCY = 8;
+    // Only update progress state every N completions or at least every 500 ms
+    // to avoid thrashing the React scheduler on large batches.
+    let lastProgressUpdate = Date.now();
+    const UPDATE_INTERVAL_MS = 500;
 
     try {
       // Process in batches of CONCURRENCY
@@ -164,7 +168,13 @@ function DatasetCard({ job, onDeleted, selected, onToggleSelect }: {
             }
           }
         }
-        setUploadMsg(`Uploading... ${added + skipped}/${fileArr.length} videos`);
+        // Batch progress updates — at most one setState per 500 ms or on last batch
+        const now = Date.now();
+        const isLastBatch = i + CONCURRENCY >= fileArr.length;
+        if (isLastBatch || now - lastProgressUpdate >= UPDATE_INTERVAL_MS) {
+          setUploadMsg(`Uploading... ${added + skipped}/${fileArr.length} videos`);
+          lastProgressUpdate = now;
+        }
       }
       const parts = [`Added ${added} video${added !== 1 ? "s" : ""} to "${collectionName}"`];
       if (skipped > 0) parts.push(`(${skipped} duplicate${skipped !== 1 ? "s" : ""} skipped)`);
