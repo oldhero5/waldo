@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   getDatasetStats,
@@ -69,6 +69,14 @@ export default function TrainPage() {
   const [stopping, setStopping] = useState(false);
   const [previewExpanded, setPreviewExpanded] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
+  const [, startChartTransition] = useTransition();
+  // Pending chart data buffer — flushed in debounced batch at ~200ms
+  const chartBufferRef = useRef<{
+    metrics?: Record<string, number>;
+    lossHistory?: Record<string, number>[];
+    metricHistory?: Record<string, number>[];
+  }>({});
+  const chartFlushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Try to load paramId as a training run first, then fall back to job ID
   const { data: directRun } = useQuery({
@@ -154,14 +162,38 @@ export default function TrainPage() {
     const ws = new WebSocket(`${protocol}//${window.location.host}/ws/training/${runId}`);
     wsRef.current = ws;
 
+    const flushChartBuffer = () => {
+      const buf = chartBufferRef.current;
+      if (Object.keys(buf).length === 0) return;
+      startChartTransition(() => {
+        if (buf.metrics) setWsMetrics(buf.metrics);
+        if (buf.lossHistory) setLossHistory(buf.lossHistory);
+        if (buf.metricHistory) setMetricHistory(buf.metricHistory);
+      });
+      chartBufferRef.current = {};
+    };
+
     ws.onmessage = (e) => {
       const data = JSON.parse(e.data);
-      if (data.metrics) setWsMetrics(data.metrics);
-      if (data.loss_history) setLossHistory(data.loss_history);
-      if (data.metric_history) setMetricHistory(data.metric_history);
-      if (data.val_preview) { setValPreview(data.val_preview); }
+
+      // Terminal status events flush immediately and are never debounced
+      if (data.status === "completed" || data.status === "failed") {
+        if (chartFlushTimer.current) { clearTimeout(chartFlushTimer.current); chartFlushTimer.current = null; }
+        flushChartBuffer();
+        return;
+      }
+
+      // Buffer chart-heavy updates and flush in a single batch at ~200 ms
+      if (data.metrics) chartBufferRef.current.metrics = data.metrics;
+      if (data.loss_history) chartBufferRef.current.lossHistory = data.loss_history;
+      if (data.metric_history) chartBufferRef.current.metricHistory = data.metric_history;
+
+      if (chartFlushTimer.current) clearTimeout(chartFlushTimer.current);
+      chartFlushTimer.current = setTimeout(flushChartBuffer, 200);
+
+      // Low-cost UI updates fire immediately (no charts involved)
+      if (data.val_preview) setValPreview(data.val_preview);
       if (data.warning) setOverfitWarning(data.warning);
-      // Batch-level progress
       if (data.batch != null && data.total_batches) {
         setBatchProgress({ batch: data.batch, total: data.total_batches, losses: data.batch_losses || {} });
       }
@@ -172,6 +204,7 @@ export default function TrainPage() {
     return () => {
       ws.close();
       wsRef.current = null;
+      if (chartFlushTimer.current) { clearTimeout(chartFlushTimer.current); chartFlushTimer.current = null; }
     };
   }, [runId, runStatus?.status]);
 
