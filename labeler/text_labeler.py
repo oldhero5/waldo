@@ -1,5 +1,7 @@
 """Text-prompt labeling pipeline — uses Sam3VideoModel for detect-and-track."""
 
+import logging
+import math
 import tempfile
 from pathlib import Path
 
@@ -9,8 +11,33 @@ from PIL import Image
 from labeler.frame_extractor import extract_frames
 from labeler.pipeline import _update_job, convert_and_store
 from labeler.sam3_engine import SegmentationResult, get_engine
+from lib.config import settings
 from lib.db import Frame, LabelingJob, SessionLocal, Video
 from lib.storage import download_file, upload_file
+
+logger = logging.getLogger(__name__)
+
+# Maximum frames passed to SAM3 before frame-skip kicks in automatically.
+_AUTO_SKIP_TARGET = 500
+# Absolute bounds for the computed stride.
+_MIN_STRIDE = 1
+_MAX_STRIDE = 30
+
+
+def _compute_stride(total_frames: int, detect_every: int | None) -> int:
+    """Return the frame-sampling stride.
+
+    If *detect_every* is given explicitly, clamp it to [_MIN_STRIDE, _MAX_STRIDE]
+    and return it.  Otherwise auto-compute so that at most *_AUTO_SKIP_TARGET*
+    frames are processed.
+    """
+    if detect_every is not None:
+        return max(_MIN_STRIDE, min(_MAX_STRIDE, detect_every))
+    if total_frames <= _AUTO_SKIP_TARGET:
+        return 1
+    stride = math.ceil(total_frames / _AUTO_SKIP_TARGET)
+    stride = max(_MIN_STRIDE, min(_MAX_STRIDE, stride))
+    return stride
 
 
 def merge_multiclass_results(
@@ -71,13 +98,40 @@ def _resolve_class_prompts(job: LabelingJob) -> list[dict]:
     return [{"name": job.text_prompt, "prompt": job.text_prompt}]
 
 
-def _process_single_video(session, job, video, engine, tmpdir, class_prompts, frame_offset=0, total_frame_estimate=0):
-    """Extract frames, run SAM3 (with multiclass), return (seg_results, db_frames, frame_infos)."""
+def _process_single_video(
+    session,
+    job,
+    video,
+    engine,
+    tmpdir,
+    class_prompts,
+    frame_offset=0,
+    total_frame_estimate=0,
+    detect_every: int | None = None,
+):
+    """Extract frames, run SAM3 (with multiclass), return (seg_results, db_frames, frame_infos).
+
+    Args:
+        detect_every: Explicit frame stride.  *None* triggers auto-computation
+            based on the actual frame count and *_AUTO_SKIP_TARGET*.
+    """
     video_path = tmpdir / video.filename
     download_file(video.minio_key, video_path)
 
     frames_dir = tmpdir / f"frames_{video.id}"
     frame_infos = extract_frames(video_path, frames_dir)
+
+    # Frame-skip: for long videos sample every Kth frame to cap SAM3 work.
+    total_frames = len(frame_infos)
+    stride = _compute_stride(total_frames, detect_every)
+    if stride > 1:
+        logger.info(
+            "Frame-skip enabled: %d total frames → sampling every %d frames (~%d processed)",
+            total_frames,
+            stride,
+            math.ceil(total_frames / stride),
+        )
+        frame_infos = frame_infos[::stride]
 
     # Upload frames to MinIO and record in DB
     db_frames: list[Frame] = []
@@ -98,8 +152,10 @@ def _process_single_video(session, job, video, engine, tmpdir, class_prompts, fr
         db_frames.append(db_frame)
     session.commit()
 
-    # SAM3 segmentation — once per prompt alias, then merge
-    # Expand prompt aliases: each class may have multiple prompts
+    # SAM3 segmentation — once per prompt alias, then merge.
+    # Use config-backed threshold; per-call override capability preserved via
+    # engine.segment_frames(threshold=...) when needed.
+    score_threshold = settings.sam3_score_threshold
     images = [Image.open(fi.file_path) for fi in frame_infos]
     class_names = []
     for cp in class_prompts:
@@ -115,13 +171,13 @@ def _process_single_video(session, job, video, engine, tmpdir, class_prompts, fr
             prompt_runs.append((alias, cls_idx))
 
     if len(prompt_runs) == 1:
-        seg_results = engine.segment_frames(images, prompt_runs[0][0])
+        seg_results = engine.segment_frames(images, prompt_runs[0][0], threshold=score_threshold)
         for sr in seg_results:
             sr.class_indices = np.full(sr.masks.shape[0], prompt_runs[0][1], dtype=int)
     else:
         per_prompt_results = []
         for prompt_str, cls_idx in prompt_runs:
-            cls_results = engine.segment_frames(images, prompt_str)
+            cls_results = engine.segment_frames(images, prompt_str, threshold=score_threshold)
             for sr in cls_results:
                 sr.class_indices = np.full(sr.masks.shape[0], cls_idx, dtype=int)
             per_prompt_results.append(cls_results)

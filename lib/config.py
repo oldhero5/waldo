@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     sam3_model_id: str = "facebook/sam3"
     sam3_mlx_model_id: str = "mlx-community/sam3.1-bf16"
 
+    # SAM3 inference thresholds — overridable per-call; config sets the default
+    sam3_mask_threshold: float = 0.5  # sigmoid threshold for binary mask
+    sam3_score_threshold: float = 0.35  # minimum object score to keep a detection
+
     # Auth — jwt_secret MUST be overridden in production (validated at startup)
     jwt_secret: str = "waldo-dev-secret-change-in-production"
     jwt_algorithm: str = "HS256"
