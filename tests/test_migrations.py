@@ -20,6 +20,11 @@ import pytest
 import sqlalchemy
 from sqlalchemy import inspect, text
 
+from alembic import command
+from alembic.config import Config
+from alembic.runtime.migration import MigrationContext
+from alembic.script import ScriptDirectory
+
 
 def _postgres_dsn() -> str:
     """Build DSN from env vars, falling back to the lib.config defaults."""
@@ -57,9 +62,6 @@ requires_postgres = pytest.mark.skipif(
 @requires_postgres
 def test_alembic_upgrade_head_succeeds():
     """Running `alembic upgrade head` against the CI Postgres must not raise."""
-    from alembic import command
-    from alembic.config import Config
-
     alembic_cfg = Config("alembic.ini")
     # Override the DB URL to use CI env vars
     alembic_cfg.set_main_option("sqlalchemy.url", _postgres_dsn())
@@ -71,9 +73,6 @@ def test_alembic_upgrade_head_succeeds():
 def test_expected_tables_exist_after_migration():
     """Core tables must exist after migrating to head."""
     # The upgrade is idempotent — run again to ensure we're at head
-    from alembic import command
-    from alembic.config import Config
-
     alembic_cfg = Config("alembic.ini")
     alembic_cfg.set_main_option("sqlalchemy.url", _postgres_dsn())
     command.upgrade(alembic_cfg, "head")
@@ -84,14 +83,12 @@ def test_expected_tables_exist_after_migration():
         inspector = inspect(engine)
         existing_tables = set(inspector.get_table_names())
 
-        expected_tables = {
-            "projects",
-            "videos",
-            "workspaces",
-            "users",
-            "workspace_members",
-            "api_keys",
-        }
+        # Every ORM model in lib.db must have a corresponding table; otherwise
+        # a fresh deployment crashes when a code path hits the missing table
+        # (e.g. bootstrap_admin_if_empty querying `users`).
+        from lib.db import Base
+
+        expected_tables = set(Base.metadata.tables.keys())
         missing = expected_tables - existing_tables
         assert not missing, f"Tables missing after alembic upgrade head: {missing}"
     finally:
@@ -101,13 +98,9 @@ def test_expected_tables_exist_after_migration():
 @requires_postgres
 def test_alembic_history_is_linear():
     """Alembic revision chain must be a single linear history (no branching)."""
-    from alembic.config import Config
-
     alembic_cfg = Config("alembic.ini")
     alembic_cfg.set_main_option("sqlalchemy.url", _postgres_dsn())
     alembic_cfg.set_main_option("script_location", "alembic")
-
-    from alembic.script import ScriptDirectory
 
     scripts = ScriptDirectory.from_config(alembic_cfg)
     heads = scripts.get_heads()
@@ -120,11 +113,6 @@ def test_alembic_history_is_linear():
 @requires_postgres
 def test_alembic_current_is_head_after_upgrade():
     """After `upgrade head`, `alembic current` must report the head revision."""
-    from alembic import command
-    from alembic.config import Config
-    from alembic.runtime.migration import MigrationContext
-    from alembic.script import ScriptDirectory
-
     alembic_cfg = Config("alembic.ini")
     alembic_cfg.set_main_option("sqlalchemy.url", _postgres_dsn())
     command.upgrade(alembic_cfg, "head")
