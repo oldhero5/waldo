@@ -12,9 +12,16 @@ import sys
 import time
 from pathlib import Path
 
-import mlx.core as mx
-import numpy as np
-from PIL import Image
+import pytest
+
+# mlx / mlx_vlm are Apple Silicon-only — see pyproject.toml platform marker.
+# Skip the whole module on non-Darwin so the Linux CI run can collect tests.
+pytest.importorskip("mlx", reason="mlx is Apple Silicon only")
+pytest.importorskip("mlx_vlm", reason="mlx_vlm is Apple Silicon only")
+
+import mlx.core as mx  # noqa: E402
+import numpy as np  # noqa: E402
+from PIL import Image  # noqa: E402
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
