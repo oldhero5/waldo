@@ -1,28 +1,48 @@
 /**
- * AI Agent — chat interface powered by local Ollama.
- * Suggests workflows, helps configure training, answers CV questions.
+ * AI Agent — full-page chat. Talks to /api/v1/agent/stream over SSE,
+ * renders streamed tokens, surfaces tool calls and their results.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
-import { Send, Loader2, Bot, User, Sparkles } from "lucide-react";
+import {
+  Send,
+  Loader2,
+  Bot,
+  User,
+  Sparkles,
+  Wrench,
+  CheckCircle2,
+  AlertTriangle,
+  ShieldAlert,
+} from "lucide-react";
+
+import { streamAgent, type AgentEvent, type ChatMessageWire } from "../lib/agentStream";
+
+interface ToolEvent {
+  name: string;
+  args?: Record<string, unknown>;
+  result?: string;
+}
 
 interface Message {
   role: "user" | "assistant";
   content: string;
+  tools?: ToolEvent[];
   timestamp: number;
 }
 
 const SUGGESTIONS = [
-  "How do I detect people in my video?",
-  "Create a workflow that detects objects and counts them",
-  "What augmentation settings should I use for small objects?",
-  "Explain the difference between segmentation and detection",
-  "Help me improve my model's accuracy",
+  "What models are trained in this workspace?",
+  "Recommend training settings for a 200-frame dataset",
+  "Start a labeling job for 'person' on my latest video",
+  "Activate the model with the best mAP",
+  "Am I running on GPU or CPU right now?",
 ];
 
-/** Strip <think>...</think> blocks from qwen model output */
-function stripThinking(text: string): string {
-  return text.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+interface AgentModel {
+  name: string;
+  size: number;
+  backend: string;
 }
 
 export default function AgentPage() {
@@ -30,115 +50,113 @@ export default function AgentPage() {
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [streamText, setStreamText] = useState("");
-  const [ollamaModels, setOllamaModels] = useState<string[]>([]);
+  const [streamTools, setStreamTools] = useState<ToolEvent[]>([]);
+  const [models, setModels] = useState<AgentModel[]>([]);
   const [selectedModel, setSelectedModel] = useState("");
+  const [allowActions, setAllowActions] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
-  // Fetch available Ollama models
+  // Fetch available local models on mount.
   useEffect(() => {
-    fetch("/api/v1/agent/models")
-      .then((r) => r.json())
+    fetch("/api/v1/agent/models", {
+      headers: localStorage.getItem("waldo_token")
+        ? { Authorization: `Bearer ${localStorage.getItem("waldo_token")}` }
+        : {},
+    })
+      .then((r) => (r.ok ? r.json() : { models: [], default: "" }))
       .then((d) => {
-        const names = (d.models || []).map((m: any) => m.name);
-        setOllamaModels(names);
-        if (names.length > 0 && !selectedModel) setSelectedModel(names[0]);
+        setModels(d.models || []);
+        setSelectedModel(d.default || (d.models || [])[0]?.name || "");
       })
       .catch(() => {});
-  }, []); // eslint-disable-line
+  }, []);
 
-  const scrollToBottom = () => {
+  useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
+  }, [messages, streamText, streamTools]);
 
-  useEffect(scrollToBottom, [messages, streamText]);
+  const sendMessage = useCallback(
+    async (text: string) => {
+      if (!text.trim() || streaming) return;
 
-  const sendMessage = useCallback(async (text: string) => {
-    if (!text.trim() || streaming) return;
-
-    const userMsg: Message = { role: "user", content: text.trim(), timestamp: Date.now() };
-    setMessages((prev) => [...prev, userMsg]);
-    setInput("");
-    setStreaming(true);
-    setStreamText("");
-
-    try {
-      // Build conversation history for context
-      const history = [...messages, userMsg].slice(-10).map((m) => ({
-        role: m.role,
-        content: m.content,
-      }));
-
-      // Use backend proxy to avoid CORS issues with Ollama
-      const res = await fetch("/api/v1/agent/chat", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(localStorage.getItem("waldo_token") ? { Authorization: `Bearer ${localStorage.getItem("waldo_token")}` } : {}),
-        },
-        body: JSON.stringify({
-          model: selectedModel || undefined,
-          messages: [
-            {
-              role: "system",
-              content: `You are Waldo, an AI assistant for a computer vision platform. You help users with:
-- Object detection and segmentation using YOLO and SAM3 models
-- Configuring training hyperparameters and augmentation strategies
-- Building visual ML workflows (detection → crop → classify pipelines)
-- Understanding model metrics (mAP, precision, recall)
-- Debugging training issues and improving model accuracy
-- Deploying models to production
-
-Be concise and practical. When suggesting training configs, give specific numbers.
-When asked about workflows, describe the block chain (e.g., ImageInput → Detection → Filter → Output).
-Format your responses with markdown for readability.`,
-            },
-            ...history,
-          ],
-        }),
-      });
-
-      const reader = res.body?.getReader();
-      if (!reader) throw new Error("No response stream");
-
-      let fullText = "";
-      const decoder = new TextDecoder();
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        const chunk = decoder.decode(value);
-        const lines = chunk.split("\n").filter(Boolean);
-
-        for (const line of lines) {
-          try {
-            const json = JSON.parse(line);
-            if (json.message?.content) {
-              fullText += json.message.content;
-              setStreamText(fullText);
-            }
-          } catch {
-            // Skip malformed JSON
-          }
-        }
-      }
-
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: stripThinking(fullText), timestamp: Date.now() },
-      ]);
+      const userMsg: Message = { role: "user", content: text.trim(), timestamp: Date.now() };
+      setMessages((prev) => [...prev, userMsg]);
+      setInput("");
+      setStreaming(true);
       setStreamText("");
-    } catch (e: any) {
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: `Sorry, I couldn't connect to the AI model. Make sure Ollama is running.\n\nError: ${e.message}`, timestamp: Date.now() },
-      ]);
-    } finally {
-      setStreaming(false);
-      inputRef.current?.focus();
-    }
-  }, [messages, streaming]);
+      setStreamTools([]);
+      setError(null);
+
+      const wireMessages: ChatMessageWire[] = [
+        ...messages,
+        userMsg,
+      ]
+        .slice(-10)
+        .map((m) => ({ role: m.role, content: m.content }));
+
+      const controller = new AbortController();
+      abortRef.current = controller;
+
+      let acc = "";
+      const tools: ToolEvent[] = [];
+
+      try {
+        await streamAgent({
+          messages: wireMessages,
+          model: selectedModel || undefined,
+          allowActions,
+          signal: controller.signal,
+          onEvent: (event: AgentEvent) => {
+            if (event.type === "token") {
+              acc += event.content;
+              setStreamText(acc);
+            } else if (event.type === "tool_call") {
+              tools.push({ name: event.name, args: event.args });
+              setStreamTools([...tools]);
+            } else if (event.type === "tool_result") {
+              const last = [...tools].reverse().find((t) => t.name === event.name && !t.result);
+              if (last) last.result = event.content;
+              else tools.push({ name: event.name, result: event.content });
+              setStreamTools([...tools]);
+            } else if (event.type === "error") {
+              throw new Error(event.message);
+            }
+          },
+        });
+
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            content: acc || "(no response)",
+            tools: tools.length ? tools : undefined,
+            timestamp: Date.now(),
+          },
+        ]);
+        setStreamText("");
+        setStreamTools([]);
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setError(msg);
+        if (acc) {
+          setMessages((prev) => [
+            ...prev,
+            { role: "assistant", content: acc, tools: tools.length ? tools : undefined, timestamp: Date.now() },
+          ]);
+        }
+        setStreamText("");
+        setStreamTools([]);
+      } finally {
+        setStreaming(false);
+        abortRef.current = null;
+        inputRef.current?.focus();
+      }
+    },
+    [messages, streaming, selectedModel, allowActions],
+  );
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -149,10 +167,8 @@ Format your responses with markdown for readability.`,
 
   return (
     <div className="h-screen flex flex-col" style={{ backgroundColor: "var(--bg-page)" }}>
-      {/* Messages area */}
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-2xl mx-auto px-4 py-6">
-          {/* Welcome state */}
           {messages.length === 0 && (
             <div className="text-center pt-16 pb-8">
               <div
@@ -165,10 +181,9 @@ Format your responses with markdown for readability.`,
                 Waldo AI Assistant
               </h1>
               <p className="text-sm mb-8" style={{ color: "var(--text-secondary)" }}>
-                Ask me anything about computer vision, model training, or building workflows.
+                Ask me about your data, get training recommendations, or have me run jobs for you.
               </p>
 
-              {/* Suggestion chips */}
               <div className="flex flex-wrap gap-2 justify-center max-w-lg mx-auto">
                 {SUGGESTIONS.map((s) => (
                   <button
@@ -184,63 +199,50 @@ Format your responses with markdown for readability.`,
             </div>
           )}
 
-          {/* Message list */}
           {messages.map((msg, i) => (
-            <div key={i} className={`flex gap-3 mb-4 ${msg.role === "user" ? "justify-end" : ""}`}>
-              {msg.role === "assistant" && (
-                <div
-                  className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-1"
-                  style={{ backgroundColor: "var(--accent-soft)" }}
-                >
-                  <Bot size={16} style={{ color: "var(--accent)" }} />
-                </div>
-              )}
-              <div
-                className="rounded-2xl px-4 py-3 max-w-[80%] text-sm leading-relaxed"
-                style={{
-                  backgroundColor: msg.role === "user" ? "var(--accent)" : "var(--bg-surface)",
-                  color: msg.role === "user" ? "white" : "var(--text-primary)",
-                  border: msg.role === "assistant" ? "1px solid var(--border-subtle)" : "none",
-                }}
-              >
-                {msg.role === "assistant" ? (
-                  <div className="markdown-body"><Markdown>{msg.content}</Markdown></div>
-                ) : (
-                  <div>{msg.content}</div>
-                )}
-              </div>
-              {msg.role === "user" && (
-                <div
-                  className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-1"
-                  style={{ backgroundColor: "var(--bg-inset)" }}
-                >
-                  <User size={16} style={{ color: "var(--text-secondary)" }} />
-                </div>
-              )}
-            </div>
+            <MessageBubble key={i} message={msg} />
           ))}
 
-          {/* Streaming indicator */}
           {streaming && (
             <div className="flex gap-3 mb-4">
-              <div
-                className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-1"
-                style={{ backgroundColor: "var(--accent-soft)" }}
-              >
-                <Bot size={16} style={{ color: "var(--accent)" }} />
+              <Avatar role="assistant" />
+              <div className="space-y-2 max-w-[80%]">
+                {streamTools.map((t, idx) => (
+                  <ToolPill key={idx} tool={t} />
+                ))}
+                <div
+                  className="rounded-2xl px-4 py-3 text-sm leading-relaxed"
+                  style={{
+                    backgroundColor: "var(--bg-surface)",
+                    border: "1px solid var(--border-subtle)",
+                    color: "var(--text-primary)",
+                  }}
+                >
+                  {streamText ? (
+                    <div className="markdown-body">
+                      <Markdown>{streamText}</Markdown>
+                      <span className="animate-pulse">|</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2" style={{ color: "var(--text-muted)" }}>
+                      <Loader2 size={14} className="animate-spin" />
+                      Thinking…
+                    </div>
+                  )}
+                </div>
               </div>
-              <div
-                className="rounded-2xl px-4 py-3 max-w-[80%] text-sm leading-relaxed"
-                style={{ backgroundColor: "var(--bg-surface)", border: "1px solid var(--border-subtle)", color: "var(--text-primary)" }}
-              >
-                {streamText ? (
-                  <div className="markdown-body"><Markdown>{stripThinking(streamText)}</Markdown><span className="animate-pulse">|</span></div>
-                ) : (
-                  <div className="flex items-center gap-2" style={{ color: "var(--text-muted)" }}>
-                    <Loader2 size={14} className="animate-spin" />
-                    Thinking...
-                  </div>
-                )}
+            </div>
+          )}
+
+          {error && (
+            <div
+              className="flex items-start gap-2 mb-4 px-3 py-2 rounded-lg text-sm"
+              style={{ backgroundColor: "rgba(220, 38, 38, 0.08)", color: "var(--text-primary)" }}
+            >
+              <AlertTriangle size={16} style={{ color: "rgb(220, 38, 38)", marginTop: 2 }} />
+              <div>
+                <div style={{ fontWeight: 600 }}>Agent error</div>
+                <div style={{ color: "var(--text-secondary)" }}>{error}</div>
               </div>
             </div>
           )}
@@ -249,7 +251,6 @@ Format your responses with markdown for readability.`,
         </div>
       </div>
 
-      {/* Input area */}
       <div style={{ borderTop: "1px solid var(--border-subtle)", backgroundColor: "var(--bg-surface)" }}>
         <div className="max-w-2xl mx-auto px-4 py-3">
           <div className="flex items-end gap-2">
@@ -258,7 +259,7 @@ Format your responses with markdown for readability.`,
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Ask about computer vision, training, or workflows..."
+              placeholder="Ask about your projects, models, or just have me run jobs…"
               rows={1}
               className="flex-1 resize-none px-4 py-2.5 rounded-xl border text-sm"
               style={{
@@ -282,23 +283,140 @@ Format your responses with markdown for readability.`,
             </button>
           </div>
           <div className="flex items-center justify-between mt-2">
-            <div className="flex items-center gap-2">
-              {ollamaModels.length > 0 && (
+            <div className="flex items-center gap-3">
+              {models.length > 0 && (
                 <select
                   value={selectedModel}
                   onChange={(e) => setSelectedModel(e.target.value)}
                   className="text-[10px] px-2 py-1 rounded border"
-                  style={{ borderColor: "var(--border-default)", backgroundColor: "var(--bg-inset)", color: "var(--text-secondary)" }}
+                  style={{
+                    borderColor: "var(--border-default)",
+                    backgroundColor: "var(--bg-inset)",
+                    color: "var(--text-secondary)",
+                  }}
                 >
-                  {ollamaModels.map((m) => <option key={m} value={m}>{m}</option>)}
+                  {models.map((m) => (
+                    <option key={m.name} value={m.name}>
+                      {m.name}
+                    </option>
+                  ))}
                 </select>
               )}
+              <label
+                className="text-[10px] flex items-center gap-1.5 cursor-pointer"
+                style={{ color: allowActions ? "var(--text-secondary)" : "rgb(220, 38, 38)" }}
+              >
+                <input
+                  type="checkbox"
+                  checked={!allowActions}
+                  onChange={(e) => setAllowActions(!e.target.checked)}
+                />
+                <ShieldAlert size={10} />
+                Read-only
+              </label>
             </div>
             <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>
-              Local Ollama &middot; Data stays on your machine
+              Local Ollama · Data stays on your machine
             </p>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function Avatar({ role }: { role: "user" | "assistant" }) {
+  if (role === "user") {
+    return (
+      <div
+        className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-1"
+        style={{ backgroundColor: "var(--bg-inset)" }}
+      >
+        <User size={16} style={{ color: "var(--text-secondary)" }} />
+      </div>
+    );
+  }
+  return (
+    <div
+      className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-1"
+      style={{ backgroundColor: "var(--accent-soft)" }}
+    >
+      <Bot size={16} style={{ color: "var(--accent)" }} />
+    </div>
+  );
+}
+
+function MessageBubble({ message: msg }: { message: Message }) {
+  return (
+    <div className={`flex gap-3 mb-4 ${msg.role === "user" ? "justify-end" : ""}`}>
+      {msg.role === "assistant" && <Avatar role="assistant" />}
+      <div className="space-y-2 max-w-[80%]">
+        {msg.tools?.map((t, idx) => <ToolPill key={idx} tool={t} />)}
+        <div
+          className="rounded-2xl px-4 py-3 text-sm leading-relaxed"
+          style={{
+            backgroundColor: msg.role === "user" ? "var(--accent)" : "var(--bg-surface)",
+            color: msg.role === "user" ? "white" : "var(--text-primary)",
+            border: msg.role === "assistant" ? "1px solid var(--border-subtle)" : "none",
+          }}
+        >
+          {msg.role === "assistant" ? (
+            <div className="markdown-body">
+              <Markdown>{msg.content}</Markdown>
+            </div>
+          ) : (
+            <div>{msg.content}</div>
+          )}
+        </div>
+      </div>
+      {msg.role === "user" && <Avatar role="user" />}
+    </div>
+  );
+}
+
+function ToolPill({ tool }: { tool: ToolEvent }) {
+  const done = tool.result !== undefined;
+  return (
+    <div
+      className="rounded-lg px-3 py-2 text-xs flex items-start gap-2"
+      style={{
+        backgroundColor: "var(--bg-inset)",
+        border: "1px solid var(--border-subtle)",
+        color: "var(--text-secondary)",
+      }}
+    >
+      {done ? (
+        <CheckCircle2 size={12} style={{ color: "rgb(34, 197, 94)", marginTop: 2 }} />
+      ) : (
+        <Wrench size={12} style={{ color: "var(--accent)", marginTop: 2 }} />
+      )}
+      <div className="flex-1 min-w-0">
+        <div style={{ fontFamily: "var(--font-mono)", color: "var(--text-primary)" }}>
+          {tool.name}
+          {tool.args && Object.keys(tool.args).length > 0 ? (
+            <span style={{ color: "var(--text-muted)" }}>
+              ({Object.entries(tool.args)
+                .map(([k, v]) => `${k}=${typeof v === "string" ? `"${v}"` : JSON.stringify(v)}`)
+                .join(", ")})
+            </span>
+          ) : null}
+        </div>
+        {tool.result && (
+          <details className="mt-1">
+            <summary
+              className="cursor-pointer"
+              style={{ color: "var(--text-muted)", fontSize: 10 }}
+            >
+              result
+            </summary>
+            <pre
+              className="mt-1 text-[10px] overflow-x-auto"
+              style={{ color: "var(--text-muted)", whiteSpace: "pre-wrap" }}
+            >
+              {tool.result}
+            </pre>
+          </details>
+        )}
       </div>
     </div>
   );

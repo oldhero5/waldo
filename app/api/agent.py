@@ -1,157 +1,184 @@
-"""AI Agent API — Gemma4 via mlx-vlm (native Apple Silicon) with Ollama fallback."""
+"""HTTP surface for the Waldo agent.
 
-import asyncio
+Endpoints:
+
+    GET  /api/v1/agent/health   — backend reachable + model present?
+    GET  /api/v1/agent/models   — list models the local Ollama can serve
+    POST /api/v1/agent/chat     — send messages, get a JSON response
+    POST /api/v1/agent/stream   — same input, Server-Sent Events stream
+
+Auth: every endpoint requires a signed-in user. The agent runs inside an
+:class:`~lib.agent.tools.AgentContext` derived from that user, so tool calls
+are pinned to their workspace.
+"""
+
+from __future__ import annotations
+
 import json
+import logging
+from typing import Any
 
 import httpx
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 
+from lib.agent import AgentContext, run_agent, stream_agent
 from lib.auth import get_current_user
 from lib.config import settings
+from lib.db import SessionLocal, User, WorkspaceMember
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
-@router.post("/agent/chat")
-async def agent_chat(request: Request):
-    """Chat with the Waldo AI agent.
-
-    Uses Gemma4 via mlx-vlm by default (native Apple Silicon).
-    Falls back to Ollama if mlx-vlm is unavailable.
-    Set use_tools=true for tool-augmented responses.
-    """
-    body = await request.json()
-    messages = body.get("messages", [])
-    use_tools = body.get("use_tools", True)
-    backend = body.get("backend", "mlx")  # "mlx" or "ollama"
-
-    if backend == "mlx":
-
-        def _run():
-            from lib.agent.mlx_agent import generate_response
-
-            return generate_response(messages)
-
-        try:
-            response_text = await asyncio.to_thread(_run)
-            result = json.dumps({"message": {"role": "assistant", "content": response_text}, "done": True})
-            return StreamingResponse(iter([result + "\n"]), media_type="application/x-ndjson")
-        except Exception as e:
-            # Fall back to Ollama if mlx-vlm fails
-            error = json.dumps({"message": {"role": "assistant", "content": f"MLX agent error: {e}"}, "done": True})
-            return StreamingResponse(iter([error + "\n"]), media_type="application/x-ndjson")
-
-    elif use_tools:
-        # LangGraph agent with Ollama
-        def _run():
-            from lib.agent.graph import run_agent
-
-            model = body.get("model", settings.ollama_model)
-            return run_agent(messages, model_name=model)
-
-        try:
-            response_text = await asyncio.to_thread(_run)
-            result = json.dumps({"message": {"role": "assistant", "content": response_text}, "done": True})
-            return StreamingResponse(iter([result + "\n"]), media_type="application/x-ndjson")
-        except Exception as e:
-            error = json.dumps({"message": {"role": "assistant", "content": f"Agent error: {e}"}, "done": True})
-            return StreamingResponse(iter([error + "\n"]), media_type="application/x-ndjson")
-    else:
-        # Direct Ollama streaming
-        model = body.get("model", settings.ollama_model)
-
-        async def stream():
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                async with client.stream(
-                    "POST",
-                    f"{settings.ollama_url}/api/chat",
-                    json={"model": model, "messages": messages, "stream": True},
-                ) as response:
-                    async for line in response.aiter_lines():
-                        if line:
-                            yield line + "\n"
-
-        return StreamingResponse(stream(), media_type="application/x-ndjson")
+# ── Request/response shapes ─────────────────────────────────────────
+class ChatMessage(BaseModel):
+    role: str = Field(..., description="user | assistant | system | tool")
+    content: str
+    tool_call_id: str | None = None
 
 
-@router.post("/agent/insights")
-async def agent_insights(request: Request):
-    """Generate contextual greeting + suggestions from workspace state. Non-blocking."""
-    body = await request.json()
+class ChatRequest(BaseModel):
+    messages: list[ChatMessage] = Field(default_factory=list)
+    model: str | None = Field(
+        default=None,
+        description="Override the configured agent model (must be available locally).",
+    )
+    allow_actions: bool = Field(
+        default=True,
+        description="When false, only read tools are bound — agent cannot start jobs.",
+    )
 
-    prompt = f"""You are Waldo, an AI assistant for a computer vision platform.
-Given the user's workspace state below, respond with ONLY valid JSON (no markdown, no backticks):
-{{"greeting": "A short witty one-liner greeting (max 15 words, CV/ML themed, nerdy but warm)",
-"suggestions": ["actionable suggestion 1", "actionable suggestion 2", "actionable suggestion 3"]}}
 
-Workspace state:
-- Videos uploaded: {body.get("videos", 0)}
-- Annotations created: {body.get("annotations", 0)}
-- Datasets completed: {body.get("datasets", 0)}
-- Models trained: {body.get("models", 0)}
-- Best mAP50: {body.get("best_map", "—")}
-- Active training: {body.get("training", False)}
-- Model deployed: {body.get("deployed", False)}
+class ChatResponse(BaseModel):
+    content: str
+    tool_calls: list[dict[str, Any]] = Field(default_factory=list)
+    model: str
 
-Rules for suggestions:
-- Be specific to their state (don't suggest uploading if they have 1000+ annotations)
-- Focus on the next highest-impact action
-- Keep each suggestion under 12 words
-- If they have a deployed model with good mAP, suggest monitoring or A/B testing
-- If mAP is below 70%, suggest data improvements
 
-Rules for greeting:
-- Reference something specific about their state
-- Be witty and concise, like a senior ML engineer would say
-- No emojis"""
-
-    def _run():
-        try:
-            from mlx_vlm import generate
-            from mlx_vlm.prompt_utils import apply_chat_template
-
-            from lib.agent.mlx_agent import _get_model
-
-            model, processor = _get_model()
-            formatted = apply_chat_template(processor, model.config, prompt)
-            result = generate(model=model, processor=processor, prompt=formatted, max_tokens=200, temperature=0.8)
-            text = result.text.strip()
-            if "{" in text and "}" in text:
-                json_str = text[text.index("{") : text.rindex("}") + 1]
-                return json.loads(json_str)
-        except Exception:
-            import traceback
-
-            traceback.print_exc()
-        return None
-
+# ── Helpers ────────────────────────────────────────────────────────
+def _resolve_workspace_id(user: User) -> str | None:
+    """Return the user's primary workspace id, if any."""
+    session = SessionLocal()
     try:
-        # Run with a timeout to prevent hanging
-        result = await asyncio.wait_for(asyncio.to_thread(_run), timeout=30.0)
-        if result and "greeting" in result:
-            return result
-    except (TimeoutError, Exception):
-        pass
-
-    return {"greeting": None, "suggestions": []}
+        member = session.query(WorkspaceMember).filter_by(user_id=user.id).first()
+        return str(member.workspace_id) if member else None
+    finally:
+        session.close()
 
 
-@router.get("/agent/models")
-async def list_agent_models():
-    """List available models (mlx-vlm + Ollama)."""
-    models = [
-        {"name": settings.agent_model_id, "backend": "mlx", "size": 0},
-    ]
+def _ctx_for(user: User, *, allow_actions: bool) -> AgentContext:
+    return AgentContext(
+        user_id=str(user.id),
+        workspace_id=_resolve_workspace_id(user),
+        allow_actions=allow_actions,
+    )
 
-    # Also list Ollama models if available
+
+def _msg_dicts(req: ChatRequest) -> list[dict]:
+    return [m.model_dump(exclude_none=True) for m in req.messages]
+
+
+# ── Endpoints ──────────────────────────────────────────────────────
+@router.get("/agent/health")
+async def agent_health() -> dict:
+    """Quick reachability check — proves Ollama is up and the model is present."""
+    out: dict[str, Any] = {"ollama_url": settings.ollama_url, "model": settings.agent_model}
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             r = await client.get(f"{settings.ollama_url}/api/tags")
+            r.raise_for_status()
             data = r.json()
-            for m in data.get("models", []):
-                models.append({"name": m["name"], "backend": "ollama", "size": m.get("size", 0)})
-    except Exception:
-        pass
+            tags = [m.get("name") for m in data.get("models", [])]
+            out["ok"] = True
+            out["model_present"] = settings.agent_model in tags
+            out["available_models"] = tags
+    except Exception as e:  # noqa: BLE001
+        out["ok"] = False
+        out["error"] = str(e)
+    return out
 
-    return {"models": models}
+
+@router.get("/agent/models")
+async def agent_models() -> dict:
+    """List models the local Ollama can serve."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(f"{settings.ollama_url}/api/tags")
+            r.raise_for_status()
+            data = r.json()
+            return {
+                "default": settings.agent_model,
+                "models": [
+                    {"name": m["name"], "size": m.get("size", 0), "backend": "ollama"} for m in data.get("models", [])
+                ],
+            }
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail=f"Ollama unreachable: {e}") from e
+
+
+@router.post("/agent/chat", response_model=ChatResponse)
+async def agent_chat(req: ChatRequest, user: User = Depends(get_current_user)) -> ChatResponse:
+    """Run the agent and return the final answer + tool-call summary.
+
+    Use ``/agent/stream`` for a token-by-token SSE feed.
+    """
+    if not req.messages:
+        raise HTTPException(status_code=400, detail="messages must be non-empty")
+
+    ctx = _ctx_for(user, allow_actions=req.allow_actions)
+
+    # The agent's invoke call is sync (langchain's blocking path) — push it
+    # off the event loop so we don't block the worker thread.
+    import asyncio  # noqa: PLC0415
+
+    def _run() -> dict:
+        return run_agent(_msg_dicts(req), context=ctx, model=req.model)
+
+    try:
+        result = await asyncio.to_thread(_run)
+    except Exception as e:  # noqa: BLE001
+        logger.exception("agent_chat failed")
+        raise HTTPException(status_code=500, detail=f"agent error: {e}") from e
+
+    return ChatResponse(
+        content=result["content"],
+        tool_calls=result["tool_calls"],
+        model=req.model or settings.agent_model,
+    )
+
+
+@router.post("/agent/stream")
+async def agent_stream(req: ChatRequest, user: User = Depends(get_current_user)) -> StreamingResponse:
+    """Stream agent output as Server-Sent Events.
+
+    Each SSE message is JSON:
+        {"type": "token",       "content": "..."}
+        {"type": "tool_call",   "name": "list_models", "args": {...}}
+        {"type": "tool_result", "name": "list_models", "content": "..."}
+        {"type": "done"}
+        {"type": "error",       "message": "..."}
+    """
+    if not req.messages:
+        raise HTTPException(status_code=400, detail="messages must be non-empty")
+
+    ctx = _ctx_for(user, allow_actions=req.allow_actions)
+
+    async def event_source():
+        try:
+            async for event in stream_agent(_msg_dicts(req), context=ctx, model=req.model):
+                yield f"data: {json.dumps(event)}\n\n"
+        except Exception as e:  # noqa: BLE001
+            logger.exception("agent_stream failed mid-stream")
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+
+    return StreamingResponse(
+        event_source(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # disable buffering on nginx-style proxies
+        },
+    )

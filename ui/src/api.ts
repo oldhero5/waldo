@@ -716,23 +716,9 @@ export async function getServeStatus(): Promise<ServeStatus> {
 
 // AI Agent Insights
 
-export interface AgentInsights {
-  greeting: string | null;
-  suggestions: string[];
-}
-
-export async function getAgentInsights(state: {
-  videos: number; annotations: number; datasets: number;
-  models: number; best_map: string; training: boolean; deployed: boolean;
-}): Promise<AgentInsights> {
-  const res = await authFetch(`${BASE}/agent/insights`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(state),
-  });
-  if (!res.ok) return { greeting: null, suggestions: [] };
-  return res.json();
-}
+// Agent — the chat surface lives on /agent/chat (POST) and /agent/stream
+// (POST → SSE). See AgentPage.tsx and AgentPanel.tsx; no helper here on
+// purpose, the streaming reader needs raw fetch().
 
 // Feedback
 

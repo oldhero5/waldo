@@ -1,15 +1,23 @@
 /**
- * Floating AI Agent panel — accessible from every page.
- * Click the fab button to open a compact chat interface.
+ * Floating AI Agent panel — accessible from every page. Compact chat that
+ * uses the same /api/v1/agent/stream backend as the full-page agent, but
+ * defaults to read-only so a stray "yes" doesn't kick off a training run.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
-import { Sparkles, X, Send, Loader2, Bot, User } from "lucide-react";
+import { Sparkles, X, Send, Loader2, Bot, User, Wrench } from "lucide-react";
 
-interface Message { role: "user" | "assistant"; content: string; }
+import { streamAgent, type AgentEvent, type ChatMessageWire } from "../lib/agentStream";
 
-function stripThinking(text: string): string {
-  return text.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+interface ToolEvent {
+  name: string;
+  result?: string;
+}
+
+interface Message {
+  role: "user" | "assistant";
+  content: string;
+  tools?: ToolEvent[];
 }
 
 export default function AgentPanel({ context }: { context?: string }) {
@@ -18,56 +26,72 @@ export default function AgentPanel({ context }: { context?: string }) {
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [streamText, setStreamText] = useState("");
+  const [streamTools, setStreamTools] = useState<ToolEvent[]>([]);
   const endRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, streamText]);
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, streamText, streamTools]);
 
-  const send = useCallback(async (text: string) => {
-    if (!text.trim() || streaming) return;
-    const userMsg: Message = { role: "user", content: text.trim() };
-    setMessages((prev) => [...prev, userMsg]);
-    setInput("");
-    setStreaming(true);
-    setStreamText("");
-
-    try {
-      const history = [...messages, userMsg].slice(-8).map((m) => ({ role: m.role, content: m.content }));
-      const contextNote = context ? `\nThe user is currently on the ${context} page.` : "";
-
-      const res = await fetch("/api/v1/agent/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          use_tools: false, // Fast mode for panel
-          messages: [
-            { role: "system", content: `You are Waldo, a concise AI assistant for a computer vision platform. Be brief — this is a sidebar chat, not a full conversation. Answer in 2-3 sentences when possible.${contextNote}` },
-            ...history,
-          ],
-        }),
-      });
-
-      const reader = res.body?.getReader();
-      if (!reader) throw new Error("No stream");
-      let fullText = "";
-      const decoder = new TextDecoder();
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        for (const line of decoder.decode(value).split("\n").filter(Boolean)) {
-          try {
-            const json = JSON.parse(line);
-            if (json.message?.content) { fullText += json.message.content; setStreamText(fullText); }
-          } catch { /* skip */ }
-        }
-      }
-      setMessages((prev) => [...prev, { role: "assistant", content: stripThinking(fullText) }]);
+  const send = useCallback(
+    async (text: string) => {
+      if (!text.trim() || streaming) return;
+      const userMsg: Message = { role: "user", content: text.trim() };
+      setMessages((prev) => [...prev, userMsg]);
+      setInput("");
+      setStreaming(true);
       setStreamText("");
-    } catch (e: any) {
-      setMessages((prev) => [...prev, { role: "assistant", content: `Error: ${e.message}` }]);
-    } finally {
-      setStreaming(false);
-    }
-  }, [messages, streaming, context]);
+      setStreamTools([]);
+
+      const wire: ChatMessageWire[] = [
+        {
+          role: "system",
+          content: `You're answering inside a sidebar — keep replies under 3 sentences unless asked for detail.${
+            context ? ` The user is on the ${context} page.` : ""
+          }`,
+        },
+        ...[...messages, userMsg].slice(-8).map((m) => ({ role: m.role, content: m.content })),
+      ];
+
+      let acc = "";
+      const tools: ToolEvent[] = [];
+
+      try {
+        await streamAgent({
+          messages: wire,
+          // Sidebar = read-only by default. Use the full /agent page to take actions.
+          allowActions: false,
+          onEvent: (event: AgentEvent) => {
+            if (event.type === "token") {
+              acc += event.content;
+              setStreamText(acc);
+            } else if (event.type === "tool_call") {
+              tools.push({ name: event.name });
+              setStreamTools([...tools]);
+            } else if (event.type === "tool_result") {
+              const last = [...tools].reverse().find((t) => t.name === event.name && !t.result);
+              if (last) last.result = event.content;
+              setStreamTools([...tools]);
+            } else if (event.type === "error") {
+              throw new Error(event.message);
+            }
+          },
+        });
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", content: acc || "(no response)", tools: tools.length ? tools : undefined },
+        ]);
+        setStreamText("");
+        setStreamTools([]);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setMessages((prev) => [...prev, { role: "assistant", content: `Error: ${msg}` }]);
+      } finally {
+        setStreaming(false);
+      }
+    },
+    [messages, streaming, context],
+  );
 
   if (!open) {
     return (
@@ -103,7 +127,6 @@ export default function AgentPanel({ context }: { context?: string }) {
         overflow: "hidden",
       }}
     >
-      {/* Header */}
       <div style={{
         padding: "12px 16px",
         display: "flex", alignItems: "center", justifyContent: "space-between",
@@ -112,7 +135,7 @@ export default function AgentPanel({ context }: { context?: string }) {
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <Sparkles size={16} style={{ color: "var(--accent)" }} />
           <span style={{ fontFamily: "var(--font-serif)", fontWeight: 600, fontSize: 14, color: "var(--text-primary)" }}>
-            Waldo AI
+            Waldo AI · read-only
           </span>
         </div>
         <button onClick={() => setOpen(false)} style={{ color: "var(--text-muted)", background: "none", border: "none" }}>
@@ -120,11 +143,10 @@ export default function AgentPanel({ context }: { context?: string }) {
         </button>
       </div>
 
-      {/* Messages */}
       <div style={{ flex: 1, overflowY: "auto", padding: "12px 16px" }}>
         {messages.length === 0 && (
           <p style={{ fontSize: 12, color: "var(--text-muted)", textAlign: "center", marginTop: 40 }}>
-            Ask me anything about your projects, models, or workflows.
+            Ask about your projects, models, or workflows. To start a labeling or training job, open the full <a href="/agent" style={{ color: "var(--accent)" }}>Agent page</a>.
           </p>
         )}
         {messages.map((m, i) => (
@@ -134,44 +156,72 @@ export default function AgentPanel({ context }: { context?: string }) {
               display: "flex", alignItems: "center", justifyContent: "center",
               backgroundColor: m.role === "user" ? "var(--bg-inset)" : "var(--accent-soft)",
             }}>
-              {m.role === "user" ? <User size={12} style={{ color: "var(--text-secondary)" }} /> : <Bot size={12} style={{ color: "var(--accent)" }} />}
+              {m.role === "user"
+                ? <User size={12} style={{ color: "var(--text-secondary)" }} />
+                : <Bot size={12} style={{ color: "var(--accent)" }} />}
             </div>
-            <div style={{
-              padding: "8px 12px", borderRadius: 14, maxWidth: "80%", fontSize: 13, lineHeight: 1.5,
-              backgroundColor: m.role === "user" ? "var(--accent)" : "var(--bg-inset)",
-              color: m.role === "user" ? "white" : "var(--text-primary)",
-            }}>
-              {m.role === "assistant" ? <div className="markdown-body" style={{ fontSize: 12 }}><Markdown>{m.content}</Markdown></div> : m.content}
+            <div style={{ maxWidth: "80%", display: "flex", flexDirection: "column", gap: 6 }}>
+              {m.tools?.map((t, idx) => (
+                <div key={idx} style={{
+                  fontSize: 10, fontFamily: "var(--font-mono)",
+                  padding: "4px 8px", borderRadius: 8,
+                  backgroundColor: "var(--bg-inset)", color: "var(--text-secondary)",
+                  display: "flex", alignItems: "center", gap: 4,
+                }}>
+                  <Wrench size={10} /> {t.name}{t.result ? " ✓" : ""}
+                </div>
+              ))}
+              <div style={{
+                padding: "8px 12px", borderRadius: 14, fontSize: 13, lineHeight: 1.5,
+                backgroundColor: m.role === "user" ? "var(--accent)" : "var(--bg-inset)",
+                color: m.role === "user" ? "white" : "var(--text-primary)",
+              }}>
+                {m.role === "assistant"
+                  ? <div className="markdown-body" style={{ fontSize: 12 }}><Markdown>{m.content}</Markdown></div>
+                  : m.content}
+              </div>
             </div>
           </div>
         ))}
-        {streaming && streamText && (
+        {streaming && (
           <div style={{ marginBottom: 10, display: "flex", gap: 8 }}>
             <div style={{ width: 24, height: 24, borderRadius: 8, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", backgroundColor: "var(--accent-soft)" }}>
               <Bot size={12} style={{ color: "var(--accent)" }} />
             </div>
-            <div style={{ padding: "8px 12px", borderRadius: 14, maxWidth: "80%", fontSize: 12, lineHeight: 1.5, backgroundColor: "var(--bg-inset)", color: "var(--text-primary)" }}>
-              <div className="markdown-body" style={{ fontSize: 12 }}><Markdown>{stripThinking(streamText)}</Markdown></div>
-              <span className="animate-pulse">|</span>
+            <div style={{ maxWidth: "80%", display: "flex", flexDirection: "column", gap: 6 }}>
+              {streamTools.map((t, idx) => (
+                <div key={idx} style={{
+                  fontSize: 10, fontFamily: "var(--font-mono)",
+                  padding: "4px 8px", borderRadius: 8,
+                  backgroundColor: "var(--bg-inset)", color: "var(--text-secondary)",
+                  display: "flex", alignItems: "center", gap: 4,
+                }}>
+                  <Wrench size={10} /> {t.name}{t.result ? " ✓" : "…"}
+                </div>
+              ))}
+              {streamText ? (
+                <div style={{ padding: "8px 12px", borderRadius: 14, fontSize: 12, lineHeight: 1.5, backgroundColor: "var(--bg-inset)", color: "var(--text-primary)" }}>
+                  <div className="markdown-body" style={{ fontSize: 12 }}><Markdown>{streamText}</Markdown></div>
+                  <span className="animate-pulse">|</span>
+                </div>
+              ) : (
+                <div style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--text-muted)", fontSize: 12 }}>
+                  <Loader2 size={12} className="animate-spin" /> Thinking…
+                </div>
+              )}
             </div>
-          </div>
-        )}
-        {streaming && !streamText && (
-          <div style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--text-muted)", fontSize: 12, marginLeft: 32 }}>
-            <Loader2 size={12} className="animate-spin" /> Thinking...
           </div>
         )}
         <div ref={endRef} />
       </div>
 
-      {/* Input */}
       <div style={{ padding: "10px 12px", borderTop: "1px solid var(--border-subtle)" }}>
         <div style={{ display: "flex", gap: 8 }}>
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(input); } }}
-            placeholder="Ask Waldo..."
+            placeholder="Ask Waldo…"
             style={{
               flex: 1, padding: "8px 12px", borderRadius: 12, fontSize: 12,
               border: "1px solid var(--border-default)",

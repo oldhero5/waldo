@@ -2,27 +2,111 @@
 # Install missing system dependencies (Docker, uv, Node, build basics).
 #
 # Each ensure_* function is idempotent: it checks first, installs only if
-# missing, and refuses to act if it can't do the install non-interactively
-# (no sudo, unsupported package manager, etc.) — instead printing a clear
-# manual instruction and returning non-zero.
+# missing, and refuses to act if sudo is genuinely unavailable. When sudo
+# requires a password we warm it up once at the start of the run via
+# _sudo_warmup, so subsequent silent calls succeed.
 
-# Run a command with sudo if not root. If sudo isn't available, run as-is
-# (the caller will see permission errors).
+# Run a command with sudo if not root. Pulls password input from /dev/tty
+# (when available) so the prompt still works under `curl … | bash`, where
+# stdin is the curl pipe. If sudo isn't available, run as-is.
 _sudo() {
     if [ "$(id -u)" -eq 0 ]; then
         "$@"
     elif command -v sudo >/dev/null 2>&1; then
-        sudo "$@"
+        if [ -e /dev/tty ]; then
+            sudo "$@" </dev/tty
+        else
+            sudo "$@"
+        fi
     else
         "$@"
     fi
 }
 
-# True if we can run privileged commands non-interactively.
+# True if sudo is available at all (root counts).
+_have_sudo() {
+    [ "$(id -u)" -eq 0 ] && return 0
+    command -v sudo >/dev/null 2>&1
+}
+
+# True if sudo can run RIGHT NOW without prompting (root, NOPASSWD, or warm
+# credentials cache). Distinct from _have_sudo so we can decide whether to
+# warm up vs. give up.
 _can_sudo_noninteractive() {
     [ "$(id -u)" -eq 0 ] && return 0
     command -v sudo >/dev/null 2>&1 || return 1
     sudo -n true >/dev/null 2>&1
+}
+
+# Warm sudo credentials once at the top of the prereq step, so the user
+# enters their password once and the rest of the run is silent. Reads the
+# password from /dev/tty when available — works under `curl | bash`.
+_sudo_warmup() {
+    [ "$(id -u)" -eq 0 ] && return 0
+    [ "${WALDO_NO_SUDO:-0}" = "1" ] && return 0
+    command -v sudo >/dev/null 2>&1 || return 0
+    _can_sudo_noninteractive && return 0  # already cached / NOPASSWD
+
+    if [ ! -e /dev/tty ]; then
+        log_warn "sudo needs a password but no terminal is available."
+        log_info "Re-run from a terminal (not a curl|bash pipe), or pre-authorize:"
+        log_info "  sudo -v && curl -fsSL https://raw.githubusercontent.com/oldhero5/waldo/main/install.sh | bash"
+        log_info "Or pass --no-sudo to print missing prerequisites and exit."
+        return 1
+    fi
+
+    log_info "sudo password may be required for prerequisite installs."
+    log_info "(You'll be prompted once; future calls in this run reuse the cached credentials.)"
+    if ! sudo -v </dev/tty; then
+        log_warn "sudo warm-up failed."
+        return 1
+    fi
+    log_ok "sudo authorized"
+    return 0
+}
+
+# Print a punch-list of missing prereqs and exit successfully — used when
+# the user passes --no-sudo. The user installs them by hand and re-runs
+# with --skip-prereqs.
+_no_sudo_report() {
+    log_step "Missing prerequisites (--no-sudo mode)"
+    local missing=0
+    for cmd in curl git make docker; do
+        if command -v "$cmd" >/dev/null 2>&1; then
+            log_ok "$cmd"
+        else
+            log_warn "$cmd is missing"
+            missing=$((missing + 1))
+        fi
+    done
+    if command -v uv >/dev/null 2>&1; then
+        log_ok "uv"
+    else
+        log_warn "uv is missing"
+        missing=$((missing + 1))
+    fi
+    if command -v node >/dev/null 2>&1; then
+        log_ok "node ($(node --version 2>/dev/null))"
+    else
+        log_warn "node is missing"
+        missing=$((missing + 1))
+    fi
+
+    if [ "$missing" -eq 0 ]; then
+        log_ok "All prereqs already installed — re-run with --skip-prereqs."
+        return 0
+    fi
+
+    log_info ""
+    log_info "Install the above with your package manager, e.g. on Ubuntu/Debian:"
+    log_info "  sudo apt-get update && sudo apt-get install -y curl git make ca-certificates"
+    log_info "  curl -fsSL https://get.docker.com | sudo sh"
+    log_info "  sudo usermod -aG docker \$USER && newgrp docker"
+    log_info "  curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && sudo apt-get install -y nodejs"
+    log_info "  curl -LsSf https://astral.sh/uv/install.sh | sh"
+    log_info ""
+    log_info "Then re-run this installer with --skip-prereqs."
+    return 0
 }
 
 ensure_curl() {
@@ -83,12 +167,14 @@ ensure_docker() {
 
     # Linux — use Docker's official convenience script if we can sudo.
     if [ "$WALDO_OS" = "linux" ]; then
-        if ! _can_sudo_noninteractive; then
-            log_info "Install Docker Engine (you will be prompted for sudo):"
+        if ! _have_sudo; then
+            log_info "Install Docker Engine manually, then re-run:"
             log_info "  curl -fsSL https://get.docker.com | sh"
             log_info "  sudo usermod -aG docker \$USER && newgrp docker"
-            log_fatal "Cannot install docker without sudo. Install manually, then re-run."
+            log_fatal "No sudo available. Install Docker by hand, then re-run with --skip-prereqs."
         fi
+        # Warm sudo creds once if not cached — keeps every later _sudo silent.
+        _sudo_warmup || log_fatal "Could not authorize sudo. See message above."
         log_info "Installing Docker via get.docker.com (requires sudo)…"
         curl -fsSL https://get.docker.com | _sudo sh 2>&1 | sed 's/^/      /'
         _sudo systemctl enable --now docker 2>/dev/null || true
@@ -142,12 +228,13 @@ ensure_node() {
             fi
             ;;
         linux)
-            if ! _can_sudo_noninteractive; then
+            if ! _have_sudo; then
                 log_info "Install Node.js 20 manually:"
                 log_info "  curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -"
                 log_info "  sudo apt install -y nodejs"
-                log_fatal "Cannot install node without sudo. Install manually, then re-run."
+                log_fatal "No sudo available. Install Node by hand, then re-run with --skip-prereqs."
             fi
+            _sudo_warmup || log_fatal "Could not authorize sudo. See message above."
             case "$WALDO_PKG" in
                 apt)
                     curl -fsSL https://deb.nodesource.com/setup_20.x | _sudo -E bash - 2>&1 | sed 's/^/      /'
@@ -194,11 +281,12 @@ ensure_nvidia_container_toolkit() {
     fi
 
     log_warn "nvidia-container-toolkit missing — installing (required for GPU passthrough)"
-    if ! _can_sudo_noninteractive; then
+    if ! _have_sudo; then
         log_info "Install nvidia-container-toolkit manually, then re-run:"
         log_info "  https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html"
-        log_fatal "Cannot install nvidia-container-toolkit without sudo."
+        log_fatal "No sudo available. Install nvidia-container-toolkit by hand, then re-run with --skip-prereqs."
     fi
+    _sudo_warmup || log_fatal "Could not authorize sudo. See message above."
 
     case "$WALDO_PKG" in
         apt)

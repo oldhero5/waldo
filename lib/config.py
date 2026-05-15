@@ -48,11 +48,12 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 1440  # 24 hours
 
-    # AI Agent (Gemma4 via mlx-vlm on Apple Silicon)
-    agent_model_id: str = "google/gemma-4-e4b-it"
-    # Ollama fallback
+    # AI Agent — LangGraph ReAct loop served by a local Ollama.
+    # Default uses gemma4:e4b (~9.6 GB, 4B-edge variant with native tool calling).
+    # Override with $WALDO_AGENT_MODEL on hardware-constrained boxes.
     ollama_url: str = "http://localhost:11434"
-    ollama_model: str = "gemma4:12b"
+    agent_model: str = "gemma4:e4b"
+    agent_temperature: float = 0.2  # low — we want stable tool-call JSON
 
     # Device
     device: str = "mps"
