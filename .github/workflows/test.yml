@@ -75,6 +75,15 @@ jobs:
           # Wait for MinIO to be ready
           timeout 30 bash -c 'until curl -sf http://localhost:9000/minio/health/live; do sleep 1; done'
 
+      # ── MinIO bucket (compose's minio-init creates this for the runtime stack;
+      #    we mirror it here so tests that store/retrieve via lib.s3 don't 404) ──
+      - name: Create MinIO 'waldo' bucket
+        run: |
+          docker run --rm --network host --entrypoint=/bin/sh minio/mc -c '
+            mc alias set local http://localhost:9000 minioadmin minioadmin &&
+            mc mb --ignore-existing local/waldo
+          '
+
       # ── Python / uv ──────────────────────────────────────────────────────────
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
