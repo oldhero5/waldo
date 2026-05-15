@@ -15,6 +15,8 @@
 #   --skip-up          Don't run docker compose up — only set everything up.
 #   --cpu              Force CPU mode even if a GPU is detected.
 #   --gpu nvidia|apple|none   Override GPU detection.
+#   --hf-token TOKEN   Hugging Face read token (otherwise prompted up front,
+#                      or read from $HF_TOKEN). Required for SAM 3 weights.
 #   --yes              Non-interactive: accept all prompts.
 #   --no-color         Disable colored output.
 #   -h, --help         Show this help.
@@ -47,6 +49,7 @@ while [ $# -gt 0 ]; do
         --skip-up)     SKIP_UP=1; shift ;;
         --cpu)         FORCE_CPU=1; shift ;;
         --gpu)         GPU_OVERRIDE="$2"; shift 2 ;;
+        --hf-token)    export HF_TOKEN="$2"; shift 2 ;;
         --yes|-y)      export WALDO_ASSUME_YES=1; shift ;;
         --no-color)    export NO_COLOR=1; shift ;;
         -h|--help)     print_help; exit 0 ;;
@@ -169,6 +172,38 @@ fi
 print_platform_summary
 
 [ "$WALDO_OS" = "unknown" ] && log_fatal "Unsupported OS. This installer targets Linux, macOS, and WSL2."
+
+# ── Ask for the HF token up front (before slow prereq + build steps) ──
+# Skip if --skip-models is set (the token isn't needed in that case).
+# The actual .env write happens later in prompt_hf_token; this just
+# captures the token into the environment so the user can walk away.
+if [ "$SKIP_MODELS" != "1" ] && [ -z "${HF_TOKEN:-}" ]; then
+    # If a previous run already saved it to .env, don't re-prompt.
+    existing_token=""
+    if [ -f "$WALDO_DIR/.env" ]; then
+        existing_token="$(awk -F= '$1=="HF_TOKEN"{sub(/^[^=]*=/,""); print; exit}' "$WALDO_DIR/.env")"
+    fi
+    if [ -z "$existing_token" ]; then
+        if [ "${WALDO_ASSUME_YES:-0}" != "1" ] && { [ -t 0 ] || [ -e /dev/tty ]; }; then
+            log_step "Hugging Face token"
+            log_info "Waldo needs a Hugging Face read token to download SAM 3 weights."
+            log_info "Get one at https://huggingface.co/settings/tokens (read access is enough)."
+            log_info "You also need to accept the license at https://huggingface.co/facebook/sam3."
+            log_info "Press Enter to skip — you can set HF_TOKEN in .env later."
+            printf '   %s? %sPaste HF token: ' "$_C_CYAN" "$_C_RESET"
+            entered=""
+            if [ -e /dev/tty ]; then
+                read -r entered </dev/tty || entered=""
+            else
+                read -r entered || entered=""
+            fi
+            if [ -n "$entered" ]; then
+                export HF_TOKEN="$entered"
+                log_ok "HF_TOKEN captured"
+            fi
+        fi
+    fi
+fi
 
 # ── Step 3: prereqs ──────────────────────────────────────────────
 if [ "$SKIP_PREREQS" = "1" ]; then

@@ -24,6 +24,7 @@ param(
     [switch]$SkipUp,
     [switch]$Cpu,
     [string]$Gpu    = "",          # nvidia | apple | none
+    [string]$HfToken = "",         # Hugging Face read token; if blank, prompted unless -Yes
     [switch]$Yes
 )
 
@@ -139,7 +140,26 @@ if (-not $nvidiaOk) {
     Write-Host  "   (Do NOT install a Linux NVIDIA driver inside WSL — the Windows driver provides CUDA to WSL automatically.)"
 }
 
-# ── Step 4: hand off to install.sh inside WSL ───────────────────
+# ── Step 4: Hugging Face token (prompt up front so the installer can run unattended) ──
+if (-not $SkipModels -and -not $HfToken) {
+    if ($env:HF_TOKEN) {
+        $HfToken = $env:HF_TOKEN
+    } elseif (-not $Yes) {
+        Write-Step "Hugging Face token"
+        Write-Host "   Waldo needs a Hugging Face read token to download SAM 3 weights."
+        Write-Host "   Get one at https://huggingface.co/settings/tokens (read access is enough)."
+        Write-Host "   You also need to accept the license at https://huggingface.co/facebook/sam3."
+        Write-Host "   Press Enter to skip — set HF_TOKEN in .env later."
+        $secure = Read-Host -Prompt "   Paste HF token (input hidden)" -AsSecureString
+        if ($secure.Length -gt 0) {
+            $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+            try { $HfToken = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr) }
+            finally { [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
+        }
+    }
+}
+
+# ── Step 5: hand off to install.sh inside WSL ───────────────────
 Write-Step "Handing off to install.sh inside $Distro"
 
 $flags = @()
@@ -157,11 +177,24 @@ $flagStr = ($flags | ForEach-Object { "'$_'" }) -join ' '
 
 # Bootstrap-and-run inside WSL. We feed the installer through bash -s --
 # so `curl | bash` semantics work even on a fresh distro that doesn't yet
-# have the repo cloned.
-$bashCmd = "set -e; curl -fsSL https://raw.githubusercontent.com/oldhero5/waldo/$Branch/install.sh | bash -s -- $flagStr"
+# have the repo cloned. We pass HF_TOKEN through the WSL env (WSLENV)
+# rather than on the command line so it doesn't end up in shell history.
+$envPrefix = ""
+if ($HfToken) {
+    # Single-quote-escape any embedded single quotes; tokens shouldn't contain
+    # them, but be safe so we don't break the bash export.
+    $escaped = $HfToken -replace "'", "'\''"
+    $envPrefix = "export HF_TOKEN='$escaped'; "
+}
+$bashCmd = "set -e; ${envPrefix}curl -fsSL https://raw.githubusercontent.com/oldhero5/waldo/$Branch/install.sh | bash -s -- $flagStr"
 
 Write-Host "   Running inside WSL ($Distro):"
-Write-Host "   $bashCmd"
+if ($HfToken) {
+    Write-Host "   (HF_TOKEN is being passed via env; redacted from this preview)"
+    Write-Host "   set -e; export HF_TOKEN=<redacted>; curl ... | bash -s -- $flagStr"
+} else {
+    Write-Host "   $bashCmd"
+}
 & wsl.exe -d $Distro -- bash -lc $bashCmd
 if ($LASTEXITCODE -ne 0) { Fail "Installer inside WSL exited with code $LASTEXITCODE" }
 
