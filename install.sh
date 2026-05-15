@@ -7,7 +7,10 @@
 #   ./install.sh [flags]            # from inside a cloned repo
 #
 # Flags (all optional):
-#   --dir PATH         Where to clone the repo if needed.   Default: ~/waldo
+#   --dir PATH         Where to clone the repo if needed. When omitted, the
+#                      installer prompts (suggesting the current directory).
+#                      In --yes mode it falls back to $PWD if writable, else ~/waldo.
+#   --here             Shorthand for --dir "$PWD".
 #   --branch NAME      Branch to clone.                     Default: main
 #   --repo URL         Git URL to clone from.               Default: https://github.com/oldhero5/waldo.git
 #   --skip-prereqs     Don't install Docker/uv/Node — assume they're present.
@@ -40,11 +43,12 @@ FORCE_CPU=0
 GPU_OVERRIDE=""
 
 # ── Argument parsing ─────────────────────────────────────────────
-print_help() { sed -n '2,21p' "${BASH_SOURCE[0]:-$0}" 2>/dev/null | sed 's/^# \{0,1\}//'; }
+print_help() { sed -n '2,28p' "${BASH_SOURCE[0]:-$0}" 2>/dev/null | sed 's/^# \{0,1\}//'; }
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --dir)         WALDO_DIR="$2"; shift 2 ;;
+        --here)        WALDO_DIR="$PWD"; shift ;;
         --branch)      WALDO_BRANCH="$2"; shift 2 ;;
         --repo)        WALDO_REPO="$2"; shift 2 ;;
         --skip-prereqs) SKIP_PREREQS=1; shift ;;
@@ -111,35 +115,99 @@ BANNER
 # ── Step 1: get the repo ────────────────────────────────────────
 log_step "Locating Waldo repo"
 
-# Already inside a repo (script lives next to docker-compose.yml)?
+# Helper: is $1 a usable Waldo clone? (non-empty .git, has docker-compose.yml)
+_is_waldo_clone() {
+    [ -d "$1/.git" ] && [ -f "$1/docker-compose.yml" ]
+}
+
+# Helper: is $1 an empty (or non-existent) directory we can clone into?
+_is_empty_or_missing() {
+    [ ! -e "$1" ] || [ -z "$(ls -A "$1" 2>/dev/null || true)" ]
+}
+
+# Helper: prompt the user for a directory, defaulting to $1. Returns the
+# chosen path on stdout. Reads from /dev/tty so this works under `curl|bash`.
+_prompt_dir() {
+    local default="$1"
+    local entered=""
+    if [ -e /dev/tty ]; then
+        # Color-safe even when log.sh hasn't been sourced yet (curl|bash path).
+        printf '   ? %sInstall directory [%s]: ' "${_C_CYAN:-}${_C_RESET:-}" "$default" >/dev/tty
+        read -r entered </dev/tty || entered=""
+    fi
+    [ -z "$entered" ] && entered="$default"
+    # Expand a leading ~ since `read` doesn't.
+    case "$entered" in "~"|"~/"*) entered="$HOME/${entered#~/}";; esac
+    # Make absolute.
+    case "$entered" in /*) ;; *) entered="$PWD/$entered";; esac
+    printf '%s\n' "$entered"
+}
+
+# 1) If the script lives next to a docker-compose.yml, we're already in a clone.
 if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/docker-compose.yml" ] && [ -f "$SCRIPT_DIR/.env.example" ]; then
     WALDO_DIR="$SCRIPT_DIR"
     log_ok "Using existing repo at $WALDO_DIR"
+
+# 2) If the user passed --dir / --here, honor it verbatim.
+elif [ -n "$WALDO_DIR" ]; then
+    log_info "Using --dir $WALDO_DIR"
+
+# 3) Otherwise: $PWD is already a Waldo clone? Use it.
+elif _is_waldo_clone "$PWD"; then
+    WALDO_DIR="$PWD"
+    log_ok "Detected Waldo clone in current directory: $WALDO_DIR"
+
+# 4) Otherwise: prompt (or pick sensible default in --yes mode).
 else
-    : "${WALDO_DIR:=$WALDO_DIR_DEFAULT}"
-    if [ -d "$WALDO_DIR/.git" ] && [ -f "$WALDO_DIR/docker-compose.yml" ]; then
-        log_ok "Existing clone at $WALDO_DIR — pulling latest"
-        git -C "$WALDO_DIR" fetch --quiet origin "$WALDO_BRANCH" || true
-        git -C "$WALDO_DIR" checkout --quiet "$WALDO_BRANCH" 2>/dev/null || true
-        git -C "$WALDO_DIR" pull --ff-only --quiet origin "$WALDO_BRANCH" 2>/dev/null || \
-            log_warn "Could not fast-forward $WALDO_BRANCH (local changes?). Continuing with current state."
+    if [ "${WALDO_ASSUME_YES:-0}" = "1" ]; then
+        # Non-interactive: prefer current dir if writable & empty-ish, else ~/waldo.
+        if _is_empty_or_missing "$PWD/waldo" && [ -w "$PWD" ]; then
+            WALDO_DIR="$PWD/waldo"
+        elif _is_empty_or_missing "$PWD" && [ -w "$PWD" ]; then
+            WALDO_DIR="$PWD"
+        else
+            WALDO_DIR="$WALDO_DIR_DEFAULT"
+        fi
+        log_info "Auto-selected install dir (--yes): $WALDO_DIR"
     else
-        if [ -e "$WALDO_DIR" ] && [ -n "$(ls -A "$WALDO_DIR" 2>/dev/null || true)" ]; then
-            log_fatal "$WALDO_DIR exists and is not empty. Pass --dir to choose another path."
+        # Interactive: suggest current dir first; fall back to ~/waldo.
+        if _is_waldo_clone "$PWD"; then
+            suggestion="$PWD"
+        elif _is_empty_or_missing "$PWD/waldo" && [ -w "$PWD" ]; then
+            suggestion="$PWD/waldo"
+        else
+            suggestion="$WALDO_DIR_DEFAULT"
         fi
-        log_info "Cloning $WALDO_REPO ($WALDO_BRANCH) into $WALDO_DIR"
-        # We need git for this — bootstrap if missing.
-        if ! command -v git >/dev/null 2>&1; then
-            log_warn "git missing — installing minimally to clone"
-            if   command -v apt-get >/dev/null 2>&1; then sudo apt-get update -qq && sudo apt-get install -y -qq git
-            elif command -v dnf     >/dev/null 2>&1; then sudo dnf install -y -q git
-            elif command -v pacman  >/dev/null 2>&1; then sudo pacman -S --noconfirm --needed git
-            elif command -v brew    >/dev/null 2>&1; then brew install git
-            else log_fatal "Install git manually, then re-run."
-            fi
-        fi
-        git clone --branch "$WALDO_BRANCH" --depth 1 "$WALDO_REPO" "$WALDO_DIR" 2>&1 | sed 's/^/      /'
+        log_info "Where should Waldo be installed?"
+        log_info "  Press Enter to use the suggested path, or type a different one (Tab not supported)."
+        WALDO_DIR="$(_prompt_dir "$suggestion")"
     fi
+fi
+
+# Now make sure WALDO_DIR is either an existing clone (pull) or empty-able (clone).
+if _is_waldo_clone "$WALDO_DIR"; then
+    log_ok "Existing clone at $WALDO_DIR — pulling latest"
+    git -C "$WALDO_DIR" fetch --quiet origin "$WALDO_BRANCH" || true
+    git -C "$WALDO_DIR" checkout --quiet "$WALDO_BRANCH" 2>/dev/null || true
+    git -C "$WALDO_DIR" pull --ff-only --quiet origin "$WALDO_BRANCH" 2>/dev/null || \
+        log_warn "Could not fast-forward $WALDO_BRANCH (local changes?). Continuing with current state."
+else
+    if ! _is_empty_or_missing "$WALDO_DIR"; then
+        log_fatal "$WALDO_DIR exists and is not empty (and isn't a Waldo clone). Pass --dir to choose another path."
+    fi
+    log_info "Cloning $WALDO_REPO ($WALDO_BRANCH) into $WALDO_DIR"
+    # We need git for this — bootstrap if missing.
+    if ! command -v git >/dev/null 2>&1; then
+        log_warn "git missing — installing minimally to clone"
+        if   command -v apt-get >/dev/null 2>&1; then sudo apt-get update -qq && sudo apt-get install -y -qq git
+        elif command -v dnf     >/dev/null 2>&1; then sudo dnf install -y -q git
+        elif command -v pacman  >/dev/null 2>&1; then sudo pacman -S --noconfirm --needed git
+        elif command -v brew    >/dev/null 2>&1; then brew install git
+        else log_fatal "Install git manually, then re-run."
+        fi
+    fi
+    mkdir -p "$WALDO_DIR" 2>/dev/null || true
+    git clone --branch "$WALDO_BRANCH" --depth 1 "$WALDO_REPO" "$WALDO_DIR" 2>&1 | sed 's/^/      /'
 fi
 
 cd "$WALDO_DIR"
