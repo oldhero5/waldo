@@ -57,6 +57,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # ── System deps (ffmpeg/ffprobe used by lib/frame_extractor + frame_cache) ──
+      - name: Install ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+
       # ── MinIO (started as a step — GH Actions services can't pass `command:`) ──
       - name: Start MinIO
         env:

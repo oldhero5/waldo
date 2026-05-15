@@ -1,7 +1,6 @@
 """Tests for inference engine, video tracker, serve API, and export validation."""
 
 from dataclasses import asdict
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -64,14 +63,14 @@ class TestInferenceEngine:
         assert engine.model is None
         assert engine.model_id is None
 
-    def test_ensure_loaded_raises_without_active_model(self):
+    def test_predict_without_loaded_model_raises(self):
+        # predict_image is the public entry point; it must refuse to run when
+        # no model has been loaded (instead of segfaulting in YOLO).
+        import numpy as np
+
         engine = InferenceEngine()
-        with patch("lib.inference_engine.SessionLocal") as mock_session_cls:
-            mock_session = MagicMock()
-            mock_session_cls.return_value = mock_session
-            mock_session.query.return_value.filter_by.return_value.first.return_value = None
-            with pytest.raises(RuntimeError, match="No active model"):
-                engine._ensure_loaded()
+        with pytest.raises(RuntimeError, match="no model loaded"):
+            engine.predict_image(np.zeros((64, 64, 3), dtype=np.uint8))
 
     def test_clear_device_cache_no_error(self):
         engine = InferenceEngine()

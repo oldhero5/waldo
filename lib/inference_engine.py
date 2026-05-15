@@ -285,7 +285,9 @@ class InferenceEngine:
     def _clear_device_cache(self) -> None:
         import torch
 
-        if hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache"):
+        # torch.mps.empty_cache() exists as an API on Linux too but raises
+        # RuntimeError when no MPS backend is present — gate on is_available.
+        if hasattr(torch, "mps") and torch.backends.mps.is_available():
             torch.mps.empty_cache()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
