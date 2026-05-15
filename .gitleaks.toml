@@ -13,4 +13,5 @@ paths = [
 ]
 regexes = [
   '''wld_your_key_here''',  # placeholder shown in UI Settings page usage example
+  '''wld_YOUR_KEY''',       # placeholder shown in README quickstart curl example
 ]
