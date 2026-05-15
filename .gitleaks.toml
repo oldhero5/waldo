@@ -11,3 +11,6 @@ paths = [
   '''ui/package-lock\.json''',
   '''ui/pnpm-lock\.yaml''',
 ]
+regexes = [
+  '''wld_your_key_here''',  # placeholder shown in UI Settings page usage example
+]
