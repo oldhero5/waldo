@@ -79,7 +79,9 @@ services:
       # Keep the model resident so the first chat doesn't pay re-load cost.
       OLLAMA_KEEP_ALIVE: "30m"
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:11434/api/tags"]
+      # `ollama list` exits 0 only when the local server is reachable. The
+      # ollama/ollama image doesn't ship curl/wget, so we use the bundled CLI.
+      test: ["CMD", "ollama", "list"]
       interval: 10s
       timeout: 5s
       retries: 12

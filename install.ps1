@@ -17,7 +17,9 @@
 param(
     [string]$Repo   = "https://github.com/oldhero5/waldo.git",
     [string]$Branch = "main",
-    [string]$Dir    = "",          # path inside WSL, e.g. /home/USER/waldo. Default: ~/waldo.
+    [string]$Dir    = "",          # path inside WSL (e.g. /home/USER/waldo). When blank, the
+                                   # Linux installer will prompt or auto-pick.
+    [switch]$Here,                 # Shorthand: install into the current WSL working directory.
     [string]$Distro = "Ubuntu",
     [switch]$SkipPrereqs,
     [switch]$SkipModels,
@@ -25,6 +27,7 @@ param(
     [switch]$Cpu,
     [string]$Gpu    = "",          # nvidia | apple | none
     [string]$HfToken = "",         # Hugging Face read token; if blank, prompted unless -Yes
+    [switch]$NoSudo,
     [switch]$Yes
 )
 
@@ -168,10 +171,12 @@ if ($SkipModels) { $flags += "--skip-models" }
 if ($SkipUp)     { $flags += "--skip-up" }
 if ($Cpu)        { $flags += "--cpu" }
 if ($Gpu)        { $flags += "--gpu"; $flags += $Gpu }
+if ($NoSudo)     { $flags += "--no-sudo" }
 if ($Yes)        { $flags += "--yes" }
 if ($Repo)       { $flags += "--repo"; $flags += $Repo }
 if ($Branch)     { $flags += "--branch"; $flags += $Branch }
 if ($Dir)        { $flags += "--dir"; $flags += $Dir }
+if ($Here)       { $flags += "--here" }
 
 $flagStr = ($flags | ForEach-Object { "'$_'" }) -join ' '
 
