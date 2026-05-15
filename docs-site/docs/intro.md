@@ -60,22 +60,33 @@ Every step has a UI page and an API endpoint. Use whichever you like — they're
 
 ## Five-minute path
 
-1. **Install Waldo** — one command, picks the right GPU profile for you:
+1. **Get a Hugging Face token** at
+   [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) and
+   accept the license on the
+   [`facebook/sam3` model page](https://huggingface.co/facebook/sam3). The
+   installer prompts for the token up front; you can also pass it via
+   `--hf-token` or the `HF_TOKEN` env var.
+2. **Install Waldo** — one command, picks the right GPU profile (NVIDIA / Apple
+   MPS / CPU) for you:
 
    ```bash
+   # macOS / Linux / WSL
    curl -fsSL https://raw.githubusercontent.com/oldhero5/waldo/main/install.sh | bash
    ```
 
-   Windows PowerShell:
-
    ```powershell
+   # Windows PowerShell
    irm https://raw.githubusercontent.com/oldhero5/waldo/main/install.ps1 | iex
    ```
 
    Full details (flags, manual install, NVIDIA gotchas) in the
    [Installation guide](./getting-started/installation).
-2. [Walk through the quickstart](./getting-started/quickstart) — upload a clip, auto-label, train, deploy
-3. Skim the [UI Tour](./ui/overview) to see what every page does
-4. Bookmark the [API reference](./api/overview) for when you start scripting
+3. **Sign in** at [http://localhost:8000](http://localhost:8000). Dev defaults
+   are `admin@waldo.ai` / `waldopass` — override with
+   `ADMIN_BOOTSTRAP_PASSWORD` for production.
+4. [Walk through the quickstart](./getting-started/quickstart) — upload a clip,
+   auto-label, train, deploy.
+5. Skim the [UI Tour](./ui/overview) to see what every page does, and bookmark
+   the [API reference](./api/overview) for when you start scripting.
 
 Welcome aboard.

@@ -32,57 +32,77 @@ Self-hosted ML platform for video object detection at scale. Auto-label any obje
 
 ## Quickstart
 
-One command. The installer detects your platform and GPU, installs missing
-dependencies (Docker, uv, Node.js, NVIDIA Container Toolkit), writes `.env`,
-downloads the SAM 3.1 weights, and brings the stack up.
+**Step 1 — Get a Hugging Face token.** Waldo uses [SAM 3](https://huggingface.co/facebook/sam3)
+to do the labeling. Create a read-only token at
+[huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) and
+accept the license on the [`facebook/sam3` model page](https://huggingface.co/facebook/sam3).
+You'll paste the token into the installer.
 
-**macOS, Linux, WSL:**
+**Step 2 — Install.** One command. Picks the right Docker profile for your
+platform (NVIDIA / Apple MPS / CPU), installs missing prereqs, and brings the
+stack up.
 
 ```bash
+# macOS / Linux / WSL
 curl -fsSL https://raw.githubusercontent.com/oldhero5/waldo/main/install.sh | bash
 ```
 
-**Windows (PowerShell):**
-
 ```powershell
+# Windows (PowerShell)
 irm https://raw.githubusercontent.com/oldhero5/waldo/main/install.ps1 | iex
 ```
 
-**Windows (cmd.exe):**
-
 ```cmd
+:: Windows (cmd.exe)
 curl -fsSL https://raw.githubusercontent.com/oldhero5/waldo/main/install.cmd -o install.cmd && install.cmd && del install.cmd
+```
+
+The installer prompts for the HF token early so you can walk away. To skip the
+prompt, pass it on the command line or via env:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/oldhero5/waldo/main/install.sh \
+  | bash -s -- --hf-token hf_xxxxxxxxxxxxx
+# or:  HF_TOKEN=hf_xxx curl -fsSL ... | bash
 ```
 
 The Windows wrappers install/verify WSL2 + Docker Desktop, then hand off to
 `install.sh` inside Ubuntu — that's where Waldo actually runs.
 
-After it finishes, open **[http://localhost:8000](http://localhost:8000)**. The
-first-run admin password lives in the app logs:
+**Step 3 — Sign in.** Open **[http://localhost:8000](http://localhost:8000)**.
+Default dev credentials are printed at first boot:
 
-```bash
-docker compose logs app | grep -A 2 "bootstrapped first admin"
-```
+- email: `admin@waldo.ai`
+- password: `waldopass` _(dev default — override with `ADMIN_BOOTSTRAP_PASSWORD` for production)_
+
+**Step 4 — Label your first video.** From the UI: **Upload** → drag in a clip →
+**Auto-label** → type a prompt (e.g. `car`) → **Preview**. The first preview
+takes ~2 minutes (it downloads the SAM 3 weights to a Docker volume); subsequent
+calls are sub-second. Then walk through Review → Train → Deploy.
 
 ### Already cloned the repo?
 
 ```bash
 git clone https://github.com/oldhero5/waldo.git && cd waldo
-./install.sh                 # or: ./install.sh --skip-up --skip-models for a dry config
+./install.sh                                 # full install (will prompt for HF_TOKEN)
+./install.sh --skip-up --skip-models --yes   # config only, no model download
 ```
 
 ### Installer flags
 
 | Flag | Default | What it does |
 |------|---------|--------------|
+| `--hf-token TOKEN` | _(prompt)_ | Hugging Face read token — required for SAM 3 weights |
 | `--dir PATH` | `~/waldo` | Where to clone if Waldo isn't already on disk |
 | `--branch NAME` | `main` | Branch to clone |
 | `--cpu` | off | Force CPU even if a GPU is detected |
 | `--gpu nvidia\|apple\|none` | auto | Override GPU detection |
 | `--skip-prereqs` | off | Don't install Docker/uv/Node — assume present |
-| `--skip-models` | off | Don't download SAM 3.1 weights |
+| `--skip-models` | off | Don't download SAM 3 weights |
 | `--skip-up` | off | Don't run `docker compose up` — config only |
 | `--yes` | off | Non-interactive (HF_TOKEN can be set later in `.env`) |
+
+PowerShell uses the same flags PascalCased (`-HfToken`, `-Dir`, `-SkipUp`, `-Yes`, ...).
 
 ### Manual setup (for the curious)
 
@@ -291,9 +311,11 @@ Everything comes from environment variables. See `.env.example`.
 |----------|---------|-------------|
 | `DEVICE` | `mps` | `mps` (Apple), `cuda` (NVIDIA), or `cpu` |
 | `DTYPE` | `float32` | `float32`, `bfloat16`, `float16` |
-| `SAM3_MODEL_ID` | `facebook/sam3.1` | HuggingFace transformers model (Linux/CUDA) |
-| `SAM3_MLX_MODEL_ID` | `mlx-community/sam3.1-bf16` | MLX variant (macOS) |
-| `HF_TOKEN` | — | HuggingFace token for model download |
+| `SAM3_MODEL_ID` | `facebook/sam3` | HuggingFace transformers model (Linux/CUDA — needs `model.safetensors`) |
+| `SAM3_MLX_MODEL_ID` | `mlx-community/sam3.1-bf16` | MLX variant (macOS Apple Silicon) |
+| `HF_TOKEN` | — | HuggingFace read token (required) — accept the license on the `facebook/sam3` model page first |
+| `ADMIN_BOOTSTRAP_EMAIL` | `admin@waldo.ai` | First admin's email |
+| `ADMIN_BOOTSTRAP_PASSWORD` | `waldopass` (dev) | First admin's password — **override in production** |
 | `SLACK_WEBHOOK_URL` | — | Training alerts |
 | `NTFY_TOPIC` | — | Push notifications |
 

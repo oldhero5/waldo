@@ -15,43 +15,59 @@ This walks you through ingesting a video, running auto-labeling, reviewing the r
   caption="The pages we'll touch: dashboard → datasets → workflows → deploy."
 />
 
-## 0. Bring up the stack
+## 0. Get a Hugging Face token
+
+Waldo uses [SAM 3](https://huggingface.co/facebook/sam3) for auto-labeling. SAM
+3's weights live behind a license click-through, so before you install:
+
+1. Sign in at [huggingface.co](https://huggingface.co/).
+2. Open the [`facebook/sam3` model page](https://huggingface.co/facebook/sam3)
+   and click "Access repository" to accept the license.
+3. Create a **read** token at
+   [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens).
+
+Keep the `hf_...` string handy — the installer prompts for it.
+
+## 1. Bring up the stack
 
 One command. The installer picks the right Docker profile for your platform
-(NVIDIA, Apple MPS, or CPU), installs missing prerequisites, and starts the
-stack:
-
-**macOS, Linux, WSL:**
+(NVIDIA, Apple MPS, or CPU), installs missing prerequisites, prompts for the
+HF token up front, and starts the stack:
 
 ```bash
+# macOS / Linux / WSL
 curl -fsSL https://raw.githubusercontent.com/oldhero5/waldo/main/install.sh | bash
 ```
 
-**Windows (PowerShell):**
-
 ```powershell
+# Windows (PowerShell)
 irm https://raw.githubusercontent.com/oldhero5/waldo/main/install.ps1 | iex
 ```
 
-**Windows (cmd.exe):**
-
 ```cmd
+:: Windows (cmd.exe)
 curl -fsSL https://raw.githubusercontent.com/oldhero5/waldo/main/install.cmd -o install.cmd && install.cmd && del install.cmd
+```
+
+To skip the prompt and run unattended:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/oldhero5/waldo/main/install.sh \
+  | bash -s -- --hf-token hf_xxxxxxxxxxxxx --yes
 ```
 
 The full set of options lives in the [Installation guide](./installation).
 
-Once it finishes, grab the bootstrap admin password from the logs:
+## 2. Sign in & create a dataset
 
-```bash
-docker compose logs app | grep -A 2 "bootstrapped first admin"
-```
+Open [http://localhost:8000](http://localhost:8000) and log in with the dev
+defaults:
 
-Save it — it's the only time it's shown.
+- email: `admin@waldo.ai`
+- password: `waldopass`
 
-## 1. Sign in & create a dataset
-
-Open [http://localhost:8000](http://localhost:8000). The login page accepts the bootstrap credentials.
+(Override with `ADMIN_BOOTSTRAP_PASSWORD` for production — see the
+[Configuration](./configuration) page.)
 
 ![Login](/img/screenshots/login.png)
 
@@ -63,7 +79,7 @@ Click **+ New Dataset** and give it a name.
 
 ![Datasets](/img/screenshots/datasets.png)
 
-## 2. Upload a video
+## 3. Upload a video
 
 Drop a `.mp4`, `.mov`, or `.mkv` into the upload zone. The backend extracts metadata via FFmpeg, stores the file in MinIO, and queues frame extraction.
 
@@ -80,18 +96,22 @@ curl -X POST http://localhost:8000/api/v1/upload/batch \
   -F "files=@clip2.mp4"
 ```
 
-## 3. Start a labeling job
+## 4. Start a labeling job
 
 From the dataset, click **Auto-label**. Provide either:
 
-- **Text prompts** (one per line, e.g. `person`, `car`, `truck`) — SAM 3.1 grounded by free text.
+- **Text prompts** (one per line, e.g. `person`, `car`, `truck`) — SAM 3 grounded by free text.
 - **Visual prompts** — drag a box around an example object in the first frame; SAM 3 finds visually similar objects across the video.
 
 Pick a confidence threshold (default `0.5`) and resolution (`1008` is a good middle ground). Click **Preview** to test on a handful of frames; click **Start labeling** to commit.
 
+> **First call is slow.** The labeler pulls the SAM 3 weights (~2 GB) into a
+> Docker volume on the very first preview/job. After that, the model stays
+> resident in GPU memory and subsequent calls run in seconds.
+
 The job streams progress back to the UI over WebSocket. You can switch to Review as soon as the first frames complete.
 
-## 4. Review
+## 5. Review
 
 The Review canvas shows each frame with overlaid boxes. Accept, reject, edit, redraw — every action PATCHes back to the API.
 
@@ -115,7 +135,7 @@ Keyboard shortcuts:
 
 Rejected frames are excluded from training exports.
 
-## 5. Train
+## 6. Train
 
 Open **Train** for the job. Pick a YOLO26 variant (`yolo26n` for fastest, `yolo26m` for a sensible default, `yolo26x` for max accuracy), pick an augmentation preset, and click **Start training**.
 
@@ -123,7 +143,7 @@ Open **Train** for the job. Pick a YOLO26 variant (`yolo26n` for fastest, `yolo2
 
 Live logs stream from the trainer worker. Loss + mAP charts auto-scroll. The trained weights register in the model registry automatically when the run finishes.
 
-## 6. Deploy
+## 7. Deploy
 
 Open **Deploy → Models** and star your new model to mark it active. The default `/predict/*` endpoints will use it from the next request.
 
