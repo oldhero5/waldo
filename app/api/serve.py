@@ -703,10 +703,17 @@ def serve_classes():
 
 @router.get("/serve/status", response_model=ServeStatus)
 def serve_status():
-    """Return info about the currently loaded model."""
+    """Return info about the currently loaded model.
+
+    On a fresh install no model is active yet — return loaded=False instead
+    of 500ing, so the UI poll on the dashboard doesn't spam errors.
+    """
     from lib.config import settings
 
-    engine = get_engine()
+    try:
+        engine = get_engine()
+    except RuntimeError:
+        return ServeStatus(loaded=False, device=settings.device)
     return ServeStatus(
         loaded=engine.model is not None,
         model_id=engine.model_id,

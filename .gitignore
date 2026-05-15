@@ -23,8 +23,6 @@ models/
 # OS
 .DS_Store
 
-# uv
-uv.lock
 
 # Node
 node_modules/

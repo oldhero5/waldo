@@ -32,26 +32,93 @@ Self-hosted ML platform for video object detection at scale. Auto-label any obje
 
 ## Quickstart
 
-Every target platform runs as **Docker containers** via `docker-compose.yml`. The
-only exception is `make up-gpu` on macOS, which runs labeler and trainer natively
-so they can reach Apple's MPS GPU (MPS cannot be passed through to Linux containers).
+**Step 1 — Get a Hugging Face token.** Waldo uses [SAM 3](https://huggingface.co/facebook/sam3)
+to do the labeling. Create a read-only token at
+[huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) and
+accept the license on the [`facebook/sam3` model page](https://huggingface.co/facebook/sam3).
+You'll paste the token into the installer.
 
-### Prerequisites (all platforms)
-
-- Docker 24+ with Compose v2.3+ (OrbStack or Docker Desktop)
-- Node.js 20+ and [uv](https://docs.astral.sh/uv/) for local dev
-- Hugging Face token for the SAM 3 model download
+**Step 2 — Install.** One command. Picks the right Docker profile for your
+platform (NVIDIA / Apple MPS / CPU), installs missing prereqs, and brings the
+stack up.
 
 ```bash
-cp .env.example .env     # Add HF_TOKEN
+# macOS / Linux / WSL
+curl -fsSL https://raw.githubusercontent.com/oldhero5/waldo/main/install.sh | bash
 ```
 
-### Matrix at a glance
+```powershell
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/oldhero5/waldo/main/install.ps1 | iex
+```
+
+```cmd
+:: Windows (cmd.exe)
+curl -fsSL https://raw.githubusercontent.com/oldhero5/waldo/main/install.cmd -o install.cmd && install.cmd && del install.cmd
+```
+
+The installer prompts for the HF token early so you can walk away. To skip the
+prompt, pass it on the command line or via env:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/oldhero5/waldo/main/install.sh \
+  | bash -s -- --hf-token hf_xxxxxxxxxxxxx
+# or:  HF_TOKEN=hf_xxx curl -fsSL ... | bash
+```
+
+The Windows wrappers install/verify WSL2 + Docker Desktop, then hand off to
+`install.sh` inside Ubuntu — that's where Waldo actually runs.
+
+**Step 3 — Sign in.** Open **[http://localhost:8000](http://localhost:8000)**.
+Default dev credentials are printed at first boot:
+
+- email: `admin@waldo.ai`
+- password: `waldopass` _(dev default — override with `ADMIN_BOOTSTRAP_PASSWORD` for production)_
+
+**Step 4 — Label your first video.** From the UI: **Upload** → drag in a clip →
+**Auto-label** → type a prompt (e.g. `car`) → **Preview**. The first preview
+takes ~2 minutes (it downloads the SAM 3 weights to a Docker volume); subsequent
+calls are sub-second. Then walk through Review → Train → Deploy.
+
+### Already cloned the repo?
+
+```bash
+git clone https://github.com/oldhero5/waldo.git && cd waldo
+./install.sh                                 # full install (will prompt for HF_TOKEN)
+./install.sh --skip-up --skip-models --yes   # config only, no model download
+```
+
+### Installer flags
+
+| Flag | Default | What it does |
+|------|---------|--------------|
+| `--hf-token TOKEN` | _(prompt)_ | Hugging Face read token — required for SAM 3 weights |
+| `--dir PATH` | `~/waldo` | Where to clone if Waldo isn't already on disk |
+| `--branch NAME` | `main` | Branch to clone |
+| `--cpu` | off | Force CPU even if a GPU is detected |
+| `--gpu nvidia\|apple\|none` | auto | Override GPU detection |
+| `--skip-prereqs` | off | Don't install Docker/uv/Node — assume present |
+| `--skip-models` | off | Don't download SAM 3 weights |
+| `--skip-up` | off | Don't run `docker compose up` — config only |
+| `--yes` | off | Non-interactive (HF_TOKEN can be set later in `.env`) |
+
+PowerShell uses the same flags PascalCased (`-HfToken`, `-Dir`, `-SkipUp`, `-Yes`, ...).
+
+### Manual setup (for the curious)
+
+The installer is the recommended path, but Waldo is just `docker-compose.yml`
+underneath. If you want to drive it by hand:
+
+```bash
+git clone https://github.com/oldhero5/waldo.git && cd waldo
+cp .env.example .env                     # add HF_TOKEN
+make up                                  # auto-routes by OS
+```
 
 | Platform | Command | Workers in Docker? | GPU |
 |----------|---------|:---:|-----|
 | macOS (CPU) | `make up` | ✅ | none |
-| macOS (native MPS) | `make up-gpu` | ❌ native | Apple MPS |
+| macOS (native MPS) | `make up-mac` | ❌ native | Apple MPS |
 | Linux + NVIDIA | `make up PROFILE=nvidia` | ✅ | CUDA |
 | Linux (CPU only) | `make up` | ✅ | none |
 | Windows (WSL 2) + NVIDIA | `make up PROFILE=nvidia` | ✅ | CUDA |
@@ -62,25 +129,25 @@ Apple's MPS cannot be passed through to Linux containers. Two options:
 
 ```bash
 make up          # Everything in Docker, CPU workers. Slowest but zero setup.
-make up-gpu      # Infra + app in Docker, native MPS workers. Recommended.
+make up-mac      # Infra + app in Docker, native MPS workers. Recommended.
 ```
 
-`make up-gpu` starts the labeler and trainer natively so they can reach the
+`make up-mac` starts the labeler and trainer natively so they can reach the
 M-series GPU. Logs land in `/tmp/waldo-labeler.log` and `/tmp/waldo-trainer.log`.
+(`make up-gpu` is kept as a back-compat alias.)
 
 ### Linux with NVIDIA CUDA
 
-Requires [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
-so Docker can see the GPU.
+The installer handles the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
+on apt/dnf systems. If you'd rather drive it manually:
 
 ```bash
-# 1. Install the driver + toolkit (Ubuntu example — see NVIDIA docs for others)
+# 1. Driver + toolkit (Ubuntu example — see NVIDIA docs for others)
 sudo apt install -y nvidia-driver-550
-distribution=$(. /etc/os-release; echo $ID$VERSION_ID)
 curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
-curl -s -L https://nvidia.github.io/libnvidia-container/$distribution/libnvidia-container.list | \
-  sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
-  sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
+  | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
+  | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
 sudo apt update && sudo apt install -y nvidia-container-toolkit
 sudo nvidia-ctk runtime configure --runtime=docker
 sudo systemctl restart docker
@@ -91,7 +158,7 @@ make gpu-check
 # 3. Start Waldo with the nvidia profile
 make up PROFILE=nvidia
 
-# 4. Confirm the workers actually see the GPU inside the container
+# 4. Confirm the workers see the GPU inside the container
 make gpu-logs
 ```
 
@@ -108,57 +175,15 @@ dataloader IPC doesn't OOM on the 64 MB Docker default.
 
 ### Windows with NVIDIA CUDA (via WSL 2)
 
-Windows GPU support goes through **WSL 2 + Docker Desktop**. The NVIDIA driver lives
-on the Windows host; CUDA inside WSL is provided by the driver automatically — do
-**not** install a Linux CUDA driver inside WSL.
+Windows GPU support goes through **WSL 2 + Docker Desktop**. The NVIDIA driver
+lives on the Windows host; CUDA inside WSL is provided by the driver
+automatically — do **not** install a Linux CUDA driver inside WSL.
 
-**1. Prerequisites (on Windows):**
-- Windows 10 21H2+ or Windows 11 with virtualization enabled in BIOS
-- [NVIDIA Game-Ready or Studio driver](https://www.nvidia.com/Download/index.aspx)
-  (R525+) — **installed on Windows, not inside WSL**
-- [Docker Desktop for Windows](https://www.docker.com/products/docker-desktop/)
-  with the **WSL 2 backend** enabled in Settings → General
-- [Git for Windows](https://git-scm.com/download/win)
-
-**2. Install WSL 2 + Ubuntu** (from an elevated PowerShell):
-
-```powershell
-wsl --install -d Ubuntu
-wsl --set-default-version 2
-wsl --update
-```
-
-**3. In Docker Desktop**, Settings → Resources → WSL Integration: toggle on your
-Ubuntu distro so `docker` works inside WSL.
-
-**4. Clone and run Waldo from inside WSL** (open Ubuntu, then):
-
-```bash
-# Sanity check — this must print your GPU
-nvidia-smi
-
-# One-time tooling
-sudo apt update && sudo apt install -y make git curl
-curl -LsSf https://astral.sh/uv/install.sh | sh
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt install -y nodejs
-
-# Clone into the WSL filesystem (NOT /mnt/c — it's much slower)
-cd ~ && git clone https://github.com/YOUR_ORG/waldo.git && cd waldo
-cp .env.example .env   # edit and add HF_TOKEN
-
-# Verify GPU in Docker (same command as Linux)
-make gpu-check
-
-# Start Waldo — everything runs as Docker containers, including the GPU workers
-make up PROFILE=nvidia
-
-# Confirm the workers can see the GPU from inside the container
-make gpu-logs
-```
-
-Then open `http://localhost:8000` in your Windows browser — Docker Desktop
-forwards ports automatically.
+The PowerShell installer (`install.ps1`) handles WSL2 + Docker Desktop and then
+hands off to `install.sh` inside Ubuntu. If you'd prefer to drive it manually,
+the chain is the same: install the Windows NVIDIA driver, install WSL2 +
+Ubuntu, install Docker Desktop with WSL integration, then run the Linux
+installer (or `make up PROFILE=nvidia`) inside Ubuntu.
 
 **Windows gotchas:**
 
@@ -286,9 +311,11 @@ Everything comes from environment variables. See `.env.example`.
 |----------|---------|-------------|
 | `DEVICE` | `mps` | `mps` (Apple), `cuda` (NVIDIA), or `cpu` |
 | `DTYPE` | `float32` | `float32`, `bfloat16`, `float16` |
-| `SAM3_MODEL_ID` | `facebook/sam3.1` | HuggingFace transformers model (Linux/CUDA) |
-| `SAM3_MLX_MODEL_ID` | `mlx-community/sam3.1-bf16` | MLX variant (macOS) |
-| `HF_TOKEN` | — | HuggingFace token for model download |
+| `SAM3_MODEL_ID` | `facebook/sam3` | HuggingFace transformers model (Linux/CUDA — needs `model.safetensors`) |
+| `SAM3_MLX_MODEL_ID` | `mlx-community/sam3.1-bf16` | MLX variant (macOS Apple Silicon) |
+| `HF_TOKEN` | — | HuggingFace read token (required) — accept the license on the `facebook/sam3` model page first |
+| `ADMIN_BOOTSTRAP_EMAIL` | `admin@waldo.ai` | First admin's email |
+| `ADMIN_BOOTSTRAP_PASSWORD` | `waldopass` (dev) | First admin's password — **override in production** |
 | `SLACK_WEBHOOK_URL` | — | Training alerts |
 | `NTFY_TOPIC` | — | Push notifications |
 

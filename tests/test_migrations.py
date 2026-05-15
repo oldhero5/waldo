@@ -18,12 +18,12 @@ import os
 
 import pytest
 import sqlalchemy
-from sqlalchemy import inspect, text
-
-from alembic import command
 from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
+from sqlalchemy import inspect, text
+
+from alembic import command
 
 
 def _postgres_dsn() -> str:

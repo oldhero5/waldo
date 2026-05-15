@@ -204,8 +204,13 @@ class TestDataYaml:
         assert "kpt_shape" not in y
 
     def test_pose_yaml(self):
+        import yaml
+
         from labeler.converters.common import generate_data_yaml
 
         y = generate_data_yaml(["person"], task="pose")
-        assert "kpt_shape: [1, 3]" in y
-        assert "nc: 1" in y
+        # safe_dump uses block-style lists; round-trip to assert structure
+        # rather than coupling the test to a flow vs. block style choice.
+        parsed = yaml.safe_load(y)
+        assert parsed["kpt_shape"] == [1, 3]
+        assert parsed["nc"] == 1
