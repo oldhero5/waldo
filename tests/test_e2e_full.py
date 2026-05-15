@@ -6,9 +6,12 @@ Requires:
 - Running app (make dev-app)
 - Running labeler + trainer workers
 - SAM 3 model downloaded
+
+This test hits a live HTTP server at BASE_URL — opt in with WALDO_E2E=1.
 """
 
 import io
+import os
 import time
 
 import httpx
@@ -18,6 +21,10 @@ import pytest
 BASE_URL = "http://localhost:8000"
 
 
+@pytest.mark.skipif(
+    os.environ.get("WALDO_E2E") != "1",
+    reason="Set WALDO_E2E=1 to run against a live stack",
+)
 class TestFullLoopE2E:
     @pytest.fixture(autouse=True)
     def client(self):
