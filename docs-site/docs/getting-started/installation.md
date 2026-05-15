@@ -115,6 +115,7 @@ and sign in with the dev defaults:
 --skip-up                  Don't run docker compose up
 --cpu                      Force CPU even if a GPU is detected
 --gpu nvidia|apple|none    Override GPU detection
+--no-sudo                  Print missing prereqs and exit (install by hand, then re-run with --skip-prereqs)
 --yes                      Non-interactive
 --no-color                 Disable colored output
 ```
@@ -158,6 +159,44 @@ make up                    # auto-routes by OS
 > Silicon labeler uses MLX with `mlx-community/sam3.1-bf16`, a separately
 > repackaged 3.1 checkpoint. `facebook/sam3.1` itself only ships
 > `sam3.1_multiplex.pt` today and isn't loadable via transformers.
+
+## Pure Ubuntu / passworded sudo
+
+The installer pulls Docker, uv, and Node from package managers, which
+require root. On a typical Ubuntu host with a passworded sudo, the script
+warms sudo up once at the start of the prereq step and reuses the cached
+credentials for the rest of the run — so you only type your password once.
+
+When the warm-up runs depends on how you launched the script:
+
+```bash
+# Cleanest: clone first, run from a real terminal — sudo prompts as normal.
+git clone https://github.com/oldhero5/waldo.git
+cd waldo
+./install.sh
+```
+
+```bash
+# Curl-pipe-bash: the installer reads the password from /dev/tty so the
+# prompt still appears even though stdin is the curl pipe.
+curl -fsSL https://raw.githubusercontent.com/oldhero5/waldo/main/install.sh | bash
+```
+
+```bash
+# Pre-authorize first — works on any setup, no surprises mid-run.
+sudo -v && \
+  curl -fsSL https://raw.githubusercontent.com/oldhero5/waldo/main/install.sh | bash
+```
+
+If you're on a host **without sudo** (locked-down corp box, container, etc.),
+pass `--no-sudo`. The installer will print exactly what it would have
+installed and exit:
+
+```bash
+./install.sh --no-sudo
+# install the listed prereqs by hand…
+./install.sh --skip-prereqs
+```
 
 ## NVIDIA: the gotchas
 

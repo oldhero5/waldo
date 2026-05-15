@@ -3,43 +3,122 @@ title: Agent
 sidebar_position: 6
 ---
 
-import Demo from "@site/src/components/Demo";
-
-# Agent Page
+# Agent
 
 Route: `/agent` — Source: [`ui/src/pages/AgentPage.tsx`](https://github.com/oldhero5/waldo/blob/main/ui/src/pages/AgentPage.tsx)
 
-Chat interface for the in-app assistant. Backed by **Gemma 4 (4B)** running natively on Apple Silicon via [`mlx-vlm`](https://github.com/Blaizzy/mlx-vlm), with Ollama as a fallback for non-Mac hosts.
+Waldo ships a **LangGraph ReAct agent** wired up to the platform's own data
+and actions. You ask questions in plain English; the agent calls real Waldo
+tools (read-only and side-effecting), shows you which tools it ran, then
+gives you the answer. The LLM runs **locally via Ollama** — nothing is sent
+to a third-party API.
 
 ![Agent page](/img/screenshots/agent.png)
 
-<Demo
-  src="/img/recordings/agent.mp4"
-  poster="/img/recordings/agent.poster.jpg"
-  caption="Opening the agent panel."
-/>
+## What it can do
 
-## Capabilities
+The agent has these tools available, all auth-scoped to your workspace:
 
-| Capability | What it does |
-| --- | --- |
-| **Insights** | Summarize a labeling job, highlight class imbalance, suggest prompts |
-| **Chat** | Answer free-form questions about the current dataset |
-| **Vision** | Analyze a frame or annotation directly (multimodal — pass an image as context) |
-| **Suggest** | Recommend the next action: more frames? new prompt? larger model? |
+| Tool | Type | What it does |
+| --- | --- | --- |
+| `list_projects` | read | List projects with video counts |
+| `list_videos` | read | List uploaded videos (optionally filtered to a project) |
+| `list_datasets` | read | List completed labeling jobs with annotation counts |
+| `list_models` | read | List trained models with mAP and active state |
+| `list_training_runs` | read | Recent training runs with progress |
+| `get_system_info` | read | Hardware probe — CUDA/MPS/CPU, dtype, active model |
+| `get_training_tips` | read | Hyperparameter recommendations for a dataset size + task |
+| `start_labeling_job` | **action** | Queue a SAM-3 auto-label run on a video |
+| `start_training` | **action** | Queue a YOLO training run on a labeled dataset |
+| `activate_model` | **action** | Mark a trained model active for `/predict/*` |
 
-The same model is wired into the **AI Insights** drawer on the Review page — the agent panel is just a freer interface to the same backend.
+The full-page agent (`/agent`) defaults to **action mode** — if you ask it
+to "label cars on my latest video and start training," it will. Tick the
+**Read-only** toggle in the footer to constrain it to inspection tools.
+
+The floating **AgentPanel** (the spark icon in the lower-right of every
+page) is **read-only by design** — open the full page to take actions.
+
+## How it works
+
+```
+   you ──▶ AgentPage  ──▶  /api/v1/agent/stream  (SSE)
+                              │
+                              ▼
+                       LangGraph ReAct loop
+                       (lib/agent/graph.py)
+                              │
+                              ├──▶ ChatOllama ── http://ollama:11434
+                              │
+                              └──▶ ToolNode ──▶ list_models, start_training, …
+                                       (auth-scoped to your workspace)
+```
+
+Each `/agent/stream` request runs the loop inside an `AgentContext` that
+pins every tool call to your user + workspace. The LLM sees the system
+prompt, your message history, and the tool descriptions; it decides whether
+to answer or to call a tool; the loop iterates until it has a final answer.
+
+The endpoint streams Server-Sent Events:
+
+```
+data: {"type":"tool_call","name":"list_models","args":{}}
+data: {"type":"tool_result","name":"list_models","content":"Models (2): …"}
+data: {"type":"token","content":"You have two trained models …"}
+data: {"type":"done"}
+```
+
+The UI renders each tool call as an inline pill so you can see exactly what
+the agent did.
+
+## Try it
+
+Suggestion chips on first load (and a few you can paste yourself):
+
+- "What models are trained in this workspace?"
+- "Recommend training settings for a 200-frame dataset"
+- "Start a labeling job for 'person' on my latest video"
+- "Activate the model with the best mAP"
+- "Am I running on GPU or CPU right now?"
 
 ## Configuration
 
 | Var | Default | Purpose |
 | --- | --- | --- |
-| `AGENT_MODEL_ID` | `google/gemma-4-e4b-it` | Model id for the MLX-VLM path |
-| `OLLAMA_URL` | `http://localhost:11434` | Fallback Ollama endpoint |
-| `OLLAMA_MODEL` | `gemma2:4b` | Fallback Ollama model |
+| `OLLAMA_URL` | `http://ollama:11434` (in compose) | Where the local LLM lives |
+| `AGENT_MODEL` | `gemma4:e4b` | Ollama tag the agent loads |
+| `AGENT_TEMPERATURE` | `0.2` | Lower = more stable tool-call JSON |
 
-The page picks the MLX path automatically when `mlx-vlm` is importable; otherwise it falls back to Ollama. There is no third path — install one or the other.
+The `ollama` service in `docker-compose.yml` runs on the same network and
+the `ollama-init` one-shot pulls `${WALDO_AGENT_MODEL:-gemma4:e4b}` so the
+first chat works the moment the app reports healthy. To swap models:
+
+```bash
+# Edit .env
+AGENT_MODEL=qwen3:4b
+WALDO_AGENT_MODEL=qwen3:4b
+
+# Pull and restart
+docker compose run --rm ollama-init
+docker compose restart waldo-app
+```
+
+## Health check
+
+```bash
+TOKEN=$(curl -s -X POST http://localhost:8000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@waldo.ai","password":"waldopass"}' \
+  | jq -r .access_token)
+
+curl -s http://localhost:8000/api/v1/agent/health \
+  -H "Authorization: Bearer $TOKEN" | jq
+```
+
+Returns whether Ollama is reachable, whether the configured model is pulled,
+and lists the other models the local Ollama can serve.
 
 ## Privacy
 
-The agent runs locally. Nothing in your dataset, prompts, or frames leaves the host. That's the whole point of running it via MLX or Ollama instead of a hosted API.
+Everything stays on your machine. The model is local. Tool calls touch your
+own database. No telemetry, no third-party LLM API calls.

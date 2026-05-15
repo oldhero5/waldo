@@ -65,6 +65,46 @@ services:
     networks:
       - waldo-net
 
+  # ── AI Agent (Ollama serves the LLM for the LangGraph ReAct loop) ──
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      # Expose for host debugging (curl localhost:11434/api/tags). Internal
+      # traffic from waldo-app uses the docker network, not this mapping.
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      # Keep the model resident so the first chat doesn't pay re-load cost.
+      OLLAMA_KEEP_ALIVE: "30m"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:11434/api/tags"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks:
+      - waldo-net
+
+  # One-shot: pull the agent model on first boot so /api/v1/agent/chat works
+  # the moment the app reports healthy. Idempotent — `ollama pull` is a no-op
+  # when the model already exists locally.
+  ollama-init:
+    image: ollama/ollama:latest
+    entrypoint: >
+      /bin/sh -c "
+        echo 'Pulling agent model: ${WALDO_AGENT_MODEL:-gemma4:e4b}…';
+        OLLAMA_HOST=http://ollama:11434 ollama pull ${WALDO_AGENT_MODEL:-gemma4:e4b};
+        echo 'Agent model ready.';
+      "
+    depends_on:
+      ollama:
+        condition: service_healthy
+    networks:
+      - waldo-net
+    restart: "no"
+
   # ── Application (shared — no GPU needed) ──────────────────
 
   waldo-app:
@@ -79,6 +119,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       MINIO_ENDPOINT: minio:9000
       MINIO_EXTERNAL_ENDPOINT: localhost:9000
+      OLLAMA_URL: http://ollama:11434
     depends_on:
       postgres:
         condition: service_healthy
@@ -86,6 +127,8 @@ services:
         condition: service_healthy
       minio-init:
         condition: service_completed_successfully
+      ollama:
+        condition: service_healthy
     networks:
       - waldo-net
 
@@ -219,6 +262,7 @@ volumes:
   pgdata:
   miniodata:
   model_cache:
+  ollama_data:
 
 networks:
   waldo-net:
