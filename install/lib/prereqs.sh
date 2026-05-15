@@ -116,15 +116,19 @@ ensure_uv() {
 }
 
 ensure_node() {
+    # Vite 8 + rolldown require Node >= 20.19 (or >= 22.12). We require 20.19+
+    # so that `npm run build` in ui/ doesn't crash with "Cannot find native binding".
+    local need_major=20 need_minor=19
     if command -v node >/dev/null 2>&1; then
-        local v
+        local v major minor
         v="$(node --version 2>/dev/null | sed 's/^v//')"
-        local major="${v%%.*}"
-        if [ "${major:-0}" -ge 20 ]; then
+        major="${v%%.*}"; minor="${v#*.}"; minor="${minor%%.*}"
+        if [ "${major:-0}" -gt "$need_major" ] \
+           || { [ "${major:-0}" -eq "$need_major" ] && [ "${minor:-0}" -ge "$need_minor" ]; }; then
             log_ok "node v$v"
             return 0
         fi
-        log_warn "node v$v is too old (need 20+) — installing newer"
+        log_warn "node v$v is too old (need ${need_major}.${need_minor}+) — installing newer"
     else
         log_warn "node missing — installing"
     fi

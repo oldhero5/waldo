@@ -231,7 +231,26 @@ else
     fi
 fi
 
-# ── Step 8: bring up the stack ───────────────────────────────────
+# ── Step 8: build the React UI (vite -> app/static, baked into the image) ──
+# The app container serves the SPA out of app/static. Vite's outDir is
+# ../app/static, so we have to build BEFORE `docker compose build` copies app/.
+if [ "$SKIP_UP" = "1" ]; then
+    log_step "Skipping UI build (--skip-up)"
+else
+    log_step "Building UI (vite → app/static)"
+    if [ ! -d "$WALDO_DIR/ui/node_modules" ]; then
+        log_info "Installing UI deps (npm install --legacy-peer-deps)…"
+        ( cd "$WALDO_DIR/ui" && npm install --legacy-peer-deps --no-audit --no-fund ) 2>&1 | sed 's/^/      /'
+    fi
+    ( cd "$WALDO_DIR/ui" && npm run build ) 2>&1 | sed 's/^/      /'
+    if [ -f "$WALDO_DIR/app/static/index.html" ]; then
+        log_ok "UI built ($(du -sh "$WALDO_DIR/app/static" 2>/dev/null | awk '{print $1}'))"
+    else
+        log_warn "UI build finished but app/static/index.html is missing — the app container will return 404 at /."
+    fi
+fi
+
+# ── Step 9: bring up the stack ───────────────────────────────────
 if [ "$SKIP_UP" = "1" ]; then
     log_step "Skipping stack startup (--skip-up)"
 else
