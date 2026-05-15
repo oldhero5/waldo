@@ -17,6 +17,9 @@
 #   --gpu nvidia|apple|none   Override GPU detection.
 #   --hf-token TOKEN   Hugging Face read token (otherwise prompted up front,
 #                      or read from $HF_TOKEN). Required for SAM 3 weights.
+#   --no-sudo          Don't try to install prereqs with sudo. Print a list of
+#                      what's missing and exit so you can install by hand,
+#                      then re-run with --skip-prereqs.
 #   --yes              Non-interactive: accept all prompts.
 #   --no-color         Disable colored output.
 #   -h, --help         Show this help.
@@ -50,6 +53,7 @@ while [ $# -gt 0 ]; do
         --cpu)         FORCE_CPU=1; shift ;;
         --gpu)         GPU_OVERRIDE="$2"; shift 2 ;;
         --hf-token)    export HF_TOKEN="$2"; shift 2 ;;
+        --no-sudo)     export WALDO_NO_SUDO=1; shift ;;
         --yes|-y)      export WALDO_ASSUME_YES=1; shift ;;
         --no-color)    export NO_COLOR=1; shift ;;
         -h|--help)     print_help; exit 0 ;;
@@ -206,10 +210,20 @@ if [ "$SKIP_MODELS" != "1" ] && [ -z "${HF_TOKEN:-}" ]; then
 fi
 
 # ── Step 3: prereqs ──────────────────────────────────────────────
-if [ "$SKIP_PREREQS" = "1" ]; then
+if [ "${WALDO_NO_SUDO:-0}" = "1" ]; then
+    _no_sudo_report
+    log_info ""
+    log_info "Re-run with --skip-prereqs once everything above is installed."
+    exit 0
+elif [ "$SKIP_PREREQS" = "1" ]; then
     log_step "Skipping prerequisite install (--skip-prereqs)"
 else
     log_step "Installing prerequisites"
+    # Warm sudo creds once so the user types their password at most once
+    # (a no-op when already root or sudo is passwordless).
+    if [ "$WALDO_OS" = "linux" ] && [ "$WALDO_IS_WSL" != "1" ]; then
+        _sudo_warmup || log_warn "Continuing without warm sudo — individual steps may prompt or fail."
+    fi
     ensure_curl
     ensure_git
     ensure_make
