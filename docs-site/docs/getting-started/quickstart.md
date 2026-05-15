@@ -17,20 +17,37 @@ This walks you through ingesting a video, running auto-labeling, reviewing the r
 
 ## 0. Bring up the stack
 
+One command. The installer picks the right Docker profile for your platform
+(NVIDIA, Apple MPS, or CPU), installs missing prerequisites, and starts the
+stack:
+
+**macOS, Linux, WSL:**
+
 ```bash
-git clone https://github.com/oldhero5/waldo.git
-cd waldo
-cp .env.example .env
-docker compose up -d
+curl -fsSL https://raw.githubusercontent.com/oldhero5/waldo/main/install.sh | bash
 ```
 
-Wait ~30 seconds for Postgres to migrate, then:
+**Windows (PowerShell):**
+
+```powershell
+irm https://raw.githubusercontent.com/oldhero5/waldo/main/install.ps1 | iex
+```
+
+**Windows (cmd.exe):**
+
+```cmd
+curl -fsSL https://raw.githubusercontent.com/oldhero5/waldo/main/install.cmd -o install.cmd && install.cmd && del install.cmd
+```
+
+The full set of options lives in the [Installation guide](./installation).
+
+Once it finishes, grab the bootstrap admin password from the logs:
 
 ```bash
 docker compose logs app | grep -A 2 "bootstrapped first admin"
 ```
 
-Save the printed admin password — it's the only time it's shown.
+Save it — it's the only time it's shown.
 
 ## 1. Sign in & create a dataset
 

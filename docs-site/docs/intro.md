@@ -60,7 +60,20 @@ Every step has a UI page and an API endpoint. Use whichever you like — they're
 
 ## Five-minute path
 
-1. [Install with Docker](./getting-started/installation) — `docker compose up -d`
+1. **Install Waldo** — one command, picks the right GPU profile for you:
+
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/oldhero5/waldo/main/install.sh | bash
+   ```
+
+   Windows PowerShell:
+
+   ```powershell
+   irm https://raw.githubusercontent.com/oldhero5/waldo/main/install.ps1 | iex
+   ```
+
+   Full details (flags, manual install, NVIDIA gotchas) in the
+   [Installation guide](./getting-started/installation).
 2. [Walk through the quickstart](./getting-started/quickstart) — upload a clip, auto-label, train, deploy
 3. Skim the [UI Tour](./ui/overview) to see what every page does
 4. Bookmark the [API reference](./api/overview) for when you start scripting
