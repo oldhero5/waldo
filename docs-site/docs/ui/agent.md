@@ -118,6 +118,55 @@ curl -s http://localhost:8000/api/v1/agent/health \
 Returns whether Ollama is reachable, whether the configured model is pulled,
 and lists the other models the local Ollama can serve.
 
+## Troubleshooting
+
+**`/agent/chat` returns 401 even though I'm logged in.**
+
+You're loading a stale UI bundle from before the agent was wired up — the
+old bundle hits `/api/v1/agent/chat` with the wrong content-type and the
+backend rejects it. Hard-refresh the browser:
+
+- Chrome / Edge: `Ctrl+Shift+R` (Windows / Linux) or `Cmd+Shift+R` (macOS)
+- Or DevTools → right-click reload → **Empty Cache and Hard Reload**
+
+If you upgraded Waldo with `git pull` after PR #3, also rebuild the app
+image so the new SPA is baked in:
+
+```bash
+( cd ui && npm run build ) && \
+  docker compose --profile nvidia up -d --build waldo-app
+```
+
+(`./install.sh` does both of these for you on every run.)
+
+**`/agent/chat` hangs for ~30s then errors.**
+
+The model isn't loaded yet. On first boot, `ollama-init` pulls `gemma4:e4b`
+(~9.6 GB) — that takes 5–10 minutes on a typical home connection. Watch:
+
+```bash
+docker logs -f waldo-ollama-init-1
+```
+
+When the pull finishes, `docker exec waldo-ollama-1 ollama list` will show
+the model. Subsequent chats are sub-second after the first prompt warms
+the model into memory.
+
+**Ollama container is `unhealthy` and `waldo-app` won't start.**
+
+The healthcheck uses `ollama list` (the CLI bundled in the image — `curl`
+isn't). If you see this on a host with limited GPU memory, check
+`docker logs waldo-ollama-1` for OOM or device errors. Free up VRAM by
+setting a smaller model:
+
+```bash
+# .env
+AGENT_MODEL=gemma4:e2b           # ~7.2 GB instead of 9.6
+WALDO_AGENT_MODEL=gemma4:e2b
+```
+
+…then `docker compose run --rm ollama-init && docker compose restart waldo-app`.
+
 ## Privacy
 
 Everything stays on your machine. The model is local. Tool calls touch your

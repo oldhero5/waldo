@@ -165,6 +165,22 @@ curl -X POST http://localhost:8000/api/v1/predict/image \
 
 That's the round trip — raw footage to a deployed model in one session.
 
+## 8. Talk to it (optional)
+
+`/agent` is a local LangGraph agent that calls real Waldo tools on your
+behalf — same database, same Celery dispatch, but you ask in plain English.
+Try:
+
+> "What models do I have? Which one has the best mAP? Activate it."
+
+> "Recommend training settings for a 200-frame dataset on CPU."
+
+> "Start a labeling job for 'person' on my latest video."
+
+The model (`gemma4:e4b`) runs in a sidecar Ollama container — nothing leaves
+your host. First boot pulls ~9.6 GB; after that, chats are sub-second. Tick
+**Read-only** in the footer to disable the action tools.
+
 ## Where next
 
 - [UI Tour](../ui/overview) — every page, screenshotted and explained
