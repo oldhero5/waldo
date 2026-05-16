@@ -1,0 +1,569 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Waldo · Codebase Map</title>
+<style>
+  :root {
+    --bg: #faf7f2;
+    --bg-card: #ffffff;
+    --bg-inset: #f3eee5;
+    --bg-code: #1f2630;
+    --fg: #1a1f29;
+    --fg-muted: #6b7280;
+    --fg-faint: #9ca3af;
+    --border: #e6dfd0;
+    --accent: #2563eb;
+    --accent-soft: #dbeafe;
+    --green: #16a34a;
+    --red: #dc2626;
+    --orange: #ea580c;
+    --purple: #7c3aed;
+    --serif: ui-serif, Georgia, "Iowan Old Style", "Apple Garamond", serif;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115;
+      --bg-card: #161a22;
+      --bg-inset: #1f2630;
+      --bg-code: #0a0d12;
+      --fg: #e7e9ee;
+      --fg-muted: #9ba3af;
+      --fg-faint: #6b7280;
+      --border: #232a34;
+      --accent: #60a5fa;
+      --accent-soft: #1e3a8a;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+  }
+  header {
+    padding: 28px 32px 18px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-card);
+    position: sticky; top: 0; z-index: 5;
+  }
+  h1 {
+    margin: 0 0 4px;
+    font-family: var(--serif);
+    font-size: 28px;
+    font-weight: 700;
+  }
+  .subtitle { color: var(--fg-muted); font-size: 13px; }
+  .subtitle code { font-family: var(--mono); font-size: 12px; background: var(--bg-inset); padding: 1px 6px; border-radius: 4px; }
+  .container { max-width: 1400px; margin: 0 auto; padding: 24px 32px 64px; }
+  .toolbar {
+    display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+    padding: 12px 32px;
+    background: var(--bg-card);
+    border-bottom: 1px solid var(--border);
+  }
+  .toolbar input {
+    flex: 1 1 280px; min-width: 240px;
+    padding: 8px 12px; border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg-inset); color: var(--fg);
+    font: inherit;
+  }
+  .pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 4px 10px; border-radius: 999px;
+    background: var(--bg-inset); color: var(--fg-muted);
+    font-size: 12px; font-weight: 500;
+    border: 1px solid var(--border);
+    cursor: pointer; user-select: none;
+  }
+  .pill.active { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+  .pill .count { color: var(--fg-faint); font-variant-numeric: tabular-nums; }
+
+  /* Layout */
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 1024px) { .grid { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 20px 14px;
+  }
+  .card h2 {
+    margin: 0 0 12px;
+    font-family: var(--serif);
+    font-size: 18px;
+    display: flex; align-items: baseline; gap: 8px;
+  }
+  .card h2 .count {
+    font: 12px var(--mono); color: var(--fg-faint);
+    background: var(--bg-inset); padding: 2px 8px; border-radius: 999px;
+  }
+  .card-full { grid-column: 1 / -1; }
+  .row {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 8px 0;
+    border-bottom: 1px dashed var(--border);
+  }
+  .row:last-child { border-bottom: none; }
+  .row .head { font-weight: 600; }
+  .row .meta { color: var(--fg-muted); font-size: 12px; }
+  .row .desc { color: var(--fg); margin-top: 2px; font-size: 13px; }
+  .tag {
+    display: inline-block; padding: 1px 7px; border-radius: 4px;
+    font: 11px var(--mono); background: var(--bg-inset); color: var(--fg-muted);
+    border: 1px solid var(--border);
+  }
+  .tag-method-GET    { background: #dbeafe; color: #1e40af; border-color: #93c5fd; }
+  .tag-method-POST   { background: #dcfce7; color: #166534; border-color: #86efac; }
+  .tag-method-PUT    { background: #fef3c7; color: #92400e; border-color: #fcd34d; }
+  .tag-method-PATCH  { background: #fef3c7; color: #92400e; border-color: #fcd34d; }
+  .tag-method-DELETE { background: #fee2e2; color: #991b1b; border-color: #fca5a5; }
+  .tag-action { background: #fee2e2; color: #991b1b; border-color: #fca5a5; }
+  .tag-read   { background: #dcfce7; color: #166534; border-color: #86efac; }
+
+  code, .mono { font-family: var(--mono); font-size: 12px; }
+  .path { color: var(--accent); }
+  .desc-mono { font-family: var(--mono); font-size: 11.5px; color: var(--fg-muted); }
+
+  /* Service diagram */
+  #diagram { width: 100%; height: 460px; background: var(--bg-inset); border-radius: 8px; overflow: hidden; }
+  .node-box { fill: var(--bg-card); stroke: var(--border); stroke-width: 1; }
+  .node-box.kind-app    { stroke: var(--accent); stroke-width: 2; }
+  .node-box.kind-worker { stroke: var(--orange); stroke-width: 1.5; }
+  .node-box.kind-llm    { stroke: var(--purple); stroke-width: 1.5; }
+  .node-box.kind-infra  { stroke: var(--fg-faint); stroke-width: 1; stroke-dasharray: 3 2; }
+  .node-label { fill: var(--fg); font: 12px var(--mono); }
+  .node-sub   { fill: var(--fg-muted); font: 10px -apple-system, sans-serif; }
+  .edge { stroke: var(--fg-faint); stroke-width: 1.2; fill: none; opacity: 0.6; }
+  .edge-label { fill: var(--fg-muted); font: 10px var(--mono); }
+
+  /* File tree */
+  .tree { font: 12px/1.5 var(--mono); }
+  .tree details { margin: 0; }
+  .tree summary { cursor: pointer; padding: 2px 0; user-select: none; }
+  .tree summary:hover { color: var(--accent); }
+  .tree .dir { color: var(--fg); font-weight: 600; }
+  .tree .file { padding: 1px 0 1px 18px; display: flex; gap: 8px; }
+  .tree .file:hover { background: var(--bg-inset); border-radius: 4px; }
+  .tree .file .name { color: var(--accent); flex-shrink: 0; }
+  .tree .file .summary { color: var(--fg-muted); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tree .file .lines { color: var(--fg-faint); flex-shrink: 0; }
+
+  .hidden { display: none !important; }
+  details > summary { list-style: none; }
+  details > summary::-webkit-details-marker { display: none; }
+  details > summary::before { content: "▸"; display: inline-block; width: 14px; color: var(--fg-faint); transition: transform 100ms; }
+  details[open] > summary::before { transform: rotate(90deg); }
+
+  footer { padding: 24px 32px; color: var(--fg-faint); font-size: 12px; text-align: center; }
+  footer a { color: var(--fg-muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Waldo · Codebase Map</h1>
+  <div class="subtitle">
+    <span id="meta-repo"></span> · generated <span id="meta-date"></span> ·
+    <a href="codebase-map.json" download>download JSON</a>
+  </div>
+</header>
+
+<div class="toolbar">
+  <input id="search" type="search" placeholder="Search anything: file path, endpoint, table, tool name…" autocomplete="off">
+  <span class="pill active" data-section="all">all</span>
+  <span class="pill" data-section="services">services <span class="count" data-count="services"></span></span>
+  <span class="pill" data-section="endpoints">endpoints <span class="count" data-count="endpoints"></span></span>
+  <span class="pill" data-section="tasks">tasks <span class="count" data-count="tasks"></span></span>
+  <span class="pill" data-section="tables">tables <span class="count" data-count="tables"></span></span>
+  <span class="pill" data-section="pages">pages <span class="count" data-count="pages"></span></span>
+  <span class="pill" data-section="tools">agent tools <span class="count" data-count="tools"></span></span>
+  <span class="pill" data-section="modules">modules <span class="count" data-count="modules"></span></span>
+</div>
+
+<div class="container">
+  <div class="grid">
+    <section class="card card-full" data-section="services">
+      <h2>Services <span class="count" data-count="services"></span></h2>
+      <svg id="diagram"></svg>
+      <div id="services-list" style="margin-top:12px"></div>
+    </section>
+
+    <section class="card" data-section="endpoints">
+      <h2>API endpoints <span class="count" data-count="endpoints"></span></h2>
+      <div id="endpoints-list"></div>
+    </section>
+
+    <section class="card" data-section="tasks">
+      <h2>Celery tasks <span class="count" data-count="tasks"></span></h2>
+      <div id="tasks-list"></div>
+    </section>
+
+    <section class="card" data-section="tables">
+      <h2>Database tables <span class="count" data-count="tables"></span></h2>
+      <div id="tables-list"></div>
+    </section>
+
+    <section class="card" data-section="pages">
+      <h2>Frontend pages <span class="count" data-count="pages"></span></h2>
+      <div id="pages-list"></div>
+    </section>
+
+    <section class="card card-full" data-section="tools">
+      <h2>Agent tools <span class="count" data-count="tools"></span></h2>
+      <div id="tools-list"></div>
+    </section>
+
+    <section class="card card-full" data-section="modules">
+      <h2>Modules <span class="count" data-count="modules"></span></h2>
+      <div class="tree" id="tree"></div>
+    </section>
+  </div>
+</div>
+
+<footer>
+  Built from <code>codebase-map.json</code>. Run <code>python3 docs-site/scripts/build-codebase-map.py</code> to refresh.
+</footer>
+
+<script>
+const SERVICE_LAYOUT = {
+  // x, y in a 1200x420 grid
+  "ollama":          { x: 940, y: 80,  group: "llm" },
+  "ollama-init":     { x: 1100, y: 80, group: "llm" },
+  "waldo-app":       { x: 600, y: 200, group: "app" },
+  "postgres":        { x: 200, y: 80,  group: "infra" },
+  "redis":           { x: 360, y: 80,  group: "infra" },
+  "minio":           { x: 200, y: 200, group: "infra" },
+  "minio-init":      { x: 360, y: 200, group: "infra" },
+  "waldo-labeler":          { x: 200, y: 340, group: "worker" },
+  "waldo-trainer":          { x: 360, y: 340, group: "worker" },
+  "waldo-labeler-nvidia":   { x: 600, y: 340, group: "worker" },
+  "waldo-trainer-nvidia":   { x: 800, y: 340, group: "worker" },
+};
+
+async function main() {
+  const res = await fetch("codebase-map.json");
+  if (!res.ok) {
+    document.querySelector(".container").innerHTML =
+      '<div class="card"><h2>Failed to load</h2><p>codebase-map.json not found next to this page. Run the regenerator script and reload.</p></div>';
+    return;
+  }
+  const data = await res.json();
+
+  document.getElementById("meta-repo").textContent = data.repo;
+  document.getElementById("meta-date").textContent = data.generated_at;
+
+  // Counts
+  const counts = {
+    services: data.services.length,
+    endpoints: data.api_endpoints.length,
+    tasks: data.celery_tasks.length,
+    tables: data.db_tables.length,
+    pages: data.frontend_pages.length,
+    tools: data.agent_tools.length,
+    modules: data.modules.length,
+  };
+  document.querySelectorAll("[data-count]").forEach(el => {
+    el.textContent = counts[el.dataset.count] ?? "";
+  });
+
+  renderDiagram(data);
+  renderServices(data);
+  renderEndpoints(data);
+  renderTasks(data);
+  renderTables(data);
+  renderPages(data);
+  renderTools(data);
+  renderTree(data);
+
+  bindFilter();
+  bindSearch();
+}
+
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+
+function renderDiagram(data) {
+  const svg = document.getElementById("diagram");
+  const W = 1240, H = 440;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.innerHTML = "";
+
+  const NS = "http://www.w3.org/2000/svg";
+  const positions = {};
+  data.services.forEach(s => { positions[s.id] = SERVICE_LAYOUT[s.id] ?? { x: 600, y: 200, group: s.kind }; });
+
+  // Edges from depends_on (subset of service_to_service)
+  const edges = (data.graphs?.service_to_service ?? []).filter(e => positions[e.from] && positions[e.to]);
+  edges.forEach(e => {
+    const a = positions[e.from], b = positions[e.to];
+    const path = document.createElementNS(NS, "path");
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const cx1 = a.x + dx * 0.3, cy1 = a.y;
+    const cx2 = b.x - dx * 0.3, cy2 = b.y;
+    path.setAttribute("d", `M ${a.x} ${a.y} C ${cx1} ${cy1} ${cx2} ${cy2} ${b.x} ${b.y}`);
+    path.setAttribute("class", "edge");
+    svg.appendChild(path);
+  });
+
+  // Nodes
+  data.services.forEach(s => {
+    const p = positions[s.id];
+    const g = document.createElementNS(NS, "g");
+    g.setAttribute("transform", `translate(${p.x - 80}, ${p.y - 22})`);
+
+    const rect = document.createElementNS(NS, "rect");
+    rect.setAttribute("class", `node-box kind-${s.kind}`);
+    rect.setAttribute("width", 160);
+    rect.setAttribute("height", 44);
+    rect.setAttribute("rx", 8);
+    g.appendChild(rect);
+
+    const t1 = document.createElementNS(NS, "text");
+    t1.setAttribute("class", "node-label");
+    t1.setAttribute("x", 80);
+    t1.setAttribute("y", 18);
+    t1.setAttribute("text-anchor", "middle");
+    t1.textContent = s.id;
+    g.appendChild(t1);
+
+    const t2 = document.createElementNS(NS, "text");
+    t2.setAttribute("class", "node-sub");
+    t2.setAttribute("x", 80);
+    t2.setAttribute("y", 34);
+    t2.setAttribute("text-anchor", "middle");
+    t2.textContent = (s.profile ? `[${s.profile}] ` : "") + s.kind;
+    g.appendChild(t2);
+
+    svg.appendChild(g);
+  });
+}
+
+function renderServices(data) {
+  const root = document.getElementById("services-list");
+  data.services.forEach(s => {
+    const r = el("div", "row");
+    const head = el("div");
+    head.appendChild(el("span", "head", s.name));
+    head.appendChild(el("span", "tag", " " + s.kind));
+    if (s.profile) head.appendChild(el("span", "tag", " profile=" + s.profile));
+    r.appendChild(head);
+    if (s.description) r.appendChild(el("div", "desc", s.description));
+    if (s.depends_on?.length) {
+      const m = el("div", "meta");
+      m.textContent = "depends_on: " + s.depends_on.join(", ");
+      r.appendChild(m);
+    }
+    if (s.ports?.length) {
+      const m = el("div", "meta");
+      m.textContent = "ports: " + s.ports.join(", ");
+      r.appendChild(m);
+    }
+    if (s.image_or_dockerfile) {
+      const m = el("div", "desc-mono");
+      m.textContent = s.image_or_dockerfile;
+      r.appendChild(m);
+    }
+    r.dataset.search = [s.id, s.name, s.kind, s.description, ...(s.depends_on ?? [])].join(" ").toLowerCase();
+    root.appendChild(r);
+  });
+}
+
+function renderEndpoints(data) {
+  const root = document.getElementById("endpoints-list");
+  // Group by router (module).
+  const byMod = {};
+  data.api_endpoints.forEach(e => { (byMod[e.module] ||= []).push(e); });
+  Object.keys(byMod).sort().forEach(mod => {
+    const det = el("details");
+    const sum = el("summary");
+    sum.appendChild(el("span", "dir", mod));
+    sum.appendChild(el("span", "meta", " (" + byMod[mod].length + ")"));
+    det.appendChild(sum);
+    byMod[mod].forEach(e => {
+      const r = el("div", "row");
+      const head = el("div");
+      head.appendChild(el("span", "tag tag-method-" + e.method, e.method));
+      head.appendChild(document.createTextNode(" "));
+      head.appendChild(el("code", "path", e.path));
+      if (e.auth === "required") head.appendChild(el("span", "tag", " auth"));
+      if (e.auth === "none")     head.appendChild(el("span", "tag", " public"));
+      r.appendChild(head);
+      if (e.summary) r.appendChild(el("div", "desc", e.summary));
+      r.dataset.search = [e.method, e.path, e.summary, e.module, e.auth].join(" ").toLowerCase();
+      det.appendChild(r);
+    });
+    root.appendChild(det);
+  });
+}
+
+function renderTasks(data) {
+  const root = document.getElementById("tasks-list");
+  data.celery_tasks.forEach(t => {
+    const r = el("div", "row");
+    const head = el("div");
+    head.appendChild(el("code", "head", t.name));
+    if (t.queue && t.queue !== "default" && t.queue !== "celery") {
+      head.appendChild(el("span", "tag", " queue=" + t.queue));
+    }
+    r.appendChild(head);
+    if (t.summary) r.appendChild(el("div", "desc", t.summary));
+    if (t.module)  r.appendChild(el("div", "desc-mono", t.module));
+    r.dataset.search = [t.name, t.summary, t.module, t.queue].join(" ").toLowerCase();
+    root.appendChild(r);
+  });
+}
+
+function renderTables(data) {
+  const root = document.getElementById("tables-list");
+  data.db_tables.forEach(t => {
+    const r = el("div", "row");
+    const head = el("div");
+    head.appendChild(el("code", "head", t.name));
+    r.appendChild(head);
+    if (t.summary) r.appendChild(el("div", "desc", t.summary));
+    if (t.columns?.length) {
+      const cols = el("div", "desc-mono");
+      cols.textContent = "columns: " + t.columns.slice(0, 8).join(", ") + (t.columns.length > 8 ? `, …(+${t.columns.length - 8})` : "");
+      r.appendChild(cols);
+    }
+    if (t.fk_to?.length) {
+      const fks = el("div", "meta");
+      fks.textContent = "fk → " + t.fk_to.join(", ");
+      r.appendChild(fks);
+    }
+    r.dataset.search = [t.name, t.summary, ...(t.columns ?? [])].join(" ").toLowerCase();
+    root.appendChild(r);
+  });
+}
+
+function renderPages(data) {
+  const root = document.getElementById("pages-list");
+  data.frontend_pages.forEach(p => {
+    const r = el("div", "row");
+    const head = el("div");
+    head.appendChild(el("code", "head path", p.route));
+    if (p.lazy) head.appendChild(el("span", "tag", " lazy"));
+    r.appendChild(head);
+    if (p.summary) r.appendChild(el("div", "desc", p.summary));
+    if (p.file)    r.appendChild(el("div", "desc-mono", p.file));
+    if (p.calls_endpoints?.length) {
+      const e = el("div", "meta");
+      e.textContent = "calls: " + p.calls_endpoints.slice(0, 6).join(", ") +
+                      (p.calls_endpoints.length > 6 ? `, …(+${p.calls_endpoints.length - 6})` : "");
+      r.appendChild(e);
+    }
+    r.dataset.search = [p.route, p.summary, p.file, ...(p.calls_endpoints ?? [])].join(" ").toLowerCase();
+    root.appendChild(r);
+  });
+}
+
+function renderTools(data) {
+  const root = document.getElementById("tools-list");
+  // Two-column grid for compactness
+  root.style.display = "grid";
+  root.style.gridTemplateColumns = "repeat(auto-fit, minmax(280px, 1fr))";
+  root.style.gap = "8px 18px";
+  data.agent_tools.forEach(t => {
+    const r = el("div", "row");
+    r.style.borderBottom = "1px dashed var(--border)";
+    const head = el("div");
+    head.appendChild(el("code", "head", t.name));
+    head.appendChild(document.createTextNode(" "));
+    head.appendChild(el("span", "tag tag-" + t.kind, t.kind));
+    r.appendChild(head);
+    if (t.summary) r.appendChild(el("div", "desc", t.summary));
+    r.dataset.search = [t.name, t.kind, t.summary].join(" ").toLowerCase();
+    root.appendChild(r);
+  });
+}
+
+function renderTree(data) {
+  // Build a nested tree from module paths.
+  const tree = {};
+  data.modules.forEach(m => {
+    const parts = m.path.split("/");
+    let cur = tree;
+    for (let i = 0; i < parts.length - 1; i++) {
+      cur[parts[i]] ||= { __children: {}, __isDir: true };
+      cur = cur[parts[i]].__children;
+    }
+    cur[parts[parts.length - 1]] = { __module: m };
+  });
+
+  const root = document.getElementById("tree");
+  root.appendChild(buildTree(tree, ""));
+}
+
+function buildTree(node, parentPath) {
+  const frag = document.createDocumentFragment();
+  const dirs = [];
+  const files = [];
+  for (const k of Object.keys(node).sort()) {
+    if (k.startsWith("__")) continue;
+    if (node[k].__isDir) dirs.push(k); else files.push(k);
+  }
+  // Dirs first.
+  dirs.forEach(d => {
+    const det = el("details");
+    if (parentPath === "") det.open = true; // top-level open
+    const sum = el("summary", "dir");
+    sum.textContent = d + "/";
+    det.appendChild(sum);
+    det.appendChild(buildTree(node[d].__children, parentPath + d + "/"));
+    frag.appendChild(det);
+  });
+  files.forEach(f => {
+    const m = node[f].__module;
+    const row = el("div", "file");
+    row.appendChild(el("span", "name", f));
+    row.appendChild(el("span", "summary", m.summary || ""));
+    row.appendChild(el("span", "lines", m.lines + "ℓ"));
+    row.title = m.path + "\n" + (m.summary || "(no summary)");
+    row.dataset.search = [m.path, m.summary, m.kind, ...(m.exports ?? [])].join(" ").toLowerCase();
+    frag.appendChild(row);
+  });
+  return frag;
+}
+
+function bindFilter() {
+  const pills = document.querySelectorAll(".pill[data-section]");
+  pills.forEach(p => p.addEventListener("click", () => {
+    pills.forEach(x => x.classList.remove("active"));
+    p.classList.add("active");
+    const want = p.dataset.section;
+    document.querySelectorAll(".card[data-section]").forEach(card => {
+      card.classList.toggle("hidden", want !== "all" && card.dataset.section !== want);
+    });
+  }));
+}
+
+function bindSearch() {
+  const input = document.getElementById("search");
+  input.addEventListener("input", () => {
+    const q = input.value.trim().toLowerCase();
+    document.querySelectorAll("[data-search]").forEach(row => {
+      const hit = !q || row.dataset.search.includes(q);
+      row.classList.toggle("hidden", !hit);
+    });
+    // Auto-expand any <details> that has visible matches.
+    document.querySelectorAll("details").forEach(d => {
+      if (q) {
+        const anyHit = [...d.querySelectorAll("[data-search]")].some(r => !r.classList.contains("hidden"));
+        d.open = anyHit;
+      }
+    });
+  });
+}
+
+main();
+</script>
+</body>
+</html>

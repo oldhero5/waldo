@@ -37,6 +37,7 @@ const sidebars: SidebarsConfig = {
         "architecture/overview",
         "architecture/data-model",
         "architecture/security",
+        "architecture/codebase-map",
       ],
     },
     {
