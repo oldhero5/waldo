@@ -46,7 +46,8 @@ Most labeling tools assume you have humans drawing boxes. Waldo assumes you have
                                        └──────────  feedback loop  ◄────────────────┘
 ```
 
-Every step has a UI page and an API endpoint. Use whichever you like — they're the same surface.
+Every step has a UI page and an API endpoint — and a [local AI agent](./ui/agent)
+that drives those endpoints for you. Use whichever you like; they're the same surface.
 
 ## What's in these docs
 

@@ -244,6 +244,19 @@ make download-models # Download SAM 3 weights
 | Review | `/review/:jobId` | Annotation reviewer with hotkeys |
 | Train | `/train/:jobId` | Variant picker, hyperparameters, live metrics |
 | Deploy | `/deploy` | Endpoints, test console, model registry, monitoring |
+| Agent | `/agent` | Local LangGraph agent (Ollama + `gemma4:e4b`) — ask in plain English, it calls real Waldo tools to inspect data and run jobs on your behalf |
+
+## AI Agent
+
+`/agent` ships a LangGraph ReAct agent backed by a local Ollama (no
+third-party API). It can list your projects/datasets/models, recommend
+training settings, and — with the action toggle on — start labeling jobs,
+launch training runs, and activate models.
+
+The compose stack runs Ollama as a sidecar service and an `ollama-init`
+one-shot pulls `gemma4:e4b` (~9.6 GB) on first boot. After that, chats
+stream in real time. See the [Agent docs](docs-site/docs/ui/agent.md) for
+the tool list, SSE event shapes, and troubleshooting.
 
 ## API
 
