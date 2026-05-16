@@ -1,0 +1,3066 @@
+{
+  "generated_at": "2026-05-16",
+  "repo": "oldhero5/waldo",
+  "main_branch": "main",
+  "services": [
+    {
+      "id": "postgres",
+      "name": "postgres",
+      "kind": "infra",
+      "description": "Primary database \u2014 workspaces, projects, jobs, models.",
+      "image_or_dockerfile": "postgres:16-alpine",
+      "ports": [
+        "5432:5432"
+      ],
+      "depends_on": [],
+      "profile": null
+    },
+    {
+      "id": "redis",
+      "name": "redis",
+      "kind": "infra",
+      "description": "Celery broker + cache.",
+      "image_or_dockerfile": "redis:7-alpine",
+      "ports": [
+        "6379:6379"
+      ],
+      "depends_on": [],
+      "profile": null
+    },
+    {
+      "id": "minio",
+      "name": "minio",
+      "kind": "infra",
+      "description": "S3-compatible object store for videos, frames, weights.",
+      "image_or_dockerfile": "minio/minio:latest",
+      "ports": [
+        "9000:9000",
+        "9001:9001"
+      ],
+      "depends_on": [],
+      "profile": null
+    },
+    {
+      "id": "minio-init",
+      "name": "minio-init",
+      "kind": "infra",
+      "description": "One-shot bucket creation.",
+      "image_or_dockerfile": "minio/mc",
+      "ports": [],
+      "depends_on": [
+        "minio"
+      ],
+      "profile": null
+    },
+    {
+      "id": "ollama",
+      "name": "ollama",
+      "kind": "llm",
+      "description": "Local LLM server for the agent (gemma4:e4b by default).",
+      "image_or_dockerfile": "ollama/ollama:latest",
+      "ports": [
+        "11434:11434"
+      ],
+      "depends_on": [],
+      "profile": null
+    },
+    {
+      "id": "ollama-init",
+      "name": "ollama-init",
+      "kind": "llm",
+      "description": "One-shot model pull on first boot.",
+      "image_or_dockerfile": "ollama/ollama:latest",
+      "ports": [],
+      "depends_on": [
+        "ollama"
+      ],
+      "profile": null
+    },
+    {
+      "id": "waldo-app",
+      "name": "waldo-app",
+      "kind": "app",
+      "description": "FastAPI app \u2014 REST API, WebSocket, SPA host.",
+      "image_or_dockerfile": "app/Dockerfile",
+      "ports": [
+        "8000:8000"
+      ],
+      "depends_on": [
+        "postgres",
+        "redis",
+        "minio-init",
+        "ollama"
+      ],
+      "profile": null
+    },
+    {
+      "id": "waldo-labeler",
+      "name": "waldo-labeler",
+      "kind": "worker",
+      "description": "SAM 3 auto-labeling worker (Apple/CPU).",
+      "image_or_dockerfile": "labeler/Dockerfile.apple",
+      "ports": [],
+      "depends_on": [
+        "postgres",
+        "redis",
+        "minio-init"
+      ],
+      "profile": "apple"
+    },
+    {
+      "id": "waldo-trainer",
+      "name": "waldo-trainer",
+      "kind": "worker",
+      "description": "YOLO training worker (Apple/CPU).",
+      "image_or_dockerfile": "trainer/Dockerfile.apple",
+      "ports": [],
+      "depends_on": [
+        "postgres",
+        "redis",
+        "minio-init"
+      ],
+      "profile": "apple"
+    },
+    {
+      "id": "waldo-labeler-nvidia",
+      "name": "waldo-labeler-nvidia",
+      "kind": "worker",
+      "description": "SAM 3 auto-labeling worker (CUDA).",
+      "image_or_dockerfile": "labeler/Dockerfile.nvidia",
+      "ports": [],
+      "depends_on": [
+        "postgres",
+        "redis",
+        "minio-init"
+      ],
+      "profile": "nvidia"
+    },
+    {
+      "id": "waldo-trainer-nvidia",
+      "name": "waldo-trainer-nvidia",
+      "kind": "worker",
+      "description": "YOLO training worker (CUDA).",
+      "image_or_dockerfile": "trainer/Dockerfile.nvidia",
+      "ports": [],
+      "depends_on": [
+        "postgres",
+        "redis",
+        "minio-init"
+      ],
+      "profile": "nvidia"
+    }
+  ],
+  "modules": [
+    {
+      "path": "app/__init__.py",
+      "package": "app.__init__",
+      "kind": "app",
+      "lines": 1,
+      "summary": "",
+      "exports": []
+    },
+    {
+      "path": "app/api/__init__.py",
+      "package": "app.api.__init__",
+      "kind": "api",
+      "lines": 1,
+      "summary": "",
+      "exports": []
+    },
+    {
+      "path": "app/api/admin.py",
+      "package": "app.api.admin",
+      "kind": "api",
+      "lines": 334,
+      "summary": "Admin endpoints \u2014 queue and worker management.",
+      "exports": [
+        "WorkerInfo",
+        "QueueInfo",
+        "StuckJob",
+        "AdminStatus",
+        "get_admin_status",
+        "list_workers",
+        "list_queues",
+        "list_stuck_jobs",
+        "RevokeResponse",
+        "revoke_task",
+        "PurgeResponse",
+        "purge_queue"
+      ]
+    },
+    {
+      "path": "app/api/agent.py",
+      "package": "app.api.agent",
+      "kind": "api",
+      "lines": 185,
+      "summary": "HTTP surface for the Waldo agent.",
+      "exports": [
+        "ChatMessage",
+        "ChatRequest",
+        "ChatResponse",
+        "agent_health",
+        "agent_models",
+        "agent_chat",
+        "agent_stream"
+      ]
+    },
+    {
+      "path": "app/api/auth.py",
+      "package": "app.api.auth",
+      "kind": "api",
+      "lines": 137,
+      "summary": "Authentication endpoints \u2014 register, login, token refresh, user info.",
+      "exports": [
+        "RegisterRequest",
+        "LoginRequest",
+        "TokenResponse",
+        "UserResponse",
+        "register",
+        "login",
+        "refresh_token",
+        "get_me"
+      ]
+    },
+    {
+      "path": "app/api/download.py",
+      "package": "app.api.download",
+      "kind": "api",
+      "lines": 126,
+      "summary": "Proxy downloads from MinIO with proper caching and content types.",
+      "exports": [
+        "download_object"
+      ]
+    },
+    {
+      "path": "app/api/feedback.py",
+      "package": "app.api.feedback",
+      "kind": "api",
+      "lines": 152,
+      "summary": "",
+      "exports": [
+        "FeedbackIn",
+        "FeedbackOut",
+        "FeedbackBatchIn",
+        "submit_feedback",
+        "submit_feedback_batch",
+        "list_feedback"
+      ]
+    },
+    {
+      "path": "app/api/frames.py",
+      "package": "app.api.frames",
+      "kind": "api",
+      "lines": 95,
+      "summary": "",
+      "exports": [
+        "FrameOut",
+        "FrameDetail",
+        "list_frames",
+        "get_frame"
+      ]
+    },
+    {
+      "path": "app/api/label.py",
+      "package": "app.api.label",
+      "kind": "api",
+      "lines": 412,
+      "summary": "",
+      "exports": [
+        "ClassPrompt",
+        "LabelRequest",
+        "ExemplarRequest",
+        "LabelResponse",
+        "start_labeling",
+        "start_exemplar_labeling",
+        "PreviewRequest",
+        "PreviewDetection",
+        "PreviewFrame",
+        "PreviewResponse",
+        "preview_prompts",
+        "SegmentPointsRequest"
+      ]
+    },
+    {
+      "path": "app/api/review.py",
+      "package": "app.api.review",
+      "kind": "api",
+      "lines": 785,
+      "summary": "",
+      "exports": [
+        "AnnotationOut",
+        "AnnotationUpdate",
+        "JobStats",
+        "list_annotations",
+        "update_annotation",
+        "JobUpdate",
+        "update_job",
+        "delete_job",
+        "AddClassRequest",
+        "add_class_to_dataset",
+        "MergeClassesRequest",
+        "merge_classes"
+      ]
+    },
+    {
+      "path": "app/api/serve.py",
+      "package": "app.api.serve",
+      "kind": "api",
+      "lines": 1688,
+      "summary": "Inference serving API \u2014 image prediction, video prediction, model activation, deployment targets.",
+      "exports": [
+        "DetectionOut",
+        "ImagePredictionResponse",
+        "FrameResultOut",
+        "VideoPredictionResponse",
+        "ServeStatus",
+        "TargetOut",
+        "TargetCreate",
+        "TargetUpdate",
+        "MetricsQuery",
+        "predict_image",
+        "predict_sam",
+        "predict_sam_video"
+      ]
+    },
+    {
+      "path": "app/api/status.py",
+      "package": "app.api.status",
+      "kind": "api",
+      "lines": 117,
+      "summary": "",
+      "exports": [
+        "JobStatus",
+        "get_job_status",
+        "list_jobs"
+      ]
+    },
+    {
+      "path": "app/api/train.py",
+      "package": "app.api.train",
+      "kind": "api",
+      "lines": 488,
+      "summary": "",
+      "exports": [
+        "TrainRequest",
+        "TrainResponse",
+        "TrainingRunStatus",
+        "ModelOut",
+        "ExportRequest",
+        "VariantsResponse",
+        "ClassBalance",
+        "DatasetStats",
+        "dataset_stats",
+        "get_variants",
+        "start_training",
+        "get_training_status"
+      ]
+    },
+    {
+      "path": "app/api/upload.py",
+      "package": "app.api.upload",
+      "kind": "api",
+      "lines": 421,
+      "summary": "",
+      "exports": [
+        "UploadResponse",
+        "BatchUploadResponse",
+        "ProjectOut",
+        "VideoOut",
+        "LinkVideosRequest",
+        "LinkVideosResponse",
+        "link_existing_videos",
+        "upload_video",
+        "upload_videos_batch",
+        "list_projects",
+        "ImageUploadResponse",
+        "upload_images"
+      ]
+    },
+    {
+      "path": "app/api/workflows.py",
+      "package": "app.api.workflows",
+      "kind": "api",
+      "lines": 233,
+      "summary": "Workflow API \u2014 create, save, run, and deploy visual ML pipelines.",
+      "exports": [
+        "WorkflowGraph",
+        "WorkflowRunRequest",
+        "WorkflowRunResponse",
+        "SaveWorkflowRequest",
+        "SavedWorkflowOut",
+        "list_blocks",
+        "save_workflow",
+        "list_saved_workflows",
+        "get_saved_workflow",
+        "delete_workflow",
+        "deploy_workflow",
+        "serve_workflow"
+      ]
+    },
+    {
+      "path": "app/api/workspaces.py",
+      "package": "app.api.workspaces",
+      "kind": "api",
+      "lines": 94,
+      "summary": "Workspace management \u2014 create, list, switch workspaces.",
+      "exports": [
+        "CreateWorkspaceRequest",
+        "WorkspaceOut",
+        "create_workspace",
+        "list_workspaces"
+      ]
+    },
+    {
+      "path": "app/main.py",
+      "package": "app.main",
+      "kind": "app",
+      "lines": 154,
+      "summary": "",
+      "exports": [
+        "SecurityHeadersMiddleware",
+        "health",
+        "ready"
+      ]
+    },
+    {
+      "path": "app/ws.py",
+      "package": "app.ws",
+      "kind": "app",
+      "lines": 100,
+      "summary": "WebSocket endpoints for streaming training metrics and prediction results.",
+      "exports": [
+        "training_metrics_ws",
+        "predict_ws"
+      ]
+    },
+    {
+      "path": "lib/__init__.py",
+      "package": "lib.__init__",
+      "kind": "util",
+      "lines": 1,
+      "summary": "",
+      "exports": []
+    },
+    {
+      "path": "lib/agent/__init__.py",
+      "package": "lib.agent.__init__",
+      "kind": "agent",
+      "lines": 22,
+      "summary": "Waldo AI Agent \u2014 LangGraph ReAct loop served by a local Ollama LLM.",
+      "exports": [
+        "AgentContext",
+        "build_graph",
+        "get_tools",
+        "run_agent",
+        "set_context",
+        "stream_agent"
+      ]
+    },
+    {
+      "path": "lib/agent/graph.py",
+      "package": "lib.agent.graph",
+      "kind": "agent",
+      "lines": 215,
+      "summary": "LangGraph ReAct agent \u2014 Ollama LLM + Waldo tools, with auth-scoped context.",
+      "exports": [
+        "AgentState",
+        "build_graph",
+        "run_agent",
+        "stream_agent"
+      ]
+    },
+    {
+      "path": "lib/agent/tools.py",
+      "package": "lib.agent.tools",
+      "kind": "agent",
+      "lines": 552,
+      "summary": "LangChain tools the Waldo agent can call on a user's behalf.",
+      "exports": [
+        "AgentContext",
+        "set_context",
+        "list_projects",
+        "list_videos",
+        "list_datasets",
+        "list_models",
+        "list_training_runs",
+        "get_system_info",
+        "get_training_tips",
+        "start_labeling_job",
+        "start_training",
+        "activate_model"
+      ]
+    },
+    {
+      "path": "lib/auth.py",
+      "package": "lib.auth",
+      "kind": "util",
+      "lines": 212,
+      "summary": "Authentication utilities \u2014 JWT tokens, password hashing, FastAPI dependencies.",
+      "exports": [
+        "hash_password",
+        "verify_password",
+        "create_access_token",
+        "create_refresh_token",
+        "decode_token",
+        "get_current_user",
+        "get_optional_user",
+        "bootstrap_admin_if_empty",
+        "require_admin"
+      ]
+    },
+    {
+      "path": "lib/config.py",
+      "package": "lib.config",
+      "kind": "util",
+      "lines": 112,
+      "summary": "",
+      "exports": [
+        "Settings",
+        "enforce_production_secrets"
+      ]
+    },
+    {
+      "path": "lib/db.py",
+      "package": "lib.db",
+      "kind": "db",
+      "lines": 408,
+      "summary": "",
+      "exports": [
+        "Base",
+        "Workspace",
+        "User",
+        "WorkspaceMember",
+        "ApiKey",
+        "Project",
+        "Video",
+        "Frame",
+        "LabelingJob",
+        "Annotation",
+        "TrainingRun",
+        "ModelRegistry"
+      ]
+    },
+    {
+      "path": "lib/frame_cache.py",
+      "package": "lib.frame_cache",
+      "kind": "util",
+      "lines": 181,
+      "summary": "Frame-extraction cache backed by /tmp/waldo-frame-cache/.",
+      "exports": [
+        "load_cached_frames",
+        "save_cached_frames"
+      ]
+    },
+    {
+      "path": "lib/inference_engine.py",
+      "package": "lib.inference_engine",
+      "kind": "util",
+      "lines": 487,
+      "summary": "Multi-model YOLO inference pool for serving predictions \u2014 optimized for speed.",
+      "exports": [
+        "Detection",
+        "FrameResult",
+        "InferenceEngine",
+        "ModelPool",
+        "get_pool",
+        "get_engine"
+      ]
+    },
+    {
+      "path": "lib/migration_helpers.py",
+      "package": "lib.migration_helpers",
+      "kind": "util",
+      "lines": 27,
+      "summary": "Idempotent guards for alembic migrations.",
+      "exports": [
+        "has_table",
+        "has_column",
+        "has_index"
+      ]
+    },
+    {
+      "path": "lib/storage.py",
+      "package": "lib.storage",
+      "kind": "util",
+      "lines": 75,
+      "summary": "",
+      "exports": [
+        "get_client",
+        "ensure_bucket",
+        "upload_file",
+        "upload_bytes",
+        "download_file",
+        "get_download_url",
+        "get_presigned_url",
+        "list_objects"
+      ]
+    },
+    {
+      "path": "lib/tasks.py",
+      "package": "lib.tasks",
+      "kind": "task",
+      "lines": 370,
+      "summary": "",
+      "exports": [
+        "label_video",
+        "label_video_exemplar",
+        "label_playground",
+        "train_model",
+        "export_model_task",
+        "predict_video_task",
+        "compare_models_task"
+      ]
+    },
+    {
+      "path": "lib/video_tracker.py",
+      "package": "lib.video_tracker",
+      "kind": "util",
+      "lines": 285,
+      "summary": "Video object tracker \u2014 optimized with frame skipping and batched inference.",
+      "exports": [
+        "validate_video",
+        "CentroidTracker",
+        "VideoTracker"
+      ]
+    },
+    {
+      "path": "lib/workflow_blocks/__init__.py",
+      "package": "lib.workflow_blocks.__init__",
+      "kind": "workflow-block",
+      "lines": 2,
+      "summary": "Workflow blocks \u2014 modular processing units for visual ML pipelines.",
+      "exports": []
+    },
+    {
+      "path": "lib/workflow_blocks/base.py",
+      "package": "lib.workflow_blocks.base",
+      "kind": "workflow-block",
+      "lines": 71,
+      "summary": "Base class for all workflow blocks.",
+      "exports": [
+        "Port",
+        "BlockResult",
+        "BlockBase"
+      ]
+    },
+    {
+      "path": "lib/workflow_blocks/classical_cv.py",
+      "package": "lib.workflow_blocks.classical_cv",
+      "kind": "workflow-block",
+      "lines": 115,
+      "summary": "Classical computer vision blocks \u2014 no ML required.",
+      "exports": [
+        "GrayscaleBlock",
+        "ResizeBlock",
+        "ContourDetectionBlock",
+        "DominantColorBlock"
+      ]
+    },
+    {
+      "path": "lib/workflow_blocks/crop.py",
+      "package": "lib.workflow_blocks.crop",
+      "kind": "workflow-block",
+      "lines": 49,
+      "summary": "Crop block \u2014 extracts image regions from detection bboxes.",
+      "exports": [
+        "CropBlock"
+      ]
+    },
+    {
+      "path": "lib/workflow_blocks/detection.py",
+      "package": "lib.workflow_blocks.detection",
+      "kind": "workflow-block",
+      "lines": 42,
+      "summary": "Detection block \u2014 runs YOLO object detection on an image.",
+      "exports": [
+        "DetectionBlock"
+      ]
+    },
+    {
+      "path": "lib/workflow_blocks/filter_block.py",
+      "package": "lib.workflow_blocks.filter_block",
+      "kind": "workflow-block",
+      "lines": 50,
+      "summary": "Filter block \u2014 filter detections by confidence, class, or size.",
+      "exports": [
+        "FilterBlock"
+      ]
+    },
+    {
+      "path": "lib/workflow_blocks/io.py",
+      "package": "lib.workflow_blocks.io",
+      "kind": "workflow-block",
+      "lines": 61,
+      "summary": "I/O blocks \u2014 image input, video input, JSON output.",
+      "exports": [
+        "ImageInputBlock",
+        "OutputBlock"
+      ]
+    },
+    {
+      "path": "lib/workflow_blocks/llm.py",
+      "package": "lib.workflow_blocks.llm",
+      "kind": "workflow-block",
+      "lines": 67,
+      "summary": "LLM block \u2014 calls local Ollama for text generation/analysis.",
+      "exports": [
+        "LLMBlock"
+      ]
+    },
+    {
+      "path": "lib/workflow_blocks/logic.py",
+      "package": "lib.workflow_blocks.logic",
+      "kind": "workflow-block",
+      "lines": 93,
+      "summary": "Logic and branching blocks \u2014 control workflow execution flow.",
+      "exports": [
+        "ConditionalBlock",
+        "ExpressionBlock"
+      ]
+    },
+    {
+      "path": "lib/workflow_blocks/platform.py",
+      "package": "lib.workflow_blocks.platform",
+      "kind": "workflow-block",
+      "lines": 214,
+      "summary": "Platform integration blocks \u2014 connect workflows to datasets, models, training, and deployment.",
+      "exports": [
+        "DatasetInputBlock",
+        "ModelSelectorBlock",
+        "WebhookBlock",
+        "TrainTriggerBlock"
+      ]
+    },
+    {
+      "path": "lib/workflow_blocks/specialized.py",
+      "package": "lib.workflow_blocks.specialized",
+      "kind": "workflow-block",
+      "lines": 213,
+      "summary": "Specialized CV blocks \u2014 OCR, counting, zone analysis.",
+      "exports": [
+        "OCRBlock",
+        "LineCounterBlock",
+        "ZoneCounterBlock",
+        "LicensePlateBlock"
+      ]
+    },
+    {
+      "path": "lib/workflow_blocks/visualization.py",
+      "package": "lib.workflow_blocks.visualization",
+      "kind": "workflow-block",
+      "lines": 101,
+      "summary": "Visualization blocks \u2014 render detections on images for visual output.",
+      "exports": [
+        "BoundingBoxVisualization",
+        "BlurVisualization",
+        "CountVisualization"
+      ]
+    },
+    {
+      "path": "lib/workflow_engine.py",
+      "package": "lib.workflow_engine",
+      "kind": "util",
+      "lines": 189,
+      "summary": "Workflow DAG executor \u2014 topologically sorts nodes and runs blocks.",
+      "exports": [
+        "register_block",
+        "get_block_schemas",
+        "get_block",
+        "execute_workflow"
+      ]
+    },
+    {
+      "path": "labeler/__init__.py",
+      "package": "labeler.__init__",
+      "kind": "labeler",
+      "lines": 1,
+      "summary": "",
+      "exports": []
+    },
+    {
+      "path": "labeler/converters/__init__.py",
+      "package": "labeler.converters.__init__",
+      "kind": "labeler",
+      "lines": 1,
+      "summary": "",
+      "exports": []
+    },
+    {
+      "path": "labeler/converters/common.py",
+      "package": "labeler.converters.common",
+      "kind": "labeler",
+      "lines": 61,
+      "summary": "Shared dataset-writing utilities for all YOLO converters.",
+      "exports": [
+        "generate_data_yaml",
+        "split_indices",
+        "write_yolo_label_dataset"
+      ]
+    },
+    {
+      "path": "labeler/converters/to_classify.py",
+      "package": "labeler.converters.to_classify",
+      "kind": "labeler",
+      "lines": 86,
+      "summary": "Mask \u2192 YOLO classification format (cropped images in class directories).",
+      "exports": [
+        "masks_to_crops",
+        "write_yolo_dataset"
+      ]
+    },
+    {
+      "path": "labeler/converters/to_detect.py",
+      "package": "labeler.converters.to_detect",
+      "kind": "labeler",
+      "lines": 48,
+      "summary": "Mask \u2192 YOLO detection bounding box format.",
+      "exports": [
+        "masks_to_yolo_bboxes",
+        "write_yolo_dataset"
+      ]
+    },
+    {
+      "path": "labeler/converters/to_obb.py",
+      "package": "labeler.converters.to_obb",
+      "kind": "labeler",
+      "lines": 50,
+      "summary": "Mask \u2192 YOLO oriented bounding box (OBB) format.",
+      "exports": [
+        "masks_to_yolo_obb",
+        "write_yolo_dataset"
+      ]
+    },
+    {
+      "path": "labeler/converters/to_pose.py",
+      "package": "labeler.converters.to_pose",
+      "kind": "labeler",
+      "lines": 61,
+      "summary": "Mask \u2192 YOLO pose format with centroid keypoint.",
+      "exports": [
+        "masks_to_yolo_pose",
+        "write_yolo_dataset"
+      ]
+    },
+    {
+      "path": "labeler/converters/to_segment.py",
+      "package": "labeler.converters.to_segment",
+      "kind": "labeler",
+      "lines": 54,
+      "summary": "Mask \u2192 YOLO segmentation polygon format.",
+      "exports": [
+        "masks_to_yolo_polygons",
+        "write_yolo_dataset"
+      ]
+    },
+    {
+      "path": "labeler/exemplar_labeler.py",
+      "package": "labeler.exemplar_labeler",
+      "kind": "labeler",
+      "lines": 89,
+      "summary": "Exemplar/click labeling pipeline \u2014 uses Sam3TrackerVideoModel for point-prompt tracking.",
+      "exports": [
+        "run_exemplar_pipeline"
+      ]
+    },
+    {
+      "path": "labeler/frame_extractor.py",
+      "package": "labeler.frame_extractor",
+      "kind": "labeler",
+      "lines": 147,
+      "summary": "",
+      "exports": [
+        "VideoMeta",
+        "FrameInfo",
+        "get_video_metadata",
+        "extract_frames"
+      ]
+    },
+    {
+      "path": "labeler/pipeline.py",
+      "package": "labeler.pipeline",
+      "kind": "labeler",
+      "lines": 210,
+      "summary": "Shared labeling pipeline utilities \u2014 frame extraction, conversion, dataset packaging.",
+      "exports": [
+        "get_converter",
+        "convert_and_store"
+      ]
+    },
+    {
+      "path": "labeler/sam3_engine.py",
+      "package": "labeler.sam3_engine",
+      "kind": "labeler",
+      "lines": 336,
+      "summary": "",
+      "exports": [
+        "SegmentationResult",
+        "Sam3Engine",
+        "get_engine"
+      ]
+    },
+    {
+      "path": "labeler/sam3_optimized.py",
+      "package": "labeler.sam3_optimized",
+      "kind": "labeler",
+      "lines": 146,
+      "summary": "Score-first SAM3.1 detection \u2014 drop-in replacement for _detect_with_backbone.",
+      "exports": [
+        "detect_with_backbone_fast"
+      ]
+    },
+    {
+      "path": "labeler/text_labeler.py",
+      "package": "labeler.text_labeler",
+      "kind": "labeler",
+      "lines": 269,
+      "summary": "Text-prompt labeling pipeline \u2014 uses Sam3VideoModel for detect-and-track.",
+      "exports": [
+        "merge_multiclass_results",
+        "run_labeling_pipeline"
+      ]
+    },
+    {
+      "path": "labeler/video_labeler.py",
+      "package": "labeler.video_labeler",
+      "kind": "labeler",
+      "lines": 889,
+      "summary": "Video-native labeling pipeline using SAM3.1 MLX.",
+      "exports": [
+        "process_video_native",
+        "run_playground",
+        "run_video_labeling_pipeline"
+      ]
+    },
+    {
+      "path": "trainer/__init__.py",
+      "package": "trainer.__init__",
+      "kind": "trainer",
+      "lines": 1,
+      "summary": "",
+      "exports": []
+    },
+    {
+      "path": "trainer/dataset_builder.py",
+      "package": "trainer.dataset_builder",
+      "kind": "trainer",
+      "lines": 415,
+      "summary": "Build a YOLO-ready dataset from a completed labeling job's annotations.",
+      "exports": [
+        "build_dataset_from_job",
+        "prepare_dataset_dir"
+      ]
+    },
+    {
+      "path": "trainer/exporter.py",
+      "package": "trainer.exporter",
+      "kind": "trainer",
+      "lines": 72,
+      "summary": "Export trained YOLO models to various formats with validation.",
+      "exports": [
+        "export_model"
+      ]
+    },
+    {
+      "path": "trainer/metrics_streamer.py",
+      "package": "trainer.metrics_streamer",
+      "kind": "trainer",
+      "lines": 415,
+      "summary": "Stream training metrics to Redis for real-time WebSocket consumption.",
+      "exports": [
+        "get_redis_client",
+        "publish_metrics",
+        "get_latest_metrics",
+        "should_stop_training",
+        "request_stop",
+        "make_ultralytics_callback"
+      ]
+    },
+    {
+      "path": "trainer/notifiers.py",
+      "package": "trainer.notifiers",
+      "kind": "trainer",
+      "lines": 84,
+      "summary": "Notification dispatchers: Slack, ntfy.sh, email.",
+      "exports": [
+        "notify_training_complete"
+      ]
+    },
+    {
+      "path": "trainer/train_manager.py",
+      "package": "trainer.train_manager",
+      "kind": "trainer",
+      "lines": 369,
+      "summary": "YOLO26 training orchestrator \u2014 wraps Ultralytics training API.",
+      "exports": [
+        "run_training"
+      ]
+    },
+    {
+      "path": "tests/__init__.py",
+      "package": "tests.__init__",
+      "kind": "test",
+      "lines": 1,
+      "summary": "",
+      "exports": []
+    },
+    {
+      "path": "tests/conftest.py",
+      "package": "tests.conftest",
+      "kind": "test",
+      "lines": 58,
+      "summary": "",
+      "exports": [
+        "test_clip",
+        "pytest_configure"
+      ]
+    },
+    {
+      "path": "tests/test_agent.py",
+      "package": "tests.test_agent",
+      "kind": "test",
+      "lines": 511,
+      "summary": "Tests for the LangGraph agent \u2014 tools, graph, and HTTP endpoint.",
+      "exports": [
+        "db_session",
+        "workspace_with_data",
+        "ctx_for",
+        "TestTools",
+        "FakeChatOllama",
+        "TestGraph",
+        "TestEndpoint"
+      ]
+    },
+    {
+      "path": "tests/test_api.py",
+      "package": "tests.test_api",
+      "kind": "test",
+      "lines": 35,
+      "summary": "",
+      "exports": [
+        "client",
+        "TestAPI"
+      ]
+    },
+    {
+      "path": "tests/test_api_extended.py",
+      "package": "tests.test_api_extended",
+      "kind": "test",
+      "lines": 207,
+      "summary": "Extended API tests for review, frames, and training endpoints.",
+      "exports": [
+        "client",
+        "uploaded_video",
+        "completed_job",
+        "TestReviewAPI",
+        "TestFramesAPI",
+        "TestTrainAPI"
+      ]
+    },
+    {
+      "path": "tests/test_auth.py",
+      "package": "tests.test_auth",
+      "kind": "test",
+      "lines": 433,
+      "summary": "Auth unit tests \u2014 deterministic, offline, no external infra required.",
+      "exports": [
+        "make_in_memory_engine",
+        "db_session",
+        "test_user",
+        "test_create_access_token_returns_string",
+        "test_create_access_token_payload",
+        "test_create_refresh_token_payload",
+        "test_decode_token_valid",
+        "test_decode_token_invalid_raises_401",
+        "test_decode_token_wrong_secret",
+        "test_decode_expired_token",
+        "test_get_current_user_valid_token",
+        "test_get_current_user_no_credentials"
+      ]
+    },
+    {
+      "path": "tests/test_converters.py",
+      "package": "tests.test_converters",
+      "kind": "test",
+      "lines": 217,
+      "summary": "Tests for all five YOLO converter modules.",
+      "exports": [
+        "TestSegmentation",
+        "TestDetection",
+        "TestOBB",
+        "TestPose",
+        "TestClassification",
+        "TestDataYaml"
+      ]
+    },
+    {
+      "path": "tests/test_e2e.py",
+      "package": "tests.test_e2e",
+      "kind": "test",
+      "lines": 95,
+      "summary": "End-to-end test: Upload video \u2192 label \u2192 download valid YOLO-seg dataset.",
+      "exports": [
+        "TestE2E"
+      ]
+    },
+    {
+      "path": "tests/test_e2e_full.py",
+      "package": "tests.test_e2e_full",
+      "kind": "test",
+      "lines": 152,
+      "summary": "Full-loop E2E test: Upload -> Label -> Train (1 epoch) -> Activate -> Predict image -> Export ONNX -> Predict video.",
+      "exports": [
+        "TestFullLoopE2E"
+      ]
+    },
+    {
+      "path": "tests/test_frame_extractor.py",
+      "package": "tests.test_frame_extractor",
+      "kind": "test",
+      "lines": 55,
+      "summary": "",
+      "exports": [
+        "synthetic_clip",
+        "test_get_video_metadata",
+        "test_extract_frames"
+      ]
+    },
+    {
+      "path": "tests/test_inference.py",
+      "package": "tests.test_inference",
+      "kind": "test",
+      "lines": 168,
+      "summary": "Tests for inference engine, video tracker, serve API, and export validation.",
+      "exports": [
+        "TestDetectionDataclass",
+        "TestFrameResult",
+        "TestInferenceEngine",
+        "TestVideoTracker",
+        "TestNanDetection",
+        "TestExportValidation",
+        "TestServeAPI"
+      ]
+    },
+    {
+      "path": "tests/test_migrations.py",
+      "package": "tests.test_migrations",
+      "kind": "test",
+      "lines": 132,
+      "summary": "Migration sanity tests \u2014 verify alembic can upgrade to head without error.",
+      "exports": [
+        "test_alembic_upgrade_head_succeeds",
+        "test_expected_tables_exist_after_migration",
+        "test_alembic_history_is_linear",
+        "test_alembic_current_is_head_after_upgrade"
+      ]
+    },
+    {
+      "path": "tests/test_score_first_masks.py",
+      "package": "tests.test_score_first_masks",
+      "kind": "test",
+      "lines": 199,
+      "summary": "Verify score-first mask generation produces identical results to original.",
+      "exports": [
+        "load_sample_images",
+        "compare_results",
+        "main"
+      ]
+    },
+    {
+      "path": "tests/test_trainer.py",
+      "package": "tests.test_trainer",
+      "kind": "test",
+      "lines": 140,
+      "summary": "Tests for trainer module: dataset_builder, notifiers, metrics_streamer, train_manager.",
+      "exports": [
+        "TestVariants",
+        "TestDatasetBuilder",
+        "TestMetricsStreamer",
+        "TestNotifiers",
+        "TestExporter"
+      ]
+    },
+    {
+      "path": "alembic/versions/001_initial_schema.py",
+      "package": "alembic.versions.001_initial_schema",
+      "kind": "migration",
+      "lines": 90,
+      "summary": "Initial schema",
+      "exports": [
+        "upgrade",
+        "downgrade"
+      ]
+    },
+    {
+      "path": "alembic/versions/002_phase2_schema.py",
+      "package": "alembic.versions.002_phase2_schema",
+      "kind": "migration",
+      "lines": 42,
+      "summary": "Phase 2: annotation review, exemplar mode, task types",
+      "exports": [
+        "upgrade",
+        "downgrade"
+      ]
+    },
+    {
+      "path": "alembic/versions/003_phase3_training.py",
+      "package": "alembic.versions.003_phase3_training",
+      "kind": "migration",
+      "lines": 67,
+      "summary": "Phase 3: training runs, model registry",
+      "exports": [
+        "upgrade",
+        "downgrade"
+      ]
+    },
+    {
+      "path": "alembic/versions/004_collections_multiclass.py",
+      "package": "alembic.versions.004_collections_multiclass",
+      "kind": "migration",
+      "lines": 40,
+      "summary": "Collections & multiclass support",
+      "exports": [
+        "upgrade",
+        "downgrade"
+      ]
+    },
+    {
+      "path": "alembic/versions/6898fd9aa48c_add_name_column_to_labeling_jobs.py",
+      "package": "alembic.versions.6898fd9aa48c_add_name_column_to_labeling_jobs",
+      "kind": "migration",
+      "lines": 28,
+      "summary": "add name column to labeling_jobs",
+      "exports": [
+        "upgrade",
+        "downgrade"
+      ]
+    },
+    {
+      "path": "alembic/versions/7a1b2c3d4e5f_add_version_parent_to_labeling_jobs.py",
+      "package": "alembic.versions.7a1b2c3d4e5f_add_version_parent_to_labeling_jobs",
+      "kind": "migration",
+      "lines": 32,
+      "summary": "add version and parent_id to labeling_jobs",
+      "exports": [
+        "upgrade",
+        "downgrade"
+      ]
+    },
+    {
+      "path": "alembic/versions/8b2c3d4e5f6a_add_minio_key_to_demo_feedback.py",
+      "package": "alembic.versions.8b2c3d4e5f6a_add_minio_key_to_demo_feedback",
+      "kind": "migration",
+      "lines": 57,
+      "summary": "add minio_key to demo_feedback",
+      "exports": [
+        "upgrade",
+        "downgrade"
+      ]
+    },
+    {
+      "path": "alembic/versions/9c3d4e5f6a7b_add_tags_notes_to_training_runs.py",
+      "package": "alembic.versions.9c3d4e5f6a7b_add_tags_notes_to_training_runs",
+      "kind": "migration",
+      "lines": 29,
+      "summary": "add tags and notes to training_runs",
+      "exports": [
+        "upgrade",
+        "downgrade"
+      ]
+    },
+    {
+      "path": "alembic/versions/a1b2c3d4e5f6_add_deployment_targets_inference_logs.py",
+      "package": "alembic.versions.a1b2c3d4e5f6_add_deployment_targets_inference_logs",
+      "kind": "migration",
+      "lines": 77,
+      "summary": "add deployment_targets and inference_logs tables",
+      "exports": [
+        "upgrade",
+        "downgrade"
+      ]
+    },
+    {
+      "path": "alembic/versions/b2c3d4e5f6a7_add_model_alias_and_experiments.py",
+      "package": "alembic.versions.b2c3d4e5f6a7_add_model_alias_and_experiments",
+      "kind": "migration",
+      "lines": 83,
+      "summary": "add model alias column and deployment experiments table",
+      "exports": [
+        "upgrade",
+        "downgrade"
+      ]
+    },
+    {
+      "path": "alembic/versions/c3d4e5f6a7b8_add_comparison_runs.py",
+      "package": "alembic.versions.c3d4e5f6a7b8_add_comparison_runs",
+      "kind": "migration",
+      "lines": 55,
+      "summary": "add comparison_runs table",
+      "exports": [
+        "upgrade",
+        "downgrade"
+      ]
+    },
+    {
+      "path": "alembic/versions/d4e5f6a7b8c9_perf_indexes.py",
+      "package": "alembic.versions.d4e5f6a7b8c9_perf_indexes",
+      "kind": "migration",
+      "lines": 77,
+      "summary": "perf indexes \u2014 composite indexes for hot query paths",
+      "exports": [
+        "upgrade",
+        "downgrade"
+      ]
+    },
+    {
+      "path": "alembic/versions/e5f6a7b8c9d0_add_auth_and_workflow_tables.py",
+      "package": "alembic.versions.e5f6a7b8c9d0_add_auth_and_workflow_tables",
+      "kind": "migration",
+      "lines": 140,
+      "summary": "add auth (workspaces, users, workspace_members, api_keys) and saved_workflows tables",
+      "exports": [
+        "upgrade",
+        "downgrade"
+      ]
+    },
+    {
+      "path": "alembic/versions/f6a7b8c9d0e1_add_loss_history_to_training_runs.py",
+      "package": "alembic.versions.f6a7b8c9d0e1_add_loss_history_to_training_runs",
+      "kind": "migration",
+      "lines": 44,
+      "summary": "add loss_history and metric_history to training_runs",
+      "exports": [
+        "upgrade",
+        "downgrade"
+      ]
+    },
+    {
+      "path": "install/lib/detect.sh",
+      "package": "",
+      "kind": "installer",
+      "lines": 91,
+      "summary": "Platform + GPU detection.",
+      "exports": []
+    },
+    {
+      "path": "install/lib/env.sh",
+      "package": "",
+      "kind": "installer",
+      "lines": 90,
+      "summary": ".env bootstrap and HF_TOKEN handling.",
+      "exports": []
+    },
+    {
+      "path": "install/lib/log.sh",
+      "package": "",
+      "kind": "installer",
+      "lines": 59,
+      "summary": "Pretty logging helpers shared by the installer scripts.",
+      "exports": []
+    },
+    {
+      "path": "install/lib/prereqs.sh",
+      "package": "",
+      "kind": "installer",
+      "lines": 314,
+      "summary": "Install missing system dependencies (Docker, uv, Node, build basics).",
+      "exports": []
+    },
+    {
+      "path": "scripts/dev.sh",
+      "package": "",
+      "kind": "script",
+      "lines": 99,
+      "summary": "Colors",
+      "exports": []
+    },
+    {
+      "path": "scripts/download_models.sh",
+      "package": "",
+      "kind": "script",
+      "lines": 12,
+      "summary": "",
+      "exports": []
+    },
+    {
+      "path": "scripts/entrypoint-app.sh",
+      "package": "",
+      "kind": "script",
+      "lines": 9,
+      "summary": "",
+      "exports": []
+    },
+    {
+      "path": "scripts/entrypoint-worker.sh",
+      "package": "",
+      "kind": "script",
+      "lines": 41,
+      "summary": "Worker entrypoint \u2014 prints GPU status before starting Celery so that",
+      "exports": []
+    },
+    {
+      "path": "scripts/purge_models.py",
+      "package": "scripts.purge_models",
+      "kind": "script",
+      "lines": 152,
+      "summary": "Wipe trained models, training runs, and inference artifacts \u2014 keep datasets.",
+      "exports": [
+        "count_rows",
+        "wipe_db",
+        "wipe_minio",
+        "wipe_disk",
+        "main"
+      ]
+    },
+    {
+      "path": "scripts/reset_admin.py",
+      "package": "scripts.reset_admin",
+      "kind": "script",
+      "lines": 91,
+      "summary": "Upsert the bootstrap admin user and ensure it has admin membership.",
+      "exports": [
+        "main"
+      ]
+    },
+    {
+      "path": "scripts/setup.sh",
+      "package": "",
+      "kind": "script",
+      "lines": 23,
+      "summary": "",
+      "exports": []
+    },
+    {
+      "path": "install.sh",
+      "package": "",
+      "kind": "installer",
+      "lines": 405,
+      "summary": "Waldo one-shot installer for Linux, macOS, and WSL.",
+      "exports": []
+    },
+    {
+      "path": "install.ps1",
+      "package": "",
+      "kind": "installer",
+      "lines": 215,
+      "summary": "Usage:",
+      "exports": []
+    },
+    {
+      "path": "ui/src/pages/AgentPage.tsx",
+      "package": "",
+      "kind": "frontend-page",
+      "lines": 424,
+      "summary": "AI Agent \u2014 full-page chat.",
+      "exports": []
+    },
+    {
+      "path": "ui/src/pages/CollectionsPage.tsx",
+      "package": "",
+      "kind": "frontend-page",
+      "lines": 99,
+      "summary": "",
+      "exports": []
+    },
+    {
+      "path": "ui/src/pages/DashboardPage.tsx",
+      "package": "",
+      "kind": "frontend-page",
+      "lines": 395,
+      "summary": "Dashboard \u2014 editorial home with data-driven typographic ASCII hero,",
+      "exports": []
+    },
+    {
+      "path": "ui/src/pages/DatasetsPage.tsx",
+      "package": "",
+      "kind": "frontend-page",
+      "lines": 1146,
+      "summary": "",
+      "exports": []
+    },
+    {
+      "path": "ui/src/pages/DeployPage.tsx",
+      "package": "",
+      "kind": "frontend-page",
+      "lines": 91,
+      "summary": "Deploy page \u2014 endpoints, testing, model registry, and monitoring.",
+      "exports": []
+    },
+    {
+      "path": "ui/src/pages/ExperimentsPage.tsx",
+      "package": "",
+      "kind": "frontend-page",
+      "lines": 691,
+      "summary": "",
+      "exports": []
+    },
+    {
+      "path": "ui/src/pages/JobsPage.tsx",
+      "package": "",
+      "kind": "frontend-page",
+      "lines": 165,
+      "summary": "",
+      "exports": []
+    },
+    {
+      "path": "ui/src/pages/LabelPage.tsx",
+      "package": "",
+      "kind": "frontend-page",
+      "lines": 529,
+      "summary": "",
+      "exports": []
+    },
+    {
+      "path": "ui/src/pages/LoginPage.tsx",
+      "package": "",
+      "kind": "frontend-page",
+      "lines": 104,
+      "summary": "",
+      "exports": []
+    },
+    {
+      "path": "ui/src/pages/PlaygroundPage.tsx",
+      "package": "",
+      "kind": "frontend-page",
+      "lines": 1309,
+      "summary": "SAM 3.1 Prompt Playground.",
+      "exports": []
+    },
+    {
+      "path": "ui/src/pages/RegisterPage.tsx",
+      "package": "",
+      "kind": "frontend-page",
+      "lines": 109,
+      "summary": "",
+      "exports": []
+    },
+    {
+      "path": "ui/src/pages/ReviewPage.tsx",
+      "package": "",
+      "kind": "frontend-page",
+      "lines": 643,
+      "summary": "",
+      "exports": []
+    },
+    {
+      "path": "ui/src/pages/SettingsPage.tsx",
+      "package": "",
+      "kind": "frontend-page",
+      "lines": 194,
+      "summary": "Settings \u2014 workspace management, user profile, API keys, admin queue.",
+      "exports": []
+    },
+    {
+      "path": "ui/src/pages/TrainPage.tsx",
+      "package": "",
+      "kind": "frontend-page",
+      "lines": 1087,
+      "summary": "",
+      "exports": []
+    },
+    {
+      "path": "ui/src/pages/UploadPage.tsx",
+      "package": "",
+      "kind": "frontend-page",
+      "lines": 161,
+      "summary": "",
+      "exports": []
+    },
+    {
+      "path": "ui/src/pages/WorkflowEditorPage.tsx",
+      "package": "",
+      "kind": "frontend-page",
+      "lines": 549,
+      "summary": "Visual workflow editor \u2014 Pretext-inspired editorial design.",
+      "exports": []
+    },
+    {
+      "path": "ui/src/pages/WorkflowsPage.tsx",
+      "package": "",
+      "kind": "frontend-page",
+      "lines": 144,
+      "summary": "Workflows list \u2014 browse templates (with real graphs) and saved workflows.",
+      "exports": []
+    },
+    {
+      "path": "ui/src/components/AgentPanel.tsx",
+      "package": "",
+      "kind": "frontend-component",
+      "lines": 249,
+      "summary": "Floating sidebar agent panel \u2014 read-only, /agent/stream backend.",
+      "exports": []
+    }
+  ],
+  "api_endpoints": [
+    {
+      "method": "GET",
+      "path": "/api/v1/admin/status",
+      "module": "app/api/admin.py",
+      "auth": "none",
+      "summary": "One-shot snapshot for the admin panel: workers + queues + stuck jobs."
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/admin/workers",
+      "module": "app/api/admin.py",
+      "auth": "none",
+      "summary": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/admin/queue",
+      "module": "app/api/admin.py",
+      "auth": "none",
+      "summary": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/admin/jobs/stuck",
+      "module": "app/api/admin.py",
+      "auth": "none",
+      "summary": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/admin/tasks/{task_id}/revoke",
+      "module": "app/api/admin.py",
+      "auth": "none",
+      "summary": "Revoke a running Celery task."
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/admin/queue/{queue_name}/purge",
+      "module": "app/api/admin.py",
+      "auth": "none",
+      "summary": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/admin/jobs/{job_id}/mark-failed",
+      "module": "app/api/admin.py",
+      "auth": "none",
+      "summary": "Force-fail a zombie labeling job so the UI stops spinning."
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/admin/training/{run_id}/mark-failed",
+      "module": "app/api/admin.py",
+      "auth": "none",
+      "summary": "Force-fail a zombie training run."
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/agent/health",
+      "module": "app/api/agent.py",
+      "auth": "required",
+      "summary": "Quick reachability check \u2014 proves Ollama is up and the model is present."
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/agent/models",
+      "module": "app/api/agent.py",
+      "auth": "required",
+      "summary": "List models the local Ollama can serve."
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/agent/chat",
+      "module": "app/api/agent.py",
+      "auth": "required",
+      "summary": "Run the agent and return the final answer + tool-call summary."
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/agent/stream",
+      "module": "app/api/agent.py",
+      "auth": "required",
+      "summary": "Stream agent output as Server-Sent Events."
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/register",
+      "module": "app/api/auth.py",
+      "auth": "none",
+      "summary": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/login",
+      "module": "app/api/auth.py",
+      "auth": "none",
+      "summary": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/refresh",
+      "module": "app/api/auth.py",
+      "auth": "none",
+      "summary": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/auth/me",
+      "module": "app/api/auth.py",
+      "auth": "required",
+      "summary": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/download/{object_name:path}",
+      "module": "app/api/download.py",
+      "auth": "none",
+      "summary": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/feedback",
+      "module": "app/api/feedback.py",
+      "auth": "required",
+      "summary": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/feedback/batch",
+      "module": "app/api/feedback.py",
+      "auth": "required",
+      "summary": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/feedback",
+      "module": "app/api/feedback.py",
+      "auth": "required",
+      "summary": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/videos/{video_id}/frames",
+      "module": "app/api/frames.py",
+      "auth": "required",
+      "summary": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/frames/{frame_id}",
+      "module": "app/api/frames.py",
+      "auth": "required",
+      "summary": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/label",
+      "module": "app/api/label.py",
+      "auth": "required",
+      "summary": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/label/exemplar",
+      "module": "app/api/label.py",
+      "auth": "required",
+      "summary": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/label/preview",
+      "module": "app/api/label.py",
+      "auth": "required",
+      "summary": "Prompt playground \u2014 dispatches a small SAM3.1 run to the Celery worker"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/label/segment-points",
+      "module": "app/api/label.py",
+      "auth": "required",
+      "summary": "Run SAM3 on a single frame with click points."
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/annotations",
+      "module": "app/api/label.py",
+      "auth": "required",
+      "summary": "Create a new annotation (e.g."
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/jobs/{job_id}/annotations",
+      "module": "app/api/review.py",
+      "auth": "required",
+      "summary": ""
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/annotations/{annotation_id}",
+      "module": "app/api/review.py",
+      "auth": "required",
+      "summary": ""
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/jobs/{job_id}",
+      "module": "app/api/review.py",
+      "auth": "required",
+      "summary": "Update a labeling job's metadata (e.g."
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/jobs/{job_id}",
+      "module": "app/api/review.py",
+      "auth": "required",
+      "summary": "Delete a labeling job, its annotations, and any associated training runs/models."
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/jobs/{job_id}/add-class",
+      "module": "app/api/review.py",
+      "auth": "required",
+      "summary": "Add a new class to an existing dataset by labeling its videos with a new prompt."
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/annotations/merge-classes",
+      "module": "app/api/review.py",
+      "auth": "required",
+      "summary": "Merge two class names \u2014 renames all annotations from source to target."
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/jobs/{job_id}/duplicate",
+      "module": "app/api/review.py",
+      "auth": "required",
+      "summary": "Duplicate a labeling job and all its annotations into a new dataset."
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/jobs/{job_id}/classes",
+      "module": "app/api/review.py",
+      "auth": "required",
+      "summary": "List all unique class names in a dataset with their annotation counts."
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/jobs/{job_id}/classes/{class_name}",
+      "module": "app/api/review.py",
+      "auth": "required",
+      "summary": "Delete all annotations of a specific class from a dataset."
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/jobs/{job_id}/overview",
+      "module": "app/api/review.py",
+      "auth": "required",
+      "summary": "Rich dataset overview with sample frame thumbnails and annotation stats."
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/jobs/{job_id}/stats",
+      "module": "app/api/review.py",
+      "auth": "required",
+      "summary": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/jobs/{job_id}/export",
+      "module": "app/api/review.py",
+      "auth": "required",
+      "summary": "Re-export a dataset from DB annotations in the requested YOLO format."
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/predict/image",
+      "module": "app/api/serve.py",
+      "auth": "required",
+      "summary": "Upload an image and get JSON detections back."
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/predict/sam",
+      "module": "app/api/serve.py",
+      "auth": "required",
+      "summary": "Run SAM 3.1 (MLX) on an image with text prompts."
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/predict/sam/video",
+      "module": "app/api/serve.py",
+      "auth": "required",
+      "summary": "Run SAM 3.1 (MLX) video-native tracking on a video."
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/predict/video",
+      "module": "app/api/serve.py",
+      "auth": "required",
+      "summary": "Upload a video for tracked prediction."
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/models/{model_id}/activate",
+      "module": "app/api/serve.py",
+      "auth": "required",
+      "summary": "Set a model as active and trigger hot-reload in the inference engine."
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/serve/classes",
+      "module": "app/api/serve.py",
+      "auth": "required",
+      "summary": "Return list of class names from the active model."
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/serve/status",
+      "module": "app/api/serve.py",
+      "auth": "required",
+      "summary": "Return info about the currently loaded model."
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/targets",
+      "module": "app/api/serve.py",
+      "auth": "required",
+      "summary": "List all deployment targets with their assigned model info."
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/targets",
+      "module": "app/api/serve.py",
+      "auth": "required",
+      "summary": "Create a new deployment target (camera, zone, or region)."
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/targets/{target_id}",
+      "module": "app/api/serve.py",
+      "auth": "required",
+      "summary": "Update a deployment target."
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/targets/{target_id}",
+      "module": "app/api/serve.py",
+      "auth": "required",
+      "summary": "Delete a deployment target."
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/endpoints/{slug}/predict",
+      "module": "app/api/serve.py",
+      "auth": "required",
+      "summary": "Run inference through a named endpoint."
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/endpoints/{slug}/status",
+      "module": "app/api/serve.py",
+      "auth": "required",
+      "summary": "Get status of a named endpoint \u2014 model info, config, and whether it's loaded."
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/metrics/summary",
+      "module": "app/api/serve.py",
+      "auth": "required",
+      "summary": "Aggregate inference metrics for the monitoring dashboard."
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/models/{model_id}/promote",
+      "module": "app/api/serve.py",
+      "auth": "required",
+      "summary": "Promote a model to a named alias (champion, challenger, staging)."
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/experiments",
+      "module": "app/api/serve.py",
+      "auth": "required",
+      "summary": "List all deployment experiments."
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/experiments",
+      "module": "app/api/serve.py",
+      "auth": "required",
+      "summary": "Start a blue-green deployment experiment."
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/experiments/{experiment_id}/complete",
+      "module": "app/api/serve.py",
+      "auth": "required",
+      "summary": "End an experiment and optionally promote the winner."
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/devices",
+      "module": "app/api/serve.py",
+      "auth": "required",
+      "summary": "List all registered edge devices."
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/devices",
+      "module": "app/api/serve.py",
+      "auth": "required",
+      "summary": "Register a new edge device."
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/devices/{device_id}/heartbeat",
+      "module": "app/api/serve.py",
+      "auth": "required",
+      "summary": "Edge device phones home \u2014 updates status and last_heartbeat."
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/devices/{device_id}/sync-logs",
+      "module": "app/api/serve.py",
+      "auth": "required",
+      "summary": "Upload inference logs from an offline edge device."
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/comparisons",
+      "module": "app/api/serve.py",
+      "auth": "required",
+      "summary": "List saved comparison runs, newest first."
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/comparisons",
+      "module": "app/api/serve.py",
+      "auth": "required",
+      "summary": "Save a comparison run for future reference."
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/comparisons/{comparison_id}",
+      "module": "app/api/serve.py",
+      "auth": "required",
+      "summary": "Delete a saved comparison."
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/comparisons/run",
+      "module": "app/api/serve.py",
+      "auth": "required",
+      "summary": "Upload a file and kick off a background comparison between two models."
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/comparisons/result/{session_id}",
+      "module": "app/api/serve.py",
+      "auth": "required",
+      "summary": "Poll for comparison results."
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/status/{job_id}",
+      "module": "app/api/status.py",
+      "auth": "required",
+      "summary": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/status",
+      "module": "app/api/status.py",
+      "auth": "required",
+      "summary": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/train/dataset-stats/{job_id}",
+      "module": "app/api/train.py",
+      "auth": "required",
+      "summary": "Pre-flight dataset quality report \u2014 class histogram, imbalance score,"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/train/variants",
+      "module": "app/api/train.py",
+      "auth": "required",
+      "summary": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/train",
+      "module": "app/api/train.py",
+      "auth": "required",
+      "summary": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/train/{run_id}",
+      "module": "app/api/train.py",
+      "auth": "required",
+      "summary": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/train",
+      "module": "app/api/train.py",
+      "auth": "required",
+      "summary": ""
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/train/{run_id}",
+      "module": "app/api/train.py",
+      "auth": "required",
+      "summary": "Update tags or notes on a training run."
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/train/{run_id}",
+      "module": "app/api/train.py",
+      "auth": "required",
+      "summary": "Delete a training run and its associated model."
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/train/{run_id}/stop",
+      "module": "app/api/train.py",
+      "auth": "required",
+      "summary": "Request early stopping for a training run."
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/models",
+      "module": "app/api/train.py",
+      "auth": "required",
+      "summary": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/models/{model_id}/export",
+      "module": "app/api/train.py",
+      "auth": "required",
+      "summary": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/link-videos",
+      "module": "app/api/upload.py",
+      "auth": "required",
+      "summary": "Copy/link existing videos from other projects into a target project and auto-label them."
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/upload",
+      "module": "app/api/upload.py",
+      "auth": "required",
+      "summary": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/upload/batch",
+      "module": "app/api/upload.py",
+      "auth": "required",
+      "summary": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/projects",
+      "module": "app/api/upload.py",
+      "auth": "required",
+      "summary": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/upload/images",
+      "module": "app/api/upload.py",
+      "auth": "required",
+      "summary": "Upload one or more images to a project as standalone Frame records."
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/projects/{project_id}/videos",
+      "module": "app/api/upload.py",
+      "auth": "required",
+      "summary": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/workflows/blocks",
+      "module": "app/api/workflows.py",
+      "auth": "required",
+      "summary": "Return all available workflow block types with their schemas."
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/workflows",
+      "module": "app/api/workflows.py",
+      "auth": "required",
+      "summary": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/workflows/saved",
+      "module": "app/api/workflows.py",
+      "auth": "required",
+      "summary": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/workflows/saved/{slug}",
+      "module": "app/api/workflows.py",
+      "auth": "required",
+      "summary": ""
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/workflows/saved/{slug}",
+      "module": "app/api/workflows.py",
+      "auth": "required",
+      "summary": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/workflows/saved/{slug}/deploy",
+      "module": "app/api/workflows.py",
+      "auth": "required",
+      "summary": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/workflows/serve/{slug}",
+      "module": "app/api/workflows.py",
+      "auth": "required",
+      "summary": "Run a deployed workflow with an uploaded image."
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/workflows/run",
+      "module": "app/api/workflows.py",
+      "auth": "required",
+      "summary": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/workflows/run/image",
+      "module": "app/api/workflows.py",
+      "auth": "required",
+      "summary": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/workspaces",
+      "module": "app/api/workspaces.py",
+      "auth": "required",
+      "summary": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/workspaces",
+      "module": "app/api/workspaces.py",
+      "auth": "required",
+      "summary": ""
+    }
+  ],
+  "celery_tasks": [
+    {
+      "name": "waldo.label_video",
+      "module": "lib/tasks.py",
+      "queue": "default",
+      "summary": ""
+    },
+    {
+      "name": "waldo.label_video_exemplar",
+      "module": "lib/tasks.py",
+      "queue": "default",
+      "summary": ""
+    },
+    {
+      "name": "waldo.label_playground",
+      "module": "lib/tasks.py",
+      "queue": "default",
+      "summary": "Ephemeral prompt test \u2014 runs SAM3.1 on a short window of the video."
+    },
+    {
+      "name": "waldo.train_model",
+      "module": "lib/tasks.py",
+      "queue": "training",
+      "summary": ""
+    },
+    {
+      "name": "waldo.export_model",
+      "module": "lib/tasks.py",
+      "queue": "default",
+      "summary": ""
+    },
+    {
+      "name": "waldo.predict_video",
+      "module": "lib/tasks.py",
+      "queue": "default",
+      "summary": ""
+    },
+    {
+      "name": "waldo.compare_models",
+      "module": "lib/tasks.py",
+      "queue": "default",
+      "summary": "Run two models on the same file and store results in Redis."
+    }
+  ],
+  "db_tables": [
+    {
+      "name": "workspaces",
+      "module": "lib/db.py",
+      "summary": "",
+      "columns": [
+        "id",
+        "name",
+        "slug",
+        "created_at"
+      ],
+      "fk_to": []
+    },
+    {
+      "name": "users",
+      "module": "lib/db.py",
+      "summary": "",
+      "columns": [
+        "id",
+        "email",
+        "password_hash",
+        "display_name",
+        "avatar_url",
+        "created_at",
+        "last_login"
+      ],
+      "fk_to": []
+    },
+    {
+      "name": "workspace_members",
+      "module": "lib/db.py",
+      "summary": "",
+      "columns": [
+        "id",
+        "workspace_id",
+        "user_id",
+        "role",
+        "joined_at"
+      ],
+      "fk_to": [
+        "workspaces.id",
+        "users.id"
+      ]
+    },
+    {
+      "name": "api_keys",
+      "module": "lib/db.py",
+      "summary": "",
+      "columns": [
+        "id",
+        "workspace_id",
+        "user_id",
+        "name",
+        "key_hash",
+        "key_prefix",
+        "scopes",
+        "last_used",
+        "expires_at",
+        "created_at"
+      ],
+      "fk_to": [
+        "workspaces.id",
+        "users.id"
+      ]
+    },
+    {
+      "name": "projects",
+      "module": "lib/db.py",
+      "summary": "",
+      "columns": [
+        "id",
+        "workspace_id",
+        "name",
+        "created_at"
+      ],
+      "fk_to": [
+        "workspaces.id"
+      ]
+    },
+    {
+      "name": "videos",
+      "module": "lib/db.py",
+      "summary": "",
+      "columns": [
+        "id",
+        "project_id",
+        "filename",
+        "minio_key",
+        "fps",
+        "duration_s",
+        "width",
+        "height",
+        "frame_count",
+        "created_at"
+      ],
+      "fk_to": [
+        "projects.id"
+      ]
+    },
+    {
+      "name": "frames",
+      "module": "lib/db.py",
+      "summary": "",
+      "columns": [
+        "id",
+        "video_id",
+        "frame_number",
+        "timestamp_s",
+        "minio_key",
+        "phash",
+        "width",
+        "height"
+      ],
+      "fk_to": [
+        "videos.id"
+      ]
+    },
+    {
+      "name": "labeling_jobs",
+      "module": "lib/db.py",
+      "summary": "",
+      "columns": [
+        "id",
+        "name",
+        "version",
+        "parent_id",
+        "video_id",
+        "project_id",
+        "text_prompt",
+        "prompt_type",
+        "point_prompts",
+        "class_prompts",
+        "task_type",
+        "status",
+        "progress",
+        "total_frames",
+        "processed_frames",
+        "result_minio_key",
+        "error_message",
+        "celery_task_id",
+        "created_at",
+        "updated_at"
+      ],
+      "fk_to": [
+        "labeling_jobs.id",
+        "videos.id",
+        "projects.id"
+      ]
+    },
+    {
+      "name": "annotations",
+      "module": "lib/db.py",
+      "summary": "",
+      "columns": [
+        "id",
+        "frame_id",
+        "job_id",
+        "class_name",
+        "class_index",
+        "polygon",
+        "bbox",
+        "confidence",
+        "status"
+      ],
+      "fk_to": [
+        "frames.id",
+        "labeling_jobs.id"
+      ]
+    },
+    {
+      "name": "training_runs",
+      "module": "lib/db.py",
+      "summary": "",
+      "columns": [
+        "id",
+        "project_id",
+        "job_id",
+        "name",
+        "task_type",
+        "model_variant",
+        "hyperparameters",
+        "status",
+        "epoch_current",
+        "total_epochs",
+        "metrics",
+        "best_metrics",
+        "loss_history",
+        "metric_history",
+        "dataset_minio_key",
+        "checkpoint_minio_key",
+        "best_weights_minio_key",
+        "error_message",
+        "celery_task_id",
+        "tags",
+        "notes",
+        "created_at",
+        "started_at",
+        "completed_at"
+      ],
+      "fk_to": [
+        "projects.id",
+        "labeling_jobs.id"
+      ]
+    },
+    {
+      "name": "model_registry",
+      "module": "lib/db.py",
+      "summary": "",
+      "columns": [
+        "id",
+        "project_id",
+        "training_run_id",
+        "name",
+        "task_type",
+        "model_variant",
+        "version",
+        "weights_minio_key",
+        "metrics",
+        "export_formats",
+        "class_names",
+        "is_active",
+        "alias",
+        "created_at"
+      ],
+      "fk_to": [
+        "projects.id",
+        "training_runs.id"
+      ]
+    },
+    {
+      "name": "deployment_experiments",
+      "module": "lib/db.py",
+      "summary": "Blue-green / canary experiment: split traffic between champion and challenger.",
+      "columns": [
+        "id",
+        "name",
+        "champion_model_id",
+        "challenger_model_id",
+        "split_pct",
+        "status",
+        "target_id",
+        "started_at",
+        "completed_at",
+        "winner",
+        "created_at"
+      ],
+      "fk_to": [
+        "model_registry.id",
+        "model_registry.id",
+        "deployment_targets.id"
+      ]
+    },
+    {
+      "name": "edge_devices",
+      "module": "lib/db.py",
+      "summary": "An edge device running inference (Jetson, Pi, etc.).",
+      "columns": [
+        "id",
+        "name",
+        "device_type",
+        "location_label",
+        "target_id",
+        "model_id",
+        "model_version",
+        "hardware_info",
+        "status",
+        "last_heartbeat",
+        "last_sync",
+        "ip_address",
+        "created_at"
+      ],
+      "fk_to": [
+        "deployment_targets.id",
+        "model_registry.id"
+      ]
+    },
+    {
+      "name": "comparison_runs",
+      "module": "lib/db.py",
+      "summary": "Saved model comparison result for benchmarking over time.",
+      "columns": [
+        "id",
+        "name",
+        "file_name",
+        "file_minio_key",
+        "is_video",
+        "sam_prompts",
+        "confidence_threshold",
+        "model_a_id",
+        "model_a_name",
+        "model_a_detections",
+        "model_a_avg_confidence",
+        "model_a_latency_ms",
+        "model_b_id",
+        "model_b_name",
+        "model_b_detections",
+        "model_b_avg_confidence",
+        "model_b_latency_ms",
+        "results_minio_key",
+        "notes",
+        "created_at"
+      ],
+      "fk_to": []
+    },
+    {
+      "name": "saved_workflows",
+      "module": "lib/db.py",
+      "summary": "",
+      "columns": [
+        "id",
+        "name",
+        "slug",
+        "description",
+        "graph",
+        "is_deployed",
+        "workspace_id",
+        "created_at",
+        "updated_at"
+      ],
+      "fk_to": [
+        "workspaces.id"
+      ]
+    },
+    {
+      "name": "deployment_targets",
+      "module": "lib/db.py",
+      "summary": "An inference endpoint that serves a specific model to external consumers.",
+      "columns": [
+        "id",
+        "name",
+        "slug",
+        "location_label",
+        "target_type",
+        "model_id",
+        "config",
+        "is_active",
+        "created_at",
+        "updated_at"
+      ],
+      "fk_to": [
+        "model_registry.id"
+      ]
+    },
+    {
+      "name": "inference_logs",
+      "module": "lib/db.py",
+      "summary": "Append-only log of every inference request for monitoring.",
+      "columns": [
+        "id",
+        "model_id",
+        "target_id",
+        "request_type",
+        "latency_ms",
+        "detection_count",
+        "avg_confidence",
+        "classes_detected",
+        "input_resolution",
+        "error_code",
+        "created_at"
+      ],
+      "fk_to": [
+        "model_registry.id",
+        "deployment_targets.id"
+      ]
+    },
+    {
+      "name": "demo_feedback",
+      "module": "lib/db.py",
+      "summary": "Stores false-positive / correction feedback from the Demo page.",
+      "columns": [
+        "id",
+        "model_id",
+        "class_name",
+        "bbox",
+        "polygon",
+        "confidence",
+        "track_id",
+        "frame_index",
+        "timestamp_s",
+        "feedback_type",
+        "corrected_class",
+        "source_filename",
+        "minio_key",
+        "created_at"
+      ],
+      "fk_to": [
+        "model_registry.id"
+      ]
+    }
+  ],
+  "frontend_pages": [
+    {
+      "route": "/agent",
+      "file": "ui/src/pages/AgentPage.tsx",
+      "lazy": true,
+      "summary": "AI Agent \u2014 full-page chat.",
+      "calls_endpoints": [
+        "/api/v1/agent/models",
+        "/api/v1/agent/stream"
+      ]
+    },
+    {
+      "route": "/collections",
+      "file": "ui/src/pages/CollectionsPage.tsx",
+      "lazy": true,
+      "summary": "",
+      "calls_endpoints": []
+    },
+    {
+      "route": "/",
+      "file": "ui/src/pages/DashboardPage.tsx",
+      "lazy": false,
+      "summary": "Dashboard \u2014 editorial home with data-driven typographic ASCII hero,",
+      "calls_endpoints": []
+    },
+    {
+      "route": "/datasets",
+      "file": "ui/src/pages/DatasetsPage.tsx",
+      "lazy": true,
+      "summary": "",
+      "calls_endpoints": []
+    },
+    {
+      "route": "/deploy/:tab",
+      "file": "ui/src/pages/DeployPage.tsx",
+      "lazy": true,
+      "summary": "Deploy page \u2014 endpoints, testing, model registry, and monitoring.",
+      "calls_endpoints": []
+    },
+    {
+      "route": "/experiments",
+      "file": "ui/src/pages/ExperimentsPage.tsx",
+      "lazy": true,
+      "summary": "",
+      "calls_endpoints": []
+    },
+    {
+      "route": "/jobs",
+      "file": "ui/src/pages/JobsPage.tsx",
+      "lazy": true,
+      "summary": "",
+      "calls_endpoints": []
+    },
+    {
+      "route": "/label/:videoId",
+      "file": "ui/src/pages/LabelPage.tsx",
+      "lazy": true,
+      "summary": "",
+      "calls_endpoints": []
+    },
+    {
+      "route": "/login",
+      "file": "ui/src/pages/LoginPage.tsx",
+      "lazy": false,
+      "summary": "",
+      "calls_endpoints": []
+    },
+    {
+      "route": "/playground",
+      "file": "ui/src/pages/PlaygroundPage.tsx",
+      "lazy": true,
+      "summary": "SAM 3.1 Prompt Playground.",
+      "calls_endpoints": []
+    },
+    {
+      "route": "/register",
+      "file": "ui/src/pages/RegisterPage.tsx",
+      "lazy": false,
+      "summary": "",
+      "calls_endpoints": []
+    },
+    {
+      "route": "/review/:jobId",
+      "file": "ui/src/pages/ReviewPage.tsx",
+      "lazy": true,
+      "summary": "",
+      "calls_endpoints": []
+    },
+    {
+      "route": "/settings",
+      "file": "ui/src/pages/SettingsPage.tsx",
+      "lazy": true,
+      "summary": "Settings \u2014 workspace management, user profile, API keys, admin queue.",
+      "calls_endpoints": [
+        "/api/v1/predict/image"
+      ]
+    },
+    {
+      "route": "/train/:jobId",
+      "file": "ui/src/pages/TrainPage.tsx",
+      "lazy": true,
+      "summary": "",
+      "calls_endpoints": []
+    },
+    {
+      "route": "/upload",
+      "file": "ui/src/pages/UploadPage.tsx",
+      "lazy": true,
+      "summary": "",
+      "calls_endpoints": []
+    },
+    {
+      "route": "/workflows/:workflowId",
+      "file": "ui/src/pages/WorkflowEditorPage.tsx",
+      "lazy": true,
+      "summary": "Visual workflow editor \u2014 Pretext-inspired editorial design.",
+      "calls_endpoints": []
+    },
+    {
+      "route": "/workflows",
+      "file": "ui/src/pages/WorkflowsPage.tsx",
+      "lazy": true,
+      "summary": "Workflows list \u2014 browse templates (with real graphs) and saved workflows.",
+      "calls_endpoints": []
+    }
+  ],
+  "agent_tools": [
+    {
+      "name": "list_projects",
+      "kind": "read",
+      "module": "lib/agent/tools.py",
+      "summary": "List projects in the current workspace with video counts."
+    },
+    {
+      "name": "list_videos",
+      "kind": "read",
+      "module": "lib/agent/tools.py",
+      "summary": "List uploaded videos."
+    },
+    {
+      "name": "list_datasets",
+      "kind": "read",
+      "module": "lib/agent/tools.py",
+      "summary": "List completed labeling jobs (ready-to-train datasets) with annotation counts."
+    },
+    {
+      "name": "list_models",
+      "kind": "read",
+      "module": "lib/agent/tools.py",
+      "summary": "List trained models in this workspace with mAP and active status."
+    },
+    {
+      "name": "list_training_runs",
+      "kind": "read",
+      "module": "lib/agent/tools.py",
+      "summary": "List the most recent training runs in this workspace with progress."
+    },
+    {
+      "name": "get_system_info",
+      "kind": "read",
+      "module": "lib/agent/tools.py",
+      "summary": "Return current device/dtype + the active served model."
+    },
+    {
+      "name": "get_training_tips",
+      "kind": "read",
+      "module": "lib/agent/tools.py",
+      "summary": "Recommend YOLO training hyperparameters for a given dataset size + task."
+    },
+    {
+      "name": "start_labeling_job",
+      "kind": "action",
+      "module": "lib/agent/tools.py",
+      "summary": "Queue a SAM-3 auto-labeling job on a video."
+    },
+    {
+      "name": "start_training",
+      "kind": "action",
+      "module": "lib/agent/tools.py",
+      "summary": "Queue a YOLO training run on a completed labeling job."
+    },
+    {
+      "name": "activate_model",
+      "kind": "action",
+      "module": "lib/agent/tools.py",
+      "summary": "Mark a trained model as the active one for /predict/* endpoints."
+    }
+  ],
+  "graphs": {
+    "service_to_service": [
+      {
+        "from": "minio-init",
+        "to": "minio",
+        "label": "depends_on"
+      },
+      {
+        "from": "ollama-init",
+        "to": "ollama",
+        "label": "depends_on"
+      },
+      {
+        "from": "waldo-app",
+        "to": "postgres",
+        "label": "depends_on"
+      },
+      {
+        "from": "waldo-app",
+        "to": "redis",
+        "label": "depends_on"
+      },
+      {
+        "from": "waldo-app",
+        "to": "minio-init",
+        "label": "depends_on"
+      },
+      {
+        "from": "waldo-app",
+        "to": "ollama",
+        "label": "depends_on"
+      },
+      {
+        "from": "waldo-labeler",
+        "to": "postgres",
+        "label": "depends_on"
+      },
+      {
+        "from": "waldo-labeler",
+        "to": "redis",
+        "label": "depends_on"
+      },
+      {
+        "from": "waldo-labeler",
+        "to": "minio-init",
+        "label": "depends_on"
+      },
+      {
+        "from": "waldo-trainer",
+        "to": "postgres",
+        "label": "depends_on"
+      },
+      {
+        "from": "waldo-trainer",
+        "to": "redis",
+        "label": "depends_on"
+      },
+      {
+        "from": "waldo-trainer",
+        "to": "minio-init",
+        "label": "depends_on"
+      },
+      {
+        "from": "waldo-labeler-nvidia",
+        "to": "postgres",
+        "label": "depends_on"
+      },
+      {
+        "from": "waldo-labeler-nvidia",
+        "to": "redis",
+        "label": "depends_on"
+      },
+      {
+        "from": "waldo-labeler-nvidia",
+        "to": "minio-init",
+        "label": "depends_on"
+      },
+      {
+        "from": "waldo-trainer-nvidia",
+        "to": "postgres",
+        "label": "depends_on"
+      },
+      {
+        "from": "waldo-trainer-nvidia",
+        "to": "redis",
+        "label": "depends_on"
+      },
+      {
+        "from": "waldo-trainer-nvidia",
+        "to": "minio-init",
+        "label": "depends_on"
+      },
+      {
+        "from": "waldo-app",
+        "to": "ollama",
+        "label": "HTTP /api/chat"
+      }
+    ],
+    "endpoint_to_task": [
+      {
+        "endpoint": "POST /api/v1/label/preview",
+        "task": "waldo.label_playground"
+      }
+    ],
+    "task_to_table": [
+      {
+        "task": "waldo.label_video",
+        "writes": [
+          "annotations",
+          "frames",
+          "labeling_jobs",
+          "model_registry",
+          "training_runs",
+          "videos"
+        ]
+      },
+      {
+        "task": "waldo.label_video_exemplar",
+        "writes": [
+          "annotations",
+          "frames",
+          "labeling_jobs",
+          "model_registry",
+          "training_runs",
+          "videos"
+        ]
+      },
+      {
+        "task": "waldo.label_playground",
+        "writes": [
+          "annotations",
+          "frames",
+          "labeling_jobs",
+          "model_registry",
+          "training_runs",
+          "videos"
+        ]
+      },
+      {
+        "task": "waldo.train_model",
+        "writes": [
+          "annotations",
+          "frames",
+          "labeling_jobs",
+          "model_registry",
+          "training_runs",
+          "videos"
+        ]
+      },
+      {
+        "task": "waldo.export_model",
+        "writes": [
+          "annotations",
+          "frames",
+          "labeling_jobs",
+          "model_registry",
+          "training_runs",
+          "videos"
+        ]
+      },
+      {
+        "task": "waldo.predict_video",
+        "writes": [
+          "annotations",
+          "frames",
+          "labeling_jobs",
+          "model_registry",
+          "training_runs",
+          "videos"
+        ]
+      },
+      {
+        "task": "waldo.compare_models",
+        "writes": [
+          "annotations",
+          "frames",
+          "labeling_jobs",
+          "model_registry",
+          "training_runs",
+          "videos"
+        ]
+      }
+    ]
+  }
+}
