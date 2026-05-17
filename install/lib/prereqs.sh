@@ -14,6 +14,7 @@ _sudo() {
         "$@"
     elif command -v sudo >/dev/null 2>&1; then
         if [ -e /dev/tty ]; then
+            # shellcheck disable=SC2024 # sudo opens /dev/tty itself; redirect is defensive when stdin is a pipe
             sudo "$@" </dev/tty
         else
             sudo "$@"
@@ -57,6 +58,7 @@ _sudo_warmup() {
 
     log_info "sudo password may be required for prerequisite installs."
     log_info "(You'll be prompted once; future calls in this run reuse the cached credentials.)"
+    # shellcheck disable=SC2024 # sudo opens /dev/tty itself; redirect is defensive when stdin is a pipe
     if ! sudo -v </dev/tty; then
         log_warn "sudo warm-up failed."
         return 1

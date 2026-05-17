@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Waldo one-shot installer for Linux, macOS, and WSL.
+# Waldo one-shot installer for Linux, macOS, and WSL2.
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/oldhero5/waldo/main/install.sh | bash
@@ -137,7 +137,11 @@ _prompt_dir() {
     fi
     [ -z "$entered" ] && entered="$default"
     # Expand a leading ~ since `read` doesn't.
-    case "$entered" in "~"|"~/"*) entered="$HOME/${entered#~/}";; esac
+    # shellcheck disable=SC2088 # the literal ~/ prefix is intentional
+    case "$entered" in
+        "~")    entered="$HOME" ;;
+        "~/"*)  entered="$HOME/${entered:2}" ;;
+    esac
     # Make absolute.
     case "$entered" in /*) ;; *) entered="$PWD/$entered";; esac
     printf '%s\n' "$entered"
@@ -316,11 +320,14 @@ prompt_hf_token "$WALDO_DIR/.env"
 # ── Step 5: GPU passthrough check ────────────────────────────────
 if [ "$WALDO_GPU" = "nvidia" ] && [ "$WALDO_NVIDIA_CT" = "yes" ] && command -v docker >/dev/null 2>&1; then
     log_step "Verifying NVIDIA GPU passthrough into Docker"
-    if docker run --rm --gpus all nvidia/cuda:12.4.0-base-ubuntu22.04 nvidia-smi >/tmp/waldo-gpu-check.log 2>&1; then
+    GPU_CHECK_LOG="$(mktemp -t waldo-gpu-check.XXXXXX.log 2>/dev/null || echo "${TMPDIR:-/tmp}/waldo-gpu-check.$$.log")"
+    if docker run --rm --gpus all nvidia/cuda:12.4.0-base-ubuntu22.04 nvidia-smi >"$GPU_CHECK_LOG" 2>&1; then
         log_ok "GPU is visible inside containers"
-        grep -E "(Driver Version|CUDA Version|^\| *[0-9]+ )" /tmp/waldo-gpu-check.log | head -8 | sed 's/^/      /'
+        grep -E "(Driver Version|CUDA Version|^\| *[0-9]+ )" "$GPU_CHECK_LOG" | head -8 | sed 's/^/      /'
+        rm -f "$GPU_CHECK_LOG"
     else
-        log_warn "GPU passthrough check failed (see /tmp/waldo-gpu-check.log)"
+        log_warn "GPU passthrough check failed (see $GPU_CHECK_LOG)"
+        tail -n 3 "$GPU_CHECK_LOG" 2>/dev/null | sed 's/^/      /'
         log_info "Falling back to CPU profile so install can complete."
         WALDO_GPU="none"
         configure_device_for_gpu "$WALDO_DIR/.env"
