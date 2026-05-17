@@ -72,7 +72,9 @@ detect_gpu() {
 }
 
 print_platform_summary() {
-    log_info "OS:       $WALDO_OS${WALDO_DISTRO:+ ($WALDO_DISTRO)}${WALDO_IS_WSL:+ — WSL2}"
+    local wsl_suffix=""
+    [ "$WALDO_IS_WSL" = "1" ] && wsl_suffix=" — WSL2"
+    log_info "OS:       $WALDO_OS${WALDO_DISTRO:+ ($WALDO_DISTRO)}${wsl_suffix}"
     [ "$WALDO_IS_WSL" = "1" ] && log_info "WSL2:     yes"
     log_info "Arch:     $WALDO_ARCH"
     log_info "Pkg mgr:  ${WALDO_PKG:-none}"
