@@ -5,9 +5,19 @@ sidebar_position: 1
 
 # Installation
 
-Waldo runs as Docker containers. The installer detects your OS, installs the
-prerequisites it needs (Docker, uv, Node.js, NVIDIA Container Toolkit), writes
-`.env`, optionally downloads the SAM 3 weights, and brings the stack up.
+Waldo runs as Docker containers and is **published as a prebuilt image** on
+Docker Hub: [`oldhero5/waldo`](https://hub.docker.com/r/oldhero5/waldo). The
+installer detects your OS, installs the prerequisites it needs (Docker, uv,
+NVIDIA Container Toolkit on Linux+NVIDIA), writes `.env`, optionally downloads
+the SAM 3 weights, and brings the stack up by pulling the image. There is no
+Node/Vite step in the default flow — the UI is baked into the image.
+
+Two tags are published:
+
+| Tag | Base | Used by |
+| --- | --- | --- |
+| `oldhero5/waldo:latest` | `python:3.11-slim` | App, Apple Silicon workers, CPU workers |
+| `oldhero5/waldo:cuda`   | `nvidia/cuda:12.4.0-devel-ubuntu22.04` | NVIDIA GPU workers |
 
 ## Before you run it
 
@@ -87,8 +97,8 @@ and sign in with the dev defaults:
 4. **Installs prerequisites** (skip with `--skip-prereqs`):
    - Docker Engine (Linux) — uses `get.docker.com` if you have sudo
    - [uv](https://docs.astral.sh/uv/) — Python toolchain
-   - Node.js 20+
    - `nvidia-container-toolkit` (Linux + NVIDIA GPU only)
+   - Node.js 20+ — **only when you pass `--build-from-source`**
 5. **Writes `.env`** from `.env.example`, sets `DEVICE` and `DTYPE` to match
    the GPU it picked, and saves the HF token from step 3.
 6. **Verifies GPU passthrough** by running `nvidia-smi` inside a CUDA
@@ -97,10 +107,12 @@ and sign in with the dev defaults:
 7. **Downloads SAM 3 weights** via `scripts/download_models.sh` (skip with
    `--skip-models`).
 8. **Brings the stack up:**
-   - Linux / WSL → `docker compose --profile nvidia up -d --build` (or
-     `--profile apple` on CPU)
+   - Linux / WSL → `docker compose --profile <apple|nvidia> pull && up -d`
+     (no local image build).
    - macOS Apple Silicon → `make up-mac` (infra in Docker, MLX workers
-     native so they reach MPS)
+     native so they reach MPS).
+   - Pass `--build-from-source` to build the image locally instead of
+     pulling — useful for contributors testing unmerged changes.
    - Skip with `--skip-up` to configure only.
 
 ## Installer flags
@@ -110,11 +122,12 @@ and sign in with the dev defaults:
 --dir PATH                 Where to clone the repo if needed (default: ~/waldo)
 --branch NAME              Branch to clone (default: main)
 --repo URL                 Git URL to clone from
---skip-prereqs             Don't install Docker/uv/Node
+--skip-prereqs             Don't install Docker/uv
 --skip-models              Don't download SAM 3 weights
 --skip-up                  Don't run docker compose up
 --cpu                      Force CPU even if a GPU is detected
 --gpu nvidia|apple|none    Override GPU detection
+--build-from-source        Build the image locally (slow, requires Node) instead of pulling
 --no-sudo                  Print missing prereqs and exit (install by hand, then re-run with --skip-prereqs)
 --yes                      Non-interactive
 --no-color                 Disable colored output
@@ -140,7 +153,7 @@ If you'd rather install everything yourself:
 | macOS (Apple Silicon) | Docker Desktop 4.30+ or [OrbStack](https://orbstack.dev/) |
 | Windows | Docker Desktop 4.30+ with WSL 2 backend |
 | GPU (optional) | NVIDIA Container Toolkit (Linux only — WSL2 inherits from the Windows driver) |
-| Local dev | Node.js 20+, [uv](https://docs.astral.sh/uv/) |
+| Local dev | [uv](https://docs.astral.sh/uv/); Node.js 20+ only if you `--build-from-source` |
 | Models | [HuggingFace token](https://huggingface.co/settings/tokens) + accepted license on [`facebook/sam3`](https://huggingface.co/facebook/sam3) |
 
 Then:
@@ -149,8 +162,16 @@ Then:
 git clone https://github.com/oldhero5/waldo.git
 cd waldo
 cp .env.example .env       # set HF_TOKEN, optionally tweak DEVICE
-make up                    # auto-routes by OS
-# or: docker compose --profile nvidia up -d --build
+make up                    # pulls oldhero5/waldo, auto-routes by OS
+# or: docker compose --profile nvidia pull && docker compose --profile nvidia up -d
+```
+
+To build the image yourself instead of pulling:
+
+```bash
+make build PROFILE=nvidia    # builds Dockerfile.cuda (or Dockerfile if PROFILE=apple)
+# or: docker compose -f docker-compose.yml -f docker-compose.build.yml \
+#       --profile nvidia up -d --build
 ```
 
 > **A note on SAM 3 vs. SAM 3.1.** The PyTorch labeler (Linux + NVIDIA / CPU)
@@ -206,10 +227,11 @@ installed and exit:
 - **Linux + NVIDIA**: `nvidia-container-toolkit` must be installed and Docker
   must be restarted after `nvidia-ctk runtime configure --runtime=docker`.
   The installer does this for you on apt/dnf.
-- **PyTorch**: PyPI's default `torch` is CPU-only. Waldo's `Dockerfile.nvidia`
-  installs from `download.pytorch.org/whl/cu124` so the in-container PyTorch
-  has CUDA. If `torch.cuda.is_available()` is `False`, you almost certainly
-  have a CPU wheel — rebuild the image.
+- **PyTorch**: PyPI's default `torch` is CPU-only. Waldo's `Dockerfile.cuda`
+  (and the published `oldhero5/waldo:cuda` tag) installs from
+  `download.pytorch.org/whl/cu124` so the in-container PyTorch has CUDA. If
+  `torch.cuda.is_available()` is `False`, double-check that the `nvidia`
+  profile is selected — it pulls `:cuda`, not `:latest`.
 - **Verify it from outside**: `make gpu-check` runs `nvidia-smi` in a fresh
   CUDA container, the same way the installer does.
 

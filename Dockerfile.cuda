@@ -1,0 +1,68 @@
+# CUDA variant of the Waldo image — same role switch (app | labeler | trainer)
+# as Dockerfile, but on nvidia/cuda + GPU-enabled torch wheels.
+#
+# Built and published as: docker.io/oldhero5/waldo:cuda
+
+# ── Stage 1: build the React UI ──────────────────────────────────────
+FROM node:20-alpine AS ui-builder
+WORKDIR /ui
+COPY ui/package.json ui/package-lock.json ./
+RUN npm ci --legacy-peer-deps --no-audit --no-fund
+COPY ui/ ./
+RUN mkdir -p /app/static && npm run build
+
+# ── Stage 2: runtime (CUDA base) ─────────────────────────────────────
+# Note: ubuntu:22.04's python3.11 package is 3.11.0rc1, which predates
+# sys.get_int_max_str_digits (added in 3.11.1). torch's _dynamo polyfills
+# require it, so we let uv manage Python instead of using the distro one.
+FROM nvidia/cuda:12.4.0-devel-ubuntu22.04 AS runtime
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ffmpeg libgl1 libglib2.0-0 curl ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+WORKDIR /app
+
+COPY pyproject.toml .python-version uv.lock ./
+# --python-preference only-managed forces uv to download a current 3.11.x
+# rather than picking up a broken system python.
+RUN uv sync --frozen --no-dev --group app --group labeler --group trainer \
+        --no-install-project --python-preference only-managed
+
+# PyPI ships CPU-only torch by default. Replace it with the CUDA 12.4 wheel
+# so the nvidia-container-toolkit GPU passthrough is actually usable.
+RUN uv pip install --upgrade \
+    --index-url https://download.pytorch.org/whl/cu124 \
+    torch torchvision
+
+COPY lib/ lib/
+COPY app/ app/
+COPY labeler/ labeler/
+COPY trainer/ trainer/
+COPY alembic.ini ./
+COPY alembic/ alembic/
+COPY scripts/ scripts/
+
+COPY --from=ui-builder /app/static /app/app/static
+
+# Install the project itself into the existing venv so alembic and celery
+# can import `lib`, `app`, etc. without PYTHONPATH gymnastics.
+RUN uv sync --frozen --no-dev --group app --group labeler --group trainer \
+        --python-preference only-managed
+
+COPY scripts/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh /app/scripts/entrypoint-worker.sh
+
+ENV DEVICE=cuda \
+    DTYPE=bfloat16 \
+    WALDO_ROLE=app \
+    UV_NO_SYNC=1 \
+    UV_PROJECT_ENVIRONMENT=/app/.venv \
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+EXPOSE 8000
+ENTRYPOINT ["/entrypoint.sh"]
