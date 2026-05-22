@@ -1,0 +1,82 @@
+name: Release — build & push images to Docker Hub
+
+# Triggers:
+# - Tags v*.*.*  → push :latest, :cuda, :<version>, :<version>-cuda
+# - Pushes to main → push :main, :main-cuda (so curl|bash always pulls something fresh)
+# - workflow_dispatch → on demand
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.image.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      # Don't cancel cuda just because cpu failed (and vice versa).
+      fail-fast: false
+      matrix:
+        image:
+          - name: cpu
+            dockerfile: Dockerfile
+            tag_suffix: ""
+            default_tag: latest
+          - name: cuda
+            dockerfile: Dockerfile.cuda
+            tag_suffix: -cuda
+            default_tag: cuda
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Compute tags
+        id: tags
+        run: |
+          set -e
+          IMAGE="oldhero5/waldo"
+          tags=""
+          add() { tags="${tags:+$tags,}$1"; }
+
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            # vX.Y.Z → strip leading v
+            version="${GITHUB_REF_NAME#v}"
+            add "$IMAGE:${version}${{ matrix.image.tag_suffix }}"
+            add "$IMAGE:${{ matrix.image.default_tag }}"
+          elif [ "${GITHUB_REF_NAME}" = "main" ]; then
+            add "$IMAGE:main${{ matrix.image.tag_suffix }}"
+          else
+            # Manual dispatch on a feature branch — sanity-tag with the SHA
+            # so it doesn't collide with anything.
+            add "$IMAGE:dev-${GITHUB_SHA::7}${{ matrix.image.tag_suffix }}"
+          fi
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
+          echo "Building tags: $tags"
+
+      - name: Build & push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.image.dockerfile }}
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          # GHA's cache-from/to with type=gha gives us layer reuse across runs
+          # without needing a separate registry cache.
+          cache-from: type=gha,scope=${{ matrix.image.name }}
+          cache-to: type=gha,scope=${{ matrix.image.name }},mode=max
+          provenance: false

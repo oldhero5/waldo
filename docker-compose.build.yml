@@ -1,0 +1,42 @@
+# Override that builds the Waldo images from source instead of pulling them
+# from Docker Hub. Use this for contributing or for running unreleased changes.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml \
+#       --profile <apple|nvidia> up -d --build
+#
+# The Makefile's `make build` target is the convenient wrapper.
+services:
+  waldo-app:
+    image: oldhero5/waldo:dev
+    pull_policy: build
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+  waldo-labeler:
+    image: oldhero5/waldo:dev
+    pull_policy: build
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+  waldo-trainer:
+    image: oldhero5/waldo:dev
+    pull_policy: build
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+  waldo-labeler-nvidia:
+    image: oldhero5/waldo:dev-cuda
+    pull_policy: build
+    build:
+      context: .
+      dockerfile: Dockerfile.cuda
+
+  waldo-trainer-nvidia:
+    image: oldhero5/waldo:dev-cuda
+    pull_policy: build
+    build:
+      context: .
+      dockerfile: Dockerfile.cuda
