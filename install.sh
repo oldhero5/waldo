@@ -13,11 +13,13 @@
 #   --here             Shorthand for --dir "$PWD".
 #   --branch NAME      Branch to clone.                     Default: main
 #   --repo URL         Git URL to clone from.               Default: https://github.com/oldhero5/waldo.git
-#   --skip-prereqs     Don't install Docker/uv/Node — assume they're present.
+#   --skip-prereqs     Don't install Docker/uv — assume they're present.
 #   --skip-models      Don't download SAM 3.1 weights at the end.
 #   --skip-up          Don't run docker compose up — only set everything up.
 #   --cpu              Force CPU mode even if a GPU is detected.
 #   --gpu nvidia|apple|none   Override GPU detection.
+#   --build-from-source  Build the Waldo image locally instead of pulling
+#                      docker.io/oldhero5/waldo. Slow (10-20 min, needs Node).
 #   --hf-token TOKEN   Hugging Face read token (otherwise prompted up front,
 #                      or read from $HF_TOKEN). Required for SAM 3 weights.
 #   --no-sudo          Don't try to install prereqs with sudo. Print a list of
@@ -41,6 +43,7 @@ SKIP_MODELS=0
 SKIP_UP=0
 FORCE_CPU=0
 GPU_OVERRIDE=""
+BUILD_FROM_SOURCE=0
 
 # ── Argument parsing ─────────────────────────────────────────────
 print_help() { sed -n '2,28p' "${BASH_SOURCE[0]:-$0}" 2>/dev/null | sed 's/^# \{0,1\}//'; }
@@ -56,6 +59,7 @@ while [ $# -gt 0 ]; do
         --skip-up)     SKIP_UP=1; shift ;;
         --cpu)         FORCE_CPU=1; shift ;;
         --gpu)         GPU_OVERRIDE="$2"; shift 2 ;;
+        --build-from-source) BUILD_FROM_SOURCE=1; shift ;;
         --hf-token)    export HF_TOKEN="$2"; shift 2 ;;
         --no-sudo)     export WALDO_NO_SUDO=1; shift ;;
         --yes|-y)      export WALDO_ASSUME_YES=1; shift ;;
@@ -301,7 +305,11 @@ else
     ensure_make
     ensure_docker
     ensure_uv
-    ensure_node
+    # Node is only needed when building the image from source — published
+    # images at docker.io/oldhero5/waldo bake the UI in.
+    if [ "$BUILD_FROM_SOURCE" = "1" ]; then
+        ensure_node
+    fi
     ensure_nvidia_container_toolkit
 fi
 
@@ -355,36 +363,35 @@ else
     fi
 fi
 
-# ── Step 8: build the React UI (vite -> app/static, baked into the image) ──
-# The app container serves the SPA out of app/static. Vite's outDir is
-# ../app/static, so we have to build BEFORE `docker compose build` copies app/.
-if [ "$SKIP_UP" = "1" ]; then
-    log_step "Skipping UI build (--skip-up)"
-else
-    log_step "Building UI (vite → app/static)"
-    if [ ! -d "$WALDO_DIR/ui/node_modules" ]; then
-        log_info "Installing UI deps (npm install --legacy-peer-deps)…"
-        ( cd "$WALDO_DIR/ui" && npm install --legacy-peer-deps --no-audit --no-fund ) 2>&1 | sed 's/^/      /'
-    fi
-    ( cd "$WALDO_DIR/ui" && npm run build ) 2>&1 | sed 's/^/      /'
-    if [ -f "$WALDO_DIR/app/static/index.html" ]; then
-        log_ok "UI built ($(du -sh "$WALDO_DIR/app/static" 2>/dev/null | awk '{print $1}'))"
-    else
-        log_warn "UI build finished but app/static/index.html is missing — the app container will return 404 at /."
-    fi
-fi
-
-# ── Step 9: bring up the stack ───────────────────────────────────
+# ── Step 8: bring up the stack ───────────────────────────────────
+# Default: pull the prebuilt image from Docker Hub. Pass --build-from-source
+# to build from the local checkout instead (useful for contributors).
 if [ "$SKIP_UP" = "1" ]; then
     log_step "Skipping stack startup (--skip-up)"
 else
-    log_step "Starting Waldo (docker compose --profile $WALDO_PROFILE up -d --build)"
     if [ "$WALDO_OS" = "macos" ] && [ "$WALDO_GPU" = "apple" ]; then
-        # Apple path — workers run natively for MPS access.
-        log_info "macOS Apple Silicon: running infra+app in Docker, MLX workers natively (make up-mac)"
+        # Apple path — workers run natively for MPS access. The Makefile
+        # target wires that up; it still uses docker compose for infra+app.
+        log_step "Starting Waldo (macOS: native MLX workers + Docker infra)"
+        log_info "Running 'make up-mac' (infra+app in Docker, MLX workers on host)"
+        if [ "$BUILD_FROM_SOURCE" = "1" ]; then
+            log_warn "--build-from-source is not yet wired into make up-mac. Pulling the published image."
+            log_info "Workaround: run 'make build && make up-mac' manually."
+        fi
         ( cd "$WALDO_DIR" && make --no-print-directory up-mac ) 2>&1 | sed 's/^/      /'
+    elif [ "$BUILD_FROM_SOURCE" = "1" ]; then
+        log_step "Building Waldo image from source (--build-from-source)"
+        log_info "This is slow (~10-20 min). Most users should skip this and let it pull."
+        ( cd "$WALDO_DIR" && \
+          docker compose -f docker-compose.yml -f docker-compose.build.yml \
+              --profile "$WALDO_PROFILE" up -d --build ) 2>&1 | sed 's/^/      /'
     else
-        ( cd "$WALDO_DIR" && docker compose --profile "$WALDO_PROFILE" up -d --build ) 2>&1 | sed 's/^/      /'
+        log_step "Pulling Waldo image and starting the stack"
+        log_info "Image: docker.io/oldhero5/waldo:$( [ "$WALDO_PROFILE" = "nvidia" ] && echo cuda || echo latest )"
+        ( cd "$WALDO_DIR" && \
+          docker compose --profile "$WALDO_PROFILE" pull --quiet ) 2>&1 | sed 's/^/      /'
+        ( cd "$WALDO_DIR" && \
+          docker compose --profile "$WALDO_PROFILE" up -d ) 2>&1 | sed 's/^/      /'
     fi
 fi
 

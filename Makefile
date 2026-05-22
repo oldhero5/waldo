@@ -12,13 +12,16 @@ else
   BACKEND := pytorch
 endif
 
-.PHONY: setup up up-mac up-linux up-gpu down down-gpu logs dev-app dev-labeler dev-trainer dev-ui build-ui migrate test test-browser download-models
+.PHONY: setup up up-mac up-linux up-gpu down down-gpu logs dev-app dev-labeler dev-trainer dev-ui build build-ui migrate pull test test-browser download-models
 
 # ── Docker (primary) ─────────────────────────────────────────
+# `make up` pulls the published image (oldhero5/waldo:latest or :cuda) and
+# starts the stack. The UI is baked into the image, so no Vite build is
+# required. Contributors who need to test local changes should use `make build`.
 
 # `make up` auto-routes: Darwin → up-mac (native MLX workers),
 # everything else → up-linux (everything in Docker with PyTorch).
-up: build-ui
+up:
 ifeq ($(BACKEND),mlx)
 	@$(MAKE) --no-print-directory up-mac
 else
@@ -27,14 +30,16 @@ endif
 
 up-linux:
 	@echo "==> Linux/Windows path: PyTorch workers in Docker"
-	docker compose --profile $(PROFILE) up -d --build
+	docker compose --profile $(PROFILE) pull --quiet
+	docker compose --profile $(PROFILE) up -d
 	@echo ""
 	@echo "Waldo is running at http://localhost:8000"
 	@echo "MinIO console at http://localhost:9001"
 
 up-mac:
 	@echo "==> macOS path: infra+app in Docker, MLX workers native"
-	docker compose up -d --build
+	docker compose pull --quiet
+	docker compose up -d
 	@docker compose stop waldo-labeler waldo-trainer 2>/dev/null || true
 	@-pkill -f "celery.*lib.tasks" 2>/dev/null; sleep 1
 	@set -a && . ./.env && set +a && nohup uv run celery -A lib.tasks worker --loglevel=info --concurrency=1 --pool=solo -Q celery > /tmp/waldo-labeler.log 2>&1 & disown
@@ -43,6 +48,18 @@ up-mac:
 	@echo "Waldo is running at http://localhost:8000"
 	@echo "  Labeler (MLX): logs at /tmp/waldo-labeler.log"
 	@echo "  Trainer (MPS): logs at /tmp/waldo-trainer.log"
+
+# ── Image build (contributors only) ──────────────────────────
+# Builds the local Dockerfile(s) and brings the stack up against them.
+# Tag the build :dev (CPU) or :dev-cuda so it doesn't shadow the published image.
+build:
+	docker compose -f docker-compose.yml -f docker-compose.build.yml \
+		--profile $(PROFILE) up -d --build
+
+# Pull just the image without starting anything (useful before `make up`
+# in firewalled networks, or to refresh after a release).
+pull:
+	docker compose --profile $(PROFILE) pull
 
 # Legacy alias — kept so old muscle memory still works.
 up-gpu: up-mac

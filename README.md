@@ -39,8 +39,9 @@ accept the license on the [`facebook/sam3` model page](https://huggingface.co/fa
 You'll paste the token into the installer.
 
 **Step 2 — Install.** One command. Picks the right Docker profile for your
-platform (NVIDIA / Apple MPS / CPU), installs missing prereqs, and brings the
-stack up.
+platform (NVIDIA / Apple MPS / CPU), installs missing prereqs, **pulls the
+prebuilt image** from [Docker Hub](https://hub.docker.com/r/oldhero5/waldo),
+and brings the stack up — no local build, no Node, no Vite.
 
 ```bash
 # macOS / Linux / WSL
@@ -86,6 +87,7 @@ calls are sub-second. Then walk through Review → Train → Deploy.
 git clone https://github.com/oldhero5/waldo.git && cd waldo
 ./install.sh                                 # full install (will prompt for HF_TOKEN)
 ./install.sh --skip-up --skip-models --yes   # config only, no model download
+./install.sh --build-from-source             # build the image locally (contributors)
 ```
 
 ### Installer flags
@@ -97,7 +99,8 @@ git clone https://github.com/oldhero5/waldo.git && cd waldo
 | `--branch NAME` | `main` | Branch to clone |
 | `--cpu` | off | Force CPU even if a GPU is detected |
 | `--gpu nvidia\|apple\|none` | auto | Override GPU detection |
-| `--skip-prereqs` | off | Don't install Docker/uv/Node — assume present |
+| `--build-from-source` | off | Build the image locally instead of pulling (slow; requires Node) |
+| `--skip-prereqs` | off | Don't install Docker/uv — assume present |
 | `--skip-models` | off | Don't download SAM 3 weights |
 | `--skip-up` | off | Don't run `docker compose up` — config only |
 | `--yes` | off | Non-interactive (HF_TOKEN can be set later in `.env`) |
@@ -107,21 +110,29 @@ PowerShell uses the same flags PascalCased (`-HfToken`, `-Dir`, `-SkipUp`, `-Yes
 ### Manual setup (for the curious)
 
 The installer is the recommended path, but Waldo is just `docker-compose.yml`
-underneath. If you want to drive it by hand:
++ a published image underneath. If you want to drive it by hand:
 
 ```bash
 git clone https://github.com/oldhero5/waldo.git && cd waldo
 cp .env.example .env                     # add HF_TOKEN
-make up                                  # auto-routes by OS
+make up                                  # pulls oldhero5/waldo:latest, auto-routes by OS
 ```
 
-| Platform | Command | Workers in Docker? | GPU |
-|----------|---------|:---:|-----|
-| macOS (CPU) | `make up` | ✅ | none |
-| macOS (native MPS) | `make up-mac` | ❌ native | Apple MPS |
-| Linux + NVIDIA | `make up PROFILE=nvidia` | ✅ | CUDA |
-| Linux (CPU only) | `make up` | ✅ | none |
-| Windows (WSL 2) + NVIDIA | `make up PROFILE=nvidia` | ✅ | CUDA |
+| Platform | Command | Image | Workers in Docker? | GPU |
+|----------|---------|------|:---:|-----|
+| macOS (CPU) | `make up` | `oldhero5/waldo:latest` | ✅ | none |
+| macOS (native MPS) | `make up-mac` | `oldhero5/waldo:latest` (app only) | ❌ native | Apple MPS |
+| Linux + NVIDIA | `make up PROFILE=nvidia` | `oldhero5/waldo:cuda` | ✅ | CUDA |
+| Linux (CPU only) | `make up` | `oldhero5/waldo:latest` | ✅ | none |
+| Windows (WSL 2) + NVIDIA | `make up PROFILE=nvidia` | `oldhero5/waldo:cuda` | ✅ | CUDA |
+
+To build from source instead of pulling — useful for contributing or running
+unreleased changes:
+
+```bash
+make build PROFILE=nvidia    # builds Dockerfile.cuda locally and tags :dev-cuda
+make build                   # builds Dockerfile (CPU) locally and tags :dev
+```
 
 ### macOS (Apple Silicon)
 
@@ -162,11 +173,11 @@ make up PROFILE=nvidia
 make gpu-logs
 ```
 
-The `nvidia` profile builds `labeler/Dockerfile.nvidia` and `trainer/Dockerfile.nvidia`
-from `nvidia/cuda:12.4.0-devel-ubuntu22.04`, installs CUDA-enabled PyTorch from
-`download.pytorch.org/whl/cu124` (PyPI ships CPU-only torch by default — a common
-silent-failure trap), and loads SAM 3 via PyTorch + Transformers. The Apple path
-uses MLX, which is macOS-only. Training uses CUDA bf16 for speed.
+The `nvidia` profile pulls `oldhero5/waldo:cuda`, which is built from
+`Dockerfile.cuda` on top of `nvidia/cuda:12.4.0-devel-ubuntu22.04` and installs
+CUDA-enabled PyTorch from `download.pytorch.org/whl/cu124` (PyPI ships CPU-only
+torch by default — a common silent-failure trap). The Apple path uses MLX, which
+is macOS-only. Training uses CUDA bf16 for speed.
 
 Each nvidia worker runs `scripts/entrypoint-worker.sh` on boot, which prints
 `nvidia-smi` + `torch.cuda.is_available()` so `make gpu-logs` immediately shows
@@ -225,11 +236,13 @@ The app runs database migrations automatically on startup.
 ## Common commands
 
 ```bash
-make up              # Start everything
+make up              # Pull image, start everything
+make pull            # Just pull (refresh after a release)
+make build           # Build the image locally (contributors only)
 make logs            # Tail all containers
 make down            # Stop everything
 make dev-ui          # Vite dev server with hot reload (proxies API)
-make build-ui        # Production build → app/static/
+make build-ui        # Production build → app/static/ (only useful for build-from-source)
 make migrate         # Run Alembic migrations
 make test            # Python test suite
 make download-models # Download SAM 3 weights
@@ -376,7 +389,10 @@ waldo/
 ├── alembic/                # Database migrations
 ├── scripts/                # Setup + maintenance scripts
 ├── tests/                  # Python test suite
-└── docker-compose.yml      # All services, apple + nvidia profiles
+├── Dockerfile              # Unified image (app | labeler | trainer via $WALDO_ROLE)
+├── Dockerfile.cuda         # Same image on a CUDA base + GPU torch wheels
+├── docker-compose.yml      # All services, apple + nvidia profiles, pulls from Docker Hub
+└── docker-compose.build.yml # Override that builds from source instead of pulling
 ```
 
 ## Documentation
