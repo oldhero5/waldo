@@ -43,18 +43,6 @@ jobs:
       # 2026-04) corrupts the Authorization header for some Hub PATs and
       # produces "malformed HTTP Authorization header". --password-stdin
       # also keeps the token out of the runner's process listing.
-      - name: Diagnose secret bytes
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        run: |
-          # Don't echo the secret. Just its byte count and the hash, so we can
-          # confirm whether the value reaching the runner matches what was set.
-          # Expected: token is 36 bytes (e.g. "dckr_pat_xxxxxxxxxxxxxxxxxxxxxxxxx").
-          echo "username byte count: $(printf '%s' "$DOCKERHUB_USERNAME" | wc -c)"
-          echo "token byte count:    $(printf '%s' "$DOCKERHUB_TOKEN" | wc -c)"
-          echo "token sha256 (first 12): $(printf '%s' "$DOCKERHUB_TOKEN" | sha256sum | cut -c1-12)"
-
       - name: Log in to Docker Hub
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
