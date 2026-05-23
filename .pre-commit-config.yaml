@@ -80,7 +80,8 @@ repos:
         entry: bash -c 'cd ui && npx --no-install tsc --noEmit'
         language: system
         files: ^ui/.*\.(ts|tsx)$
-        stages: [manual]
+        # Runs on commit when any .ts/.tsx changes. Slow (~10s cold), but
+        # catching type errors at commit beats catching them in CI.
         pass_filenames: false
 
   # ---- dockerfiles ----

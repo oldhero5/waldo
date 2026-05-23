@@ -42,7 +42,7 @@ export default function ClickCanvas({
         handleClick(e);
       }}
     >
-      <img src={imageUrl} width={width} height={height} className="block" />
+      <img src={imageUrl} alt="Frame for point annotations" width={width} height={height} className="block" />
       <svg
         className="absolute inset-0"
         width={width}

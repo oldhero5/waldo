@@ -28,13 +28,15 @@ WORKDIR /app
 
 COPY pyproject.toml .python-version uv.lock ./
 # --python-preference only-managed forces uv to download a current 3.11.x
-# rather than picking up a broken system python.
+# rather than picking up a broken system python. Skip torch/torchvision in
+# the first sync so we don't download CPU wheels just to replace them — the
+# CUDA wheels go in via the next RUN.
 RUN uv sync --frozen --no-dev --group app --group labeler --group trainer \
-        --no-install-project --python-preference only-managed
+        --no-install-project --python-preference only-managed \
+        --no-install-package torch --no-install-package torchvision
 
-# PyPI ships CPU-only torch by default. Replace it with the CUDA 12.4 wheel
-# so the nvidia-container-toolkit GPU passthrough is actually usable.
-RUN uv pip install --upgrade \
+# CUDA 12.4 torch wheels (PyPI default is CPU-only).
+RUN uv pip install \
     --index-url https://download.pytorch.org/whl/cu124 \
     torch torchvision
 
@@ -44,7 +46,9 @@ COPY labeler/ labeler/
 COPY trainer/ trainer/
 COPY alembic.ini ./
 COPY alembic/ alembic/
-COPY scripts/ scripts/
+# Only the runtime entrypoints are needed in the image. Dev scripts
+# stay in the repo.
+COPY scripts/entrypoint.sh scripts/entrypoint-worker.sh scripts/
 
 COPY --from=ui-builder /app/static /app/app/static
 

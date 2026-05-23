@@ -164,16 +164,17 @@ function ComparisonIndicator() {
     }
   }, [sessionId]);
 
-  // Listen for sessionStorage changes (from CompareDemo setting the session)
+  // Listen for sessionStorage changes (from CompareDemo setting the session).
+  // Same-tab `storage` events don't fire, so we use a BroadcastChannel
+  // instead of a 1Hz setInterval poll.
   useEffect(() => {
-    const onStorage = () => {
-      const id = sessionStorage.getItem("waldo_compare_session");
-      setSessionId(id);
+    const channel = new BroadcastChannel("waldo_compare_session");
+    const refresh = () => {
+      setSessionId(sessionStorage.getItem("waldo_compare_session"));
       setDone(false);
     };
-    // Poll sessionStorage since storage events don't fire within the same tab
-    const interval = setInterval(onStorage, 1000);
-    return () => clearInterval(interval);
+    channel.onmessage = refresh;
+    return () => channel.close();
   }, []);
 
   // Poll for results

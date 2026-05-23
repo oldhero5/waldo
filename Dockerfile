@@ -36,7 +36,10 @@ COPY labeler/ labeler/
 COPY trainer/ trainer/
 COPY alembic.ini ./
 COPY alembic/ alembic/
-COPY scripts/ scripts/
+# Only the runtime entrypoints are needed in the image. Dev scripts
+# (purge_models.py, reset_admin.py, setup.sh, dev.sh, download_models.sh)
+# stay in the repo.
+COPY scripts/entrypoint.sh scripts/entrypoint-worker.sh scripts/
 
 # Pre-built UI lands in app/static/ (where app/main.py serves it from).
 COPY --from=ui-builder /app/static /app/app/static

@@ -146,7 +146,7 @@ const LazyFrameCard = React.memo(function LazyFrameCard({
           </span>
         </div>
         {first.frame_url && (
-          <img src={first.frame_url} className="block w-full" loading="lazy" />
+          <img src={first.frame_url} alt="Frame preview" className="block w-full" loading="lazy" />
         )}
         {inView && <FrameOverlay annotations={frameAnns} hoveredId={hoveredAnn} />}
       </div>

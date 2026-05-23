@@ -431,6 +431,7 @@ export default function LabelPage() {
                   <img
                     key={f.id}
                     src={f.image_url}
+                    alt={`Frame ${f.id}`}
                     className="rounded cursor-pointer transition-all"
                     style={{ border: "2px solid transparent" }}
                     onMouseEnter={(e) => (e.currentTarget.style.borderColor = "var(--accent)")}

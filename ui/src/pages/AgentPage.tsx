@@ -208,7 +208,7 @@ export default function AgentPage() {
               <Avatar role="assistant" />
               <div className="space-y-2 max-w-[80%]">
                 {streamTools.map((t, idx) => (
-                  <ToolPill key={idx} tool={t} />
+                  <ToolPill key={`${t.name}-${idx}`} tool={t} />
                 ))}
                 <div
                   className="rounded-2xl px-4 py-3 text-sm leading-relaxed"

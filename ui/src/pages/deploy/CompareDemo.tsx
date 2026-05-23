@@ -269,6 +269,8 @@ export function CompareDemo({ confThreshold, models }: { confThreshold: number; 
     setSessionId(id);
     if (id) sessionStorage.setItem("waldo_compare_session", id);
     else { sessionStorage.removeItem("waldo_compare_session"); sessionStorage.removeItem("waldo_compare_meta"); }
+    // Notify same-tab listeners (Sidebar) without a polling loop.
+    try { new BroadcastChannel("waldo_compare_session").postMessage({ id }); } catch { /* unsupported */ }
   }, []);
 
   useEffect(() => {
