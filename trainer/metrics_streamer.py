@@ -4,13 +4,15 @@ import json
 
 import redis
 
-from lib.config import settings
-
 CHANNEL_PREFIX = "waldo:training:metrics:"
 
 
 def get_redis_client() -> redis.Redis:
-    return redis.Redis.from_url(settings.redis_url)
+    # Delegates to the shared pool so we don't open a new TCP connection per
+    # publish. Kept as a free function for back-compat with callers.
+    from lib.redis_client import get_redis
+
+    return get_redis()
 
 
 def publish_metrics(run_id: str, metrics: dict) -> None:

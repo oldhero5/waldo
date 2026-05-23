@@ -2,7 +2,7 @@
  * Dashboard — editorial home with data-driven typographic ASCII hero,
  * contextual next-action, and live status. Pretext design system.
  */
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { listJobs, listModels, listProjects, listTrainingRuns, getServeStatus } from "../api";
@@ -143,6 +143,12 @@ export default function DashboardPage() {
   const completedRuns = runs?.filter((r) => r.status === "completed") || [];
   const activeRun = runs?.find((r) => ["training", "validating", "queued", "preparing"].includes(r.status));
   const isNewUser = totalVideos === 0 && completedJobs.length === 0;
+
+  // Recent jobs panel — slice/reverse only when jobs change, not every render.
+  const recentJobs = useMemo(
+    () => (jobs ? [...jobs.slice(-4)].reverse() : []),
+    [jobs]
+  );
 
   const staticGreeting = GREETINGS[Math.floor(Date.now() / 86400000) % GREETINGS.length];
 
@@ -337,9 +343,9 @@ export default function DashboardPage() {
         {/* Recent activity */}
         <div className="surface" style={{ padding: 18 }}>
           <span className="eyebrow block mb-3">Recent activity</span>
-          {(jobs?.slice(-4).reverse() || []).length > 0 ? (
+          {recentJobs.length > 0 ? (
             <div className="space-y-2">
-              {(jobs?.slice(-4).reverse() || []).map((job) => (
+              {recentJobs.map((job) => (
                 <Link
                   key={job.job_id}
                   to={job.status === "completed" ? `/review/${job.job_id}` : "/datasets"}

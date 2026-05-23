@@ -151,12 +151,10 @@ def export_model_task(self, model_id: str, fmt: str) -> dict:
 def predict_video_task(self, video_path: str, conf: float, session_id: str) -> dict:
     import json
 
-    import redis
-
-    from lib.config import settings
+    from lib.redis_client import get_redis
     from lib.video_tracker import VideoTracker
 
-    client = redis.Redis.from_url(settings.redis_url)
+    client = get_redis()
     channel = f"waldo:predict:frames:{session_id}"
 
     def on_frame(frame_result):
@@ -209,11 +207,9 @@ def compare_models_task(
     import time
     from dataclasses import asdict
 
-    import redis
+    from lib.redis_client import get_redis
 
-    from lib.config import settings
-
-    client = redis.Redis.from_url(settings.redis_url)
+    client = get_redis()
     channel = f"waldo:compare:{session_id}"
 
     def publish(data):

@@ -6,6 +6,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from PIL import Image
 from pydantic import BaseModel
+from sqlalchemy import func
 
 from labeler.frame_extractor import get_video_metadata
 from lib.auth import get_current_user
@@ -286,15 +287,21 @@ async def upload_videos_batch(
 def list_projects():
     session = SessionLocal()
     try:
-        projects = session.query(Project).all()
+        # Single GROUP BY query instead of one lazy-load per project.
+        rows = (
+            session.query(Project, func.count(Video.id))
+            .outerjoin(Video, Video.project_id == Project.id)
+            .group_by(Project.id)
+            .all()
+        )
         return [
             ProjectOut(
                 id=str(p.id),
                 name=p.name,
-                video_count=len(p.videos),
+                video_count=int(count),
                 created_at=p.created_at.isoformat(),
             )
-            for p in projects
+            for p, count in rows
         ]
     finally:
         session.close()

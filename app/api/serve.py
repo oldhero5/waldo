@@ -1674,11 +1674,9 @@ def get_comparison_result(session_id: str):
     """Poll for comparison results. Returns results if ready, 202 if still running."""
     import json
 
-    import redis
+    from lib.redis_client import get_redis
 
-    from lib.config import settings
-
-    client = redis.Redis.from_url(settings.redis_url)
+    client = get_redis()
     raw = client.get(f"waldo:compare:result:{session_id}")
     if not raw:
         return JSONResponse(status_code=202, content={"status": "running", "session_id": session_id})
