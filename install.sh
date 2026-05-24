@@ -343,9 +343,13 @@ if [ "$WALDO_GPU" = "nvidia" ] && [ "$WALDO_NVIDIA_CT" = "yes" ] && command -v d
 fi
 
 # ── Step 6: pick compose profile ─────────────────────────────────
+# Map detected GPU → compose profile. The `cpu` profile is for Linux/WSL hosts
+# without an NVIDIA GPU; `apple` is reserved for actual Apple Silicon (where
+# the workers run natively on the host, not in this container set).
 case "$WALDO_GPU" in
     nvidia) WALDO_PROFILE="nvidia" ;;
-    apple|none) WALDO_PROFILE="apple" ;;
+    apple)  WALDO_PROFILE="apple" ;;
+    none)   WALDO_PROFILE="cpu" ;;
 esac
 log_info "Compose profile: $WALDO_PROFILE"
 
