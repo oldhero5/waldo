@@ -30,6 +30,57 @@ JWT tokens are issued by `/auth/login`. API keys are created via the Settings pa
 - **Pagination** uses `?offset=` and `?limit=` query params on list endpoints.
 - **Errors** return `{"detail": "..."}` JSON with an appropriate HTTP status.
 
+## Async polling pattern
+
+Long-running endpoints (Celery-backed: labeling, prompt previews, training,
+comparison runs, exports) return `202 Accepted` with a job envelope and let
+the client poll for the result. This keeps the FastAPI thread pool free so
+fast endpoints (`/health`, `/serve/status`, `/predict/image`) stay
+responsive even under heavy labeling load.
+
+```bash
+# 1. Kick off the job. Returns 202 immediately.
+curl -X POST http://localhost:8000/api/v1/label/preview \
+  -H 'Content-Type: application/json' \
+  -d '{"video_id": "VIDEO_ID", "prompts": ["person"]}'
+# → {"job_id": "abc-123", "status": "queued",
+#    "result_url": "/api/v1/job/abc-123"}
+
+# 2. Poll until completed.
+curl http://localhost:8000/api/v1/job/abc-123
+# → {"job_id": "abc-123", "status": "running"}
+# (repeat until status == "completed")
+# → {"job_id": "abc-123", "status": "completed",
+#    "result": { ... endpoint-specific body ... }}
+```
+
+`GET /api/v1/job/{job_id}` is the generic Celery polling surface. It maps
+Celery's internal task states into a four-value status enum:
+
+| Celery state | Reported `status` |
+| --- | --- |
+| `PENDING`, `RECEIVED`, `RETRY` | `queued` |
+| `STARTED`, custom progress states | `running` |
+| `SUCCESS` | `completed` |
+| `FAILURE`, `REVOKED` | `failed` |
+
+When `status == "completed"`, the original endpoint's response body is in
+`result`. When `status == "failed"`, `error` contains a stringified
+description of the underlying exception.
+
+For per-frame labeling progress, keep using `GET /api/v1/status/{job_id}` —
+that endpoint speaks to `LabelingJob` rows specifically and reports
+processed-frame counts.
+
+### `?wait=true` (deprecated)
+
+Endpoints that previously returned a synchronous body — most notably
+`POST /api/v1/label/preview` — accept `?wait=true` to keep the legacy
+shape during migration. The flag blocks the request thread on the Celery
+result with a 180-second timeout, which is exactly the behavior #9 set out
+to remove. New code should not use it; it will be deleted in a future
+release.
+
 ## Resource map
 
 | Group | Path prefix | Pages |
@@ -37,6 +88,7 @@ JWT tokens are issued by `/auth/login`. API keys are created via the Settings pa
 | Auth | `/auth/*` | [Auth](./auth) |
 | Upload + Projects | `/upload`, `/projects` | [Upload](./upload) |
 | Labeling | `/label/*` | [Label](./label) |
+| Job polling | `/job/{job_id}` | (this page) |
 | Review | `/jobs/*`, `/annotations/*` | [Review](./review) |
 | Training | `/train/*`, `/models/*` | [Train](./train) |
 | Serving | `/predict/*`, `/serve/*`, `/endpoints/*` | [Serve](./serve) |
