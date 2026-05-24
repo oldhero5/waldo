@@ -4,6 +4,8 @@ import json
 
 import redis
 
+from lib.redis_serde import pack, unpack
+
 CHANNEL_PREFIX = "waldo:training:metrics:"
 
 
@@ -16,21 +18,33 @@ def get_redis_client() -> redis.Redis:
 
 
 def publish_metrics(run_id: str, metrics: dict) -> None:
-    """Publish training metrics to a Redis channel."""
+    """Publish training metrics to a Redis channel.
+
+    The pubsub message stays JSON because `app/ws.py` forwards directly to WS
+    clients. The `waldo:training:latest:{run_id}` cache is read back only by
+    `get_latest_metrics()` (Python-internal), so it uses msgpack for speed.
+    """
     client = get_redis_client()
     channel = f"{CHANNEL_PREFIX}{run_id}"
     client.publish(channel, json.dumps(metrics))
-    # Also store latest metrics for clients that connect late
-    client.set(f"waldo:training:latest:{run_id}", json.dumps(metrics), ex=3600)
+    # Also store latest metrics for clients that connect late. msgpack is fine
+    # here — `get_latest_metrics()` below is the only reader.
+    client.set(f"waldo:training:latest:{run_id}", pack(metrics), ex=3600)
 
 
 def get_latest_metrics(run_id: str) -> dict | None:
     """Get the most recent metrics for a training run."""
     client = get_redis_client()
     data = client.get(f"waldo:training:latest:{run_id}")
-    if data:
+    if data is None:
+        return None
+    # Tolerate legacy JSON values written by older workers (during a rolling
+    # deploy the old SET may still be in Redis). Try msgpack first; on failure
+    # fall back to JSON. Both branches return a plain dict.
+    try:
+        return unpack(data)
+    except Exception:
         return json.loads(data)
-    return None
 
 
 def _has_nan(metrics: dict) -> bool:

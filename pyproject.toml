@@ -27,6 +27,10 @@ app = [
     "langchain-core>=0.3",
     "langchain-ollama>=0.3",
     "httpx>=0.27",
+    # msgpack — used on internal Redis pubsub hot paths (predict-frame stream
+    # at 30+ fps) where JSON serialization shows up in profiles. WS clients
+    # still receive JSON; the WS layer transparently unpacks msgpack.
+    "msgpack>=1.0",
 ]
 labeler = [
     "transformers>=4.47",

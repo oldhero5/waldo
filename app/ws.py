@@ -14,6 +14,7 @@ import redis.asyncio as aioredis
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from lib.config import settings
+from lib.redis_serde import unpack as msgpack_unpack
 from trainer.metrics_streamer import CHANNEL_PREFIX, get_latest_metrics
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,33 @@ def _get_pool() -> aioredis.ConnectionPool:
     return _redis_pool
 
 
+def _decode_message(data: bytes | str) -> dict | None:
+    """Decode a Redis pubsub payload to a Python dict.
+
+    The internal hot-path channel (predict-frame stream) publishes msgpack;
+    other channels (training metrics) still publish JSON. msgpack binary
+    frames never start with `{` or `[`, so a cheap byte sniff picks the
+    right decoder.
+
+    Falls back to the other format on decode failure as cheap insurance
+    during rolling deploys when publisher and consumer may briefly disagree.
+    """
+    if not data:
+        return None
+    if isinstance(data, str):
+        data = data.encode("utf-8")
+    looks_json = data[:1] in (b"{", b"[")
+    primary = json.loads if looks_json else msgpack_unpack
+    secondary = msgpack_unpack if looks_json else json.loads
+    try:
+        return primary(data)
+    except Exception:
+        try:
+            return secondary(data)
+        except Exception:
+            return None
+
+
 async def _stream_channel(websocket: WebSocket, channel: str) -> None:
     """Forward all Redis pubsub messages for `channel` to the websocket until
     the client disconnects or a terminal {status: completed|failed} arrives.
@@ -48,9 +76,8 @@ async def _stream_channel(websocket: WebSocket, channel: str) -> None:
         while True:
             message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
             if message and message["type"] == "message":
-                try:
-                    data = json.loads(message["data"])
-                except (ValueError, TypeError):
+                data = _decode_message(message["data"])
+                if data is None:
                     logger.warning("ws: dropped malformed message on %s", channel)
                     continue
                 await websocket.send_json(data)
