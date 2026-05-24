@@ -149,9 +149,15 @@ def export_model_task(self, model_id: str, fmt: str) -> dict:
 
 @app.task(name="waldo.predict_video", bind=True)
 def predict_video_task(self, video_path: str, conf: float, session_id: str) -> dict:
-    import json
+    """Run a YOLO tracker over a video and stream per-frame detections to Redis.
 
+    Per-frame publishes happen at 30+ fps for HD video — JSON serialization
+    showed up in profiles. The pubsub payloads use msgpack; `app/ws.py`
+    detects the binary frame, unpacks, and re-serializes JSON to WS clients
+    (so clients see no change in payload format).
+    """
     from lib.redis_client import get_redis
+    from lib.redis_serde import pack
     from lib.video_tracker import VideoTracker
 
     client = get_redis()
@@ -167,7 +173,7 @@ def predict_video_task(self, video_path: str, conf: float, session_id: str) -> d
             "detections": [asdict(d) for d in frame_result.detections],
             "status": "processing",
         }
-        client.publish(channel, json.dumps(payload))
+        client.publish(channel, pack(payload))
 
     tracker = VideoTracker(conf=conf)
     results = tracker.track_video(video_path, on_frame=on_frame)
@@ -175,7 +181,7 @@ def predict_video_task(self, video_path: str, conf: float, session_id: str) -> d
     # Publish completion
     client.publish(
         channel,
-        json.dumps(
+        pack(
             {
                 "session_id": session_id,
                 "status": "completed",
