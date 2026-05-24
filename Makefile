@@ -1,15 +1,16 @@
-# ── OS detection — picks the right backend automatically ────
-# macOS (Darwin) → MLX via mlx-vlm, workers run natively so MPS/Metal is reachable.
-# Linux / Windows (WSL) → PyTorch SAM 3, workers run inside Docker.
-# Override PROFILE manually for nvidia: `make up PROFILE=nvidia`.
+# ── OS / GPU detection — picks the right compose profile automatically ──
+# macOS (Darwin)         → apple   (native MLX workers, infra+app in Docker)
+# Linux/WSL + nvidia-smi → nvidia  (CUDA workers in Docker)
+# Linux/WSL otherwise    → cpu     (CPU workers in Docker)
+# Override manually for any host: `make up PROFILE=nvidia`.
 UNAME_S := $(shell uname -s)
 
 ifeq ($(UNAME_S),Darwin)
   PROFILE ?= apple
-  BACKEND := mlx
+else ifneq (,$(shell command -v nvidia-smi 2>/dev/null))
+  PROFILE ?= nvidia
 else
-  PROFILE ?= apple
-  BACKEND := pytorch
+  PROFILE ?= cpu
 endif
 
 .PHONY: setup up up-mac up-linux up-gpu down down-gpu logs dev-app dev-labeler dev-trainer dev-ui build build-ui migrate pull test test-browser download-models
@@ -22,10 +23,10 @@ endif
 # `make up` auto-routes: Darwin → up-mac (native MLX workers),
 # everything else → up-linux (everything in Docker with PyTorch).
 up:
-ifeq ($(BACKEND),mlx)
+ifeq ($(UNAME_S),Darwin)
 	@$(MAKE) --no-print-directory up-mac
 else
-	@$(MAKE) --no-print-directory up-linux
+	@$(MAKE) --no-print-directory up-linux PROFILE=$(PROFILE)
 endif
 
 up-linux:

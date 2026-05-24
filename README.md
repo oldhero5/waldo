@@ -118,13 +118,20 @@ cp .env.example .env                     # add HF_TOKEN
 make up                                  # pulls oldhero5/waldo:latest, auto-routes by OS
 ```
 
-| Platform | Command | Image | Workers in Docker? | GPU |
-|----------|---------|------|:---:|-----|
-| macOS (CPU) | `make up` | `oldhero5/waldo:latest` | ✅ | none |
-| macOS (native MPS) | `make up-mac` | `oldhero5/waldo:latest` (app only) | ❌ native | Apple MPS |
-| Linux + NVIDIA | `make up PROFILE=nvidia` | `oldhero5/waldo:cuda` | ✅ | CUDA |
-| Linux (CPU only) | `make up` | `oldhero5/waldo:latest` | ✅ | none |
-| Windows (WSL 2) + NVIDIA | `make up PROFILE=nvidia` | `oldhero5/waldo:cuda` | ✅ | CUDA |
+`make up` auto-detects your platform and picks the right compose profile:
+**Darwin → `apple`**, **Linux/WSL with `nvidia-smi` → `nvidia`**, **otherwise →
+`cpu`**. You can still override explicitly with `PROFILE=...`.
+
+| Platform | Command | Auto-detected profile | Image | Workers in Docker? | GPU |
+|----------|---------|:---:|------|:---:|-----|
+| macOS (Apple Silicon) | `make up` | `apple` | `oldhero5/waldo:latest` (app only) | ❌ native | Apple MPS |
+| Linux + NVIDIA | `make up` | `nvidia` | `oldhero5/waldo:cuda` | ✅ | CUDA |
+| Linux (CPU only) | `make up` | `cpu` | `oldhero5/waldo:latest` | ✅ | none |
+| Windows (WSL 2) + NVIDIA | `make up` | `nvidia` | `oldhero5/waldo:cuda` | ✅ | CUDA |
+| Force a specific profile | `make up PROFILE=nvidia` (or `cpu`/`apple`) | — | per profile | per profile | per profile |
+
+The `apple` profile is also kept as an alias for `cpu` for one release, so old
+`make up PROFILE=apple` invocations on Linux keep working.
 
 To build from source instead of pulling — useful for contributing or running
 unreleased changes:
@@ -219,7 +226,7 @@ it — Ultralytics, Celery's solo pool, and ffmpeg all behave differently there.
 ### Linux without a GPU (CPU only)
 
 ```bash
-make up          # Uses the apple profile; it's CPU-only Dockerfiles
+make up          # Auto-selects the cpu profile (CPU-only image)
 ```
 
 Works for small datasets and smoke tests. Don't expect to train on real video.
@@ -391,7 +398,7 @@ waldo/
 ├── tests/                  # Python test suite
 ├── Dockerfile              # Unified image (app | labeler | trainer via $WALDO_ROLE)
 ├── Dockerfile.cuda         # Same image on a CUDA base + GPU torch wheels
-├── docker-compose.yml      # All services, apple + nvidia profiles, pulls from Docker Hub
+├── docker-compose.yml      # All services; apple/cpu/nvidia profiles, pulls from Docker Hub
 └── docker-compose.build.yml # Override that builds from source instead of pulling
 ```
 
