@@ -4,7 +4,8 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import JSONResponse
 from PIL import Image
 from pydantic import BaseModel
 
@@ -183,66 +184,12 @@ class PreviewResponse(BaseModel):
     mode: str = "sample"
 
 
-@router.post("/label/preview", response_model=PreviewResponse)
-async def preview_prompts(req: PreviewRequest):
-    """Prompt playground — dispatches a small SAM3.1 run to the Celery worker
-    and returns detections + base64 JPEGs for inline preview.
+def _preview_result_to_response(result: dict) -> PreviewResponse:
+    """Shape the raw Celery task return into the public PreviewResponse.
 
-    Runs synchronously with a 90s timeout. Reuses the worker's cached MLX
-    predictor so subsequent calls are ~150ms/frame after the first load.
-    Nothing is persisted.
+    Kept as a free function so both the sync (?wait=true) path and the polling
+    endpoint produce identical bodies.
     """
-    import asyncio
-
-    session = SessionLocal()
-    try:
-        # Resolve the video to sample from.
-        if req.video_id:
-            video = session.query(Video).filter_by(id=req.video_id).first()
-            if not video:
-                raise HTTPException(status_code=404, detail="Video not found")
-        elif req.project_id:
-            project = session.query(Project).filter_by(id=req.project_id).first()
-            if not project:
-                raise HTTPException(status_code=404, detail="Project not found")
-            video = session.query(Video).filter_by(project_id=project.id).first()
-            if not video:
-                raise HTTPException(status_code=404, detail="No videos in project")
-        else:
-            raise HTTPException(status_code=400, detail="video_id or project_id required")
-        video_id_str = str(video.id)
-    finally:
-        session.close()
-
-    if not req.prompts:
-        raise HTTPException(status_code=400, detail="prompts must be non-empty")
-
-    from lib.tasks import app as celery_app
-
-    def _dispatch_and_wait():
-        async_result = celery_app.send_task(
-            "waldo.label_playground",
-            kwargs={
-                "video_id": video_id_str,
-                "prompts": req.prompts,
-                "threshold": req.threshold,
-                "frame_count": req.max_frames,
-                "start_sec": req.start_sec,
-                "duration_sec": req.duration_sec,
-                "sample_fps": req.sample_fps,
-            },
-        )
-        # Window mode can process up to 120 frames — give it headroom.
-        return async_result.get(timeout=180)
-
-    try:
-        result = await asyncio.to_thread(_dispatch_and_wait)
-    except Exception as e:
-        raise HTTPException(
-            status_code=504 if "timeout" in str(e).lower() else 500,
-            detail=f"Playground failed: {e}",
-        )
-
     frames_out: list[PreviewFrame] = []
     for f in result.get("frames", []):
         frames_out.append(
@@ -272,6 +219,98 @@ async def preview_prompts(req: PreviewRequest):
         video_duration_s=result.get("video_duration_s", 0.0),
         mode=result.get("mode", "sample"),
     )
+
+
+@router.post("/label/preview")
+async def preview_prompts(
+    req: PreviewRequest,
+    wait: bool = Query(
+        False,
+        description=(
+            "Deprecated. When true, blocks the request thread until the "
+            "preview completes (legacy behavior). New callers should omit "
+            "this flag and poll /api/v1/job/{job_id} instead — the "
+            "synchronous path will be removed in a future release."
+        ),
+    ),
+):
+    """Prompt playground — dispatches a small SAM3.1 run to the Celery worker.
+
+    Default (async): returns 202 with `{job_id, status, result_url}`. Poll the
+    `result_url` until `status == "completed"`, then read `result` for the
+    `PreviewResponse` body.
+
+    `?wait=true` (deprecated): blocks the thread on the Celery task with a
+    180s timeout and returns the `PreviewResponse` body directly. Provided
+    for one-release backward compat with API consumers that expected a
+    synchronous shape; will be removed.
+    """
+    session = SessionLocal()
+    try:
+        # Resolve the video to sample from.
+        if req.video_id:
+            video = session.query(Video).filter_by(id=req.video_id).first()
+            if not video:
+                raise HTTPException(status_code=404, detail="Video not found")
+        elif req.project_id:
+            project = session.query(Project).filter_by(id=req.project_id).first()
+            if not project:
+                raise HTTPException(status_code=404, detail="Project not found")
+            video = session.query(Video).filter_by(project_id=project.id).first()
+            if not video:
+                raise HTTPException(status_code=404, detail="No videos in project")
+        else:
+            raise HTTPException(status_code=400, detail="video_id or project_id required")
+        video_id_str = str(video.id)
+    finally:
+        session.close()
+
+    if not req.prompts:
+        raise HTTPException(status_code=400, detail="prompts must be non-empty")
+
+    from lib.tasks import app as celery_app
+
+    async_result = celery_app.send_task(
+        "waldo.label_playground",
+        kwargs={
+            "video_id": video_id_str,
+            "prompts": req.prompts,
+            "threshold": req.threshold,
+            "frame_count": req.max_frames,
+            "start_sec": req.start_sec,
+            "duration_sec": req.duration_sec,
+            "sample_fps": req.sample_fps,
+        },
+    )
+
+    if not wait:
+        # Default: fire-and-poll. Return immediately so this endpoint can't
+        # starve the FastAPI thread pool under load.
+        return JSONResponse(
+            status_code=202,
+            content={
+                "job_id": async_result.id,
+                "status": "queued",
+                "result_url": f"/api/v1/job/{async_result.id}",
+            },
+        )
+
+    # Legacy ?wait=true path: block on the result inside a worker thread so
+    # the event loop itself stays responsive. Only kept for one release; new
+    # callers should poll instead.
+    def _wait_for_result():
+        # Window mode can process up to 120 frames — give it headroom.
+        return async_result.get(timeout=180)
+
+    try:
+        result = await asyncio.to_thread(_wait_for_result)
+    except Exception as e:
+        raise HTTPException(
+            status_code=504 if "timeout" in str(e).lower() else 500,
+            detail=f"Playground failed: {e}",
+        )
+
+    return _preview_result_to_response(result)
 
 
 # ── Interactive SAM3 segmentation from click points ──────────────────

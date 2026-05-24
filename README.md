@@ -280,7 +280,9 @@ All endpoints live under `/api/v1` and are documented at `/docs` (OpenAPI). High
 | `POST` | `/upload` | Upload video |
 | `POST` | `/label` | Start text-prompt labeling |
 | `POST` | `/label/exemplar` | Start click-based labeling |
-| `GET` | `/status/{job_id}` | Job status + result URL |
+| `POST` | `/label/preview` | Async prompt preview (202 + poll `/job/{id}`) |
+| `GET` | `/job/{job_id}` | Generic Celery task result polling |
+| `GET` | `/status/{job_id}` | Per-frame labeling progress |
 | `POST` | `/train` | Start training run |
 | `GET` | `/train/{run_id}` | Status + metrics + loss history |
 | `WS` | `/ws/training/{run_id}` | Live metrics stream |
@@ -290,27 +292,41 @@ All endpoints live under `/api/v1` and are documented at `/docs` (OpenAPI). High
 
 ### Example pipeline
 
+Long-running endpoints (label, label/preview, training, comparisons, exports)
+return `202 Accepted` with a `{job_id, status, result_url}` envelope. Poll
+the `result_url` until the job is complete instead of blocking the
+connection. See [API overview](docs-site/docs/api/overview.md#async-polling-pattern)
+for full details.
+
 ```bash
 # 1. Upload video
 curl -X POST http://localhost:8000/api/v1/upload -F "file=@clip.mp4"
 
-# 2. Label with a text prompt
+# 2. Try a prompt on a few frames before committing to the full job.
+#    Returns 202 immediately with a job_id; poll /api/v1/job/{job_id}
+#    until status == "completed" and read result.frames[].
+curl -X POST http://localhost:8000/api/v1/label/preview \
+  -H "Content-Type: application/json" \
+  -d '{"video_id": "VIDEO_ID", "prompts": ["person"]}'
+curl http://localhost:8000/api/v1/job/PREVIEW_JOB_ID
+
+# 3. Kick off the full labeling job
 curl -X POST http://localhost:8000/api/v1/label \
   -H "Content-Type: application/json" \
   -d '{"video_id": "VIDEO_ID", "text_prompt": "person", "task_type": "segment"}'
 
-# 3. Poll until the labeling job finishes
+# 4. Poll for per-frame labeling progress (LabelingJob row)
 curl http://localhost:8000/api/v1/status/JOB_ID
 
-# 4. Train a YOLO model on the dataset
+# 5. Train a YOLO model on the dataset
 curl -X POST http://localhost:8000/api/v1/train \
   -H "Content-Type: application/json" \
   -d '{"job_id": "JOB_ID", "model_variant": "yolo26n-seg", "hyperparameters": {"epochs": 50}}'
 
-# 5. Watch training (or open the Train page in the UI)
+# 6. Watch training (or open the Train page in the UI)
 curl http://localhost:8000/api/v1/train/RUN_ID
 
-# 6. Run inference against the trained model
+# 7. Run inference against the trained model
 curl -X POST "http://localhost:8000/api/v1/predict/image?model_id=MODEL_ID" \
   -H "Authorization: Bearer wld_YOUR_KEY" \
   -F "file=@test.jpg"

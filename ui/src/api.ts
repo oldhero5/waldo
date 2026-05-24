@@ -12,6 +12,50 @@ export async function authFetch(url: string, init?: RequestInit): Promise<Respon
   return fetch(url, { ...init, headers });
 }
 
+/** Generic Celery job result envelope returned by `GET /api/v1/job/{job_id}`. */
+export interface JobResult<T = unknown> {
+  job_id: string;
+  status: "queued" | "running" | "completed" | "failed";
+  result?: T | null;
+  error?: string | null;
+}
+
+/** Poll a Celery job id until it completes, then return `result` typed as `T`.
+ *
+ * Used by `previewPrompts` and any other helper that hits an endpoint which
+ * now returns 202 + `{job_id, result_url}` instead of a synchronous body.
+ * Callers stay unchanged — they still `await` the helper and get the final
+ * payload back.
+ *
+ * Polls with mild backoff to keep the server load down on long jobs while
+ * still feeling instant on short ones. Aborts after `timeoutMs` and surfaces
+ * task failures as thrown Errors.
+ */
+export async function pollJob<T = unknown>(
+  jobId: string,
+  opts: { timeoutMs?: number; initialDelayMs?: number; maxDelayMs?: number } = {},
+): Promise<T> {
+  const { timeoutMs = 5 * 60 * 1000, initialDelayMs = 200, maxDelayMs = 2000 } = opts;
+  const deadline = Date.now() + timeoutMs;
+  let delay = initialDelayMs;
+  while (Date.now() < deadline) {
+    const res = await authFetch(`${BASE}/job/${jobId}`);
+    if (!res.ok) {
+      throw new Error(`Job poll failed (${res.status}): ${await res.text()}`);
+    }
+    const body = (await res.json()) as JobResult<T>;
+    if (body.status === "completed") {
+      return body.result as T;
+    }
+    if (body.status === "failed") {
+      throw new Error(body.error || "Job failed");
+    }
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    delay = Math.min(maxDelayMs, Math.floor(delay * 1.5));
+  }
+  throw new Error(`Job ${jobId} did not complete within ${timeoutMs}ms`);
+}
+
 export interface UploadResult {
   video_id: string;
   project_id: string;
@@ -126,6 +170,9 @@ export async function previewPrompts(
     sampleFps?: number;
   }
 ): Promise<PreviewResponse> {
+  // POST kicks off a Celery task and returns 202 with `{job_id, result_url}`.
+  // We poll under the hood so existing callers still get a `PreviewResponse`
+  // when they `await` this helper — no changes needed at the call sites.
   const res = await authFetch(`${BASE}/label/preview`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -141,7 +188,13 @@ export async function previewPrompts(
     }),
   });
   if (!res.ok) throw new Error(await res.text());
-  return res.json();
+  const body = await res.json();
+  // 202 envelope → poll. If a future server still returns the full body
+  // synchronously (e.g. behind ?wait=true), return it directly.
+  if (body && typeof body === "object" && "job_id" in body && !("frames" in body)) {
+    return pollJob<PreviewResponse>(body.job_id);
+  }
+  return body as PreviewResponse;
 }
 
 export interface DatasetStatsClass {
