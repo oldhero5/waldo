@@ -30,7 +30,19 @@ Visual-prompt variant — instead of text, provide an image crop (or bbox) and S
 
 ## `POST /api/v1/label/preview`
 
-Run SAM 3 on a small sample of frames to preview a prompt before committing to a full job. Returns base64-encoded JPEG previews.
+Run SAM 3 on a small sample of frames to preview a prompt before committing
+to a full job. Returns base64-encoded JPEG previews.
+
+**Async by default.** The endpoint dispatches a Celery task and returns
+`202 Accepted` with `{job_id, status, result_url}`. Poll
+`GET /api/v1/job/{job_id}` until `status == "completed"`, then read the
+preview body from `result`. See the [polling pattern](./overview#async-polling-pattern)
+for the envelope shape.
+
+For backward compatibility during migration, pass `?wait=true` to block
+the request thread until the preview finishes (180s timeout). The flag is
+deprecated and will be removed in a future release; new callers should
+poll instead.
 
 ## `POST /api/v1/label/segment-points`
 

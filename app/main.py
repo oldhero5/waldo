@@ -14,6 +14,7 @@ from app.api import (
     download,
     feedback,
     frames,
+    job,
     label,
     review,
     serve,
@@ -68,6 +69,7 @@ app.add_middleware(GZipMiddleware, minimum_size=500)
 app.include_router(auth.router, prefix="/api/v1", tags=["auth"])
 app.include_router(upload.router, prefix="/api/v1", tags=["upload"])
 app.include_router(label.router, prefix="/api/v1", tags=["label"])
+app.include_router(job.router, prefix="/api/v1", tags=["job"])
 app.include_router(status.router, prefix="/api/v1", tags=["status"])
 app.include_router(review.router, prefix="/api/v1", tags=["review"])
 app.include_router(frames.router, prefix="/api/v1", tags=["frames"])
