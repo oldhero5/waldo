@@ -9,6 +9,7 @@ specific to `LabelingJob` rows and reports per-frame progress. `/job/{job_id}`
 is the generic Celery `AsyncResult.id` polling surface — anything that
 dispatched a Celery task and stashed the task id can be polled here.
 """
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 

@@ -72,8 +72,9 @@ def patched_label(fake_video_id):
         def close(self):
             pass
 
-    with patch("app.api.label.SessionLocal", return_value=_S()), patch(
-        "app.api.label.label_video.delay", side_effect=_fake_label_video_delay
+    with (
+        patch("app.api.label.SessionLocal", return_value=_S()),
+        patch("app.api.label.label_video.delay", side_effect=_fake_label_video_delay),
     ):
         yield
 
