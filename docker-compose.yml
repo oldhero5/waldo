@@ -137,12 +137,16 @@ services:
       - waldo-net
 
   # ── Workers: Apple Silicon / CPU (no GPU) ──────────────────
+  # Activated under both the `cpu` profile (Linux/WSL hosts without an NVIDIA
+  # GPU) and the `apple` profile (kept as an alias for one release so existing
+  # `make up PROFILE=apple` invocations don't break).
 
   waldo-labeler:
     image: ${WALDO_IMAGE:-oldhero5/waldo}:${WALDO_TAG:-latest}
     pull_policy: always
     profiles:
       - apple
+      - cpu
     env_file: .env
     environment:
       WALDO_ROLE: labeler
@@ -167,6 +171,7 @@ services:
     pull_policy: always
     profiles:
       - apple
+      - cpu
     env_file: .env
     environment:
       WALDO_ROLE: trainer
