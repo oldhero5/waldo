@@ -73,6 +73,8 @@ The override builds `Dockerfile` (CPU) and/or `Dockerfile.cuda` (GPU) locally an
 | `minio` | 9000 (S3) / 9001 (console) | `minio/minio` | `/minio/health/live` |
 | `ollama` | 11434 | `ollama/ollama` | `ollama list` |
 
+MinIO is bound to `127.0.0.1` by default — the dev-default `minioadmin/minioadmin` credentials should never be reachable from the LAN. The console is at <http://127.0.0.1:9001> and the S3 API at <http://127.0.0.1:9000>. Set `MINIO_BIND=0.0.0.0` in `.env` if you need to reach it from another machine on your LAN.
+
 ## Profiles
 
 The compose file uses Docker Compose profiles to support both NVIDIA GPU and Apple Silicon hosts:
