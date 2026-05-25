@@ -15,7 +15,10 @@ RUN mkdir -p /app/static && npm run build
 # Note: ubuntu:22.04's python3.11 package is 3.11.0rc1, which predates
 # sys.get_int_max_str_digits (added in 3.11.1). torch's _dynamo polyfills
 # require it, so we let uv manage Python instead of using the distro one.
-FROM nvidia/cuda:12.4.0-devel-ubuntu22.04 AS runtime
+# Use the runtime (not devel) base — we ship prebuilt CUDA torch wheels
+# and never compile kernels, so nvcc/headers/SDK aren't needed in the
+# image. Saves ~2.5 GB of base layer.
+FROM nvidia/cuda:12.4.0-runtime-ubuntu22.04 AS runtime
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && \
