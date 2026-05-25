@@ -28,16 +28,21 @@ WORKDIR /app
 
 COPY pyproject.toml .python-version uv.lock ./
 # --python-preference only-managed forces uv to download a current 3.11.x
-# rather than picking up a broken system python. Skip torch/torchvision in
-# the first sync so we don't download CPU wheels just to replace them — the
-# CUDA wheels go in via the next RUN.
+# rather than picking up a broken system python. Skip torch + torchvision
+# (and their CUDA toolkit transitives) in the first sync — we want the
+# cu130 wheels, not PyPI's CPU torch + lockfile-pinned nvidia-cudnn-cu13.
+# The CUDA wheels go in via the next RUN.
 RUN uv sync --frozen --no-dev --group app --group labeler --group trainer \
         --no-install-project --python-preference only-managed \
         --no-install-package torch --no-install-package torchvision
 
-# CUDA 12.4 torch wheels (PyPI default is CPU-only).
+# CUDA 13.0 torch wheels (PyPI default is CPU-only). Pulls the matching
+# nvidia-cudnn-cu13 (with its .so files) as a transitive dep. We do NOT
+# follow this with `uv sync` later because that re-reconciles against the
+# lockfile and silently strips libcudnn.so.9 off disk, breaking torch.
 RUN uv pip install \
-    --index-url https://download.pytorch.org/whl/cu124 \
+    --index-url https://download.pytorch.org/whl/cu130 \
+    --extra-index-url https://pypi.org/simple \
     torch torchvision
 
 COPY lib/ lib/
@@ -52,10 +57,11 @@ COPY scripts/entrypoint.sh scripts/entrypoint-worker.sh scripts/
 
 COPY --from=ui-builder /app/static /app/app/static
 
-# Install the project itself into the existing venv so alembic and celery
-# can import `lib`, `app`, etc. without PYTHONPATH gymnastics.
-RUN uv sync --frozen --no-dev --group app --group labeler --group trainer \
-        --python-preference only-managed
+# Install just the Waldo project itself (so `from lib import ...` works
+# from alembic + celery + the agent harness). --no-deps is load-bearing:
+# any form of dep resolution here will reconcile nvidia-cudnn-cu13 against
+# the lockfile and remove libcudnn.so.9 from /app/.venv. See issue #17.
+RUN uv pip install --no-deps -e .
 
 COPY scripts/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh /app/scripts/entrypoint-worker.sh
