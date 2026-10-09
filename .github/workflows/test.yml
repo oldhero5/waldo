@@ -123,18 +123,22 @@ jobs:
 
       # ── Ruff lint + format ───────────────────────────────────────────────────
       - name: Ruff — lint
+        id: ruff_lint
         run: uv run ruff check .
 
       - name: Ruff — format check
+        id: ruff_format
         run: uv run ruff format --check .
 
       # ── Database migrations ──────────────────────────────────────────────────
       - name: Run Alembic migrations
+        id: migrations
         run: uv run alembic upgrade head
 
       # ── Pytest ──────────────────────────────────────────────────────────────
       - name: Run pytest
-        run: uv run pytest -v --tb=short
+        id: pytest
+        run: uv run pytest -v --tb=short -ra --junitxml="$RUNNER_TEMP/waldo-pytest.xml"
 
       # ── Frontend ─────────────────────────────────────────────────────────────
       - name: Set up Node.js 20
@@ -145,19 +149,23 @@ jobs:
           cache-dependency-path: ui/package-lock.json
 
       - name: Install UI dependencies
+        id: ui_deps
         working-directory: ui
         run: npm ci --legacy-peer-deps
 
       - name: Build UI (type-check + bundle)
+        id: ui_build
         working-directory: ui
         run: npm run build
 
       - name: Lint UI
+        id: ui_lint
         working-directory: ui
         run: npm run lint
 
       # ── Secret scanning ──────────────────────────────────────────────────────
       - name: Gitleaks — secret scan
+        id: secret_scan
         env:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PUSH_BEFORE_SHA: ${{ github.event.before }}
@@ -185,6 +193,34 @@ jobs:
           [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]] || { echo "Checkout SHA mismatch" >&2; exit 1; }
           "$RUNNER_TEMP/gitleaks" git --log-opts="$log_opts" --no-banner --redact .
 
+      - name: Upload backend test report
+        id: backend_artifact
+        if: ${{ !cancelled() && steps.pytest.outcome != 'skipped' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: backend-test-report
+          path: ${{ runner.temp }}/waldo-pytest.xml
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Summarize backend checks
+        if: ${{ !cancelled() }}
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          RUFF_LINT_OUTCOME: ${{ steps.ruff_lint.outcome }}
+          RUFF_FORMAT_OUTCOME: ${{ steps.ruff_format.outcome }}
+          MIGRATIONS_OUTCOME: ${{ steps.migrations.outcome }}
+          PYTEST_OUTCOME: ${{ steps.pytest.outcome }}
+          UI_DEPS_OUTCOME: ${{ steps.ui_deps.outcome }}
+          UI_BUILD_OUTCOME: ${{ steps.ui_build.outcome }}
+          UI_LINT_OUTCOME: ${{ steps.ui_lint.outcome }}
+          SECRET_SCAN_OUTCOME: ${{ steps.secret_scan.outcome }}
+          REPORT_ARTIFACT_URL: ${{ steps.backend_artifact.outputs.artifact-url }}
+        run: |
+          set -o pipefail
+          python3 .github/scripts/test-summary.py --suite backend --report "$RUNNER_TEMP/waldo-pytest.xml" | tee -a "$GITHUB_STEP_SUMMARY"
+
   ui-browser:
     name: UI browser smoke
     runs-on: ubuntu-24.04
@@ -203,17 +239,49 @@ jobs:
           cache-dependency-path: ui/package-lock.json
 
       - name: Install UI dependencies
+        id: ui_deps
         working-directory: ui
         run: npm ci --legacy-peer-deps
 
       - name: Build UI
+        id: ui_build
         working-directory: ui
         run: npm run build
 
       - name: Install Chromium
+        id: chromium
         working-directory: ui
         run: npx playwright install --with-deps chromium
 
       - name: Run UI browser smoke tests
+        id: browser
+        env:
+          WALDO_SCREENSHOT_DIR: ${{ github.workspace }}/ui/test-results/visual-evidence
         working-directory: ui
         run: npx playwright test -c playwright.smoke.config.ts
+
+      - name: Upload browser test report
+        id: browser_artifact
+        if: ${{ !cancelled() && steps.browser.outcome != 'skipped' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: browser-test-report
+          path: |
+            ui/test-results/
+            ui/playwright-report/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Summarize browser checks
+        if: ${{ !cancelled() }}
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          UI_DEPS_OUTCOME: ${{ steps.ui_deps.outcome }}
+          UI_BUILD_OUTCOME: ${{ steps.ui_build.outcome }}
+          CHROMIUM_OUTCOME: ${{ steps.chromium.outcome }}
+          BROWSER_OUTCOME: ${{ steps.browser.outcome }}
+          REPORT_ARTIFACT_URL: ${{ steps.browser_artifact.outputs.artifact-url }}
+        run: |
+          set -o pipefail
+          python3 .github/scripts/test-summary.py --suite browser --report ui/test-results/junit.xml | tee -a "$GITHUB_STEP_SUMMARY"

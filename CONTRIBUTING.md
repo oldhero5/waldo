@@ -72,6 +72,38 @@ by themselves. The owner checks the underlying evidence.
 - A skipped worker/model test is not evidence that its integration passed.
   Identify the missing gate and complete it before a release that depends on it.
 
+### Read the CI evidence
+
+Open the PR's **Checks** tab, then a check's **Details** link. The Actions run
+summary shows test totals, failed and skipped cases, step outcomes, and the
+source commits. PR runs test GitHub's candidate merge commit; the report also
+identifies the PR head. Do not confuse a green check with approval of another SHA.
+Sign into GitHub in that browser to view logs and download artifacts. A connected
+GitHub tool or CLI login does not sign the browser in.
+
+The run's **Artifacts** section contains backend JUnit results and the browser
+HTML/JUnit report. Browser failures retain a screenshot and trace. Synthetic
+overlay screenshots are also retained. Reports expire after 14 days. Download
+the browser report and open it with `npx playwright show-report <report-folder>`.
+Only synthetic CI data belongs in these reports; never upload local credentials,
+`test_data/`, or recordings from the human's installation.
+
+| Check | What it establishes | What it does not establish |
+| --- | --- | --- |
+| Lint + Test + Build | Python regressions; migrated PostgreSQL contracts and export races; Redis/MinIO round trips; UI type/build/lint; secret scan | Complete Celery workflow, real inference, model accuracy, GPU compatibility, or a tested container image |
+| UI browser smoke | Real UI rendering and synthetic video playback with controlled API responses | Browser-to-production-backend integration or model quality |
+| Independent review | A separate reviewer inspected the named commit and its evidence | An automated test or owner approval |
+| Human approval | The owner accepted the named commit and human test result | An automated test or a release deployment |
+
+Known gaps: worker-dependent API tests can skip when no worker completes a job.
+The two opt-in suites in `test_e2e.py` and `test_e2e_full.py` also need repair:
+one expects automatic export, and the other expects training from one source
+group. Neither qualifies the current workflow. A separate worker-integration PR
+must repair these assumptions, run a real queued workflow, and fail if a
+required worker does not complete. Real SAM/MLX/CUDA and accuracy checks remain
+separate hardware/model qualification. The documentation build is currently a
+local check and a main-branch workflow, not a required PR check.
+
 ## Data and model experiments
 
 The entire `test_data/` directory is ignored, including labels and metadata.
