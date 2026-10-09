@@ -144,6 +144,86 @@ test("dataset inspector uses freshly queried frame URL", async ({ page, download
   await expect.poll(() => canvasColor(page)).toEqual([40, 120, 200]);
 });
 
+for (const preview of ["pending", "completed", "switched"] as const) {
+  const behavior = { pending: "resumes pending point preview", completed: "preserves completed preview without recomputing", switched: "retires pending preview on frame switch" };
+  test(`same-frame image refresh ${behavior[preview]}`, async ({ page, downloads }) => {
+    await fixture(page, downloads); await datasets(page);
+    let annotations: Route | undefined; let freshImage: Route | undefined;
+    const requests: unknown[] = [];
+    await page.route("**/api/v1/jobs/coverage-job/annotations?*", (route) => { annotations = route; });
+    await page.route("**/media/new/frame-0", (route) => { freshImage = route; });
+    await page.route("**/api/v1/label/segment-points", (route) => {
+      requests.push(route.request().postDataJSON());
+      return json(route, { polygons: [[0.4, 0.4, 0.6, 0.4, 0.6, 0.6]], bboxes: [[0.4, 0.4, 0.6, 0.6]], scores: [0.9] });
+    });
+    await page.getByRole("button", { name: "Inspect frame 0", exact: true }).click();
+    await expect.poll(() => Boolean(annotations)).toBe(true);
+    await expect.poll(() => canvasColor(page)).toEqual([40, 120, 200]);
+    await page.getByRole("button", { name: "Zoom in", exact: true }).click();
+    const canvas = editorCanvas(page);
+    const rect = (await canvas.boundingBox())!;
+    // Pan before entering annotate mode, then place a point at the image center.
+    await page.mouse.move(rect.x + rect.width / 2, rect.y + rect.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(rect.x + rect.width / 2 + 32, rect.y + rect.height / 2 + 16);
+    await page.mouse.up();
+    await page.getByRole("button", { name: "Annotate", exact: true }).click();
+    await page.clock.pauseAt(new Date());
+    const point = { x: rect.width / 2 + 32, y: rect.height / 2 + 16 };
+    await canvas.click({ position: point });
+    await expect(page.getByText("1 point", { exact: true })).toBeVisible();
+    const save = page.getByRole("button", { name: "Save Annotation", exact: true });
+    if (preview === "completed") {
+      await page.clock.runFor(600);
+      await expect.poll(() => requests.length).toBe(1);
+      await expect(save).toBeEnabled();
+    }
+    await json(annotations!, [annotation(0, "/media/new/frame-0")]);
+    // Flush query notifications while keeping virtual time below the 400 ms debounce.
+    await expect.poll(async () => {
+      await page.clock.runFor(10);
+      return Boolean(freshImage);
+    }, { timeout: 2000, intervals: [100] }).toBe(true);
+    if (preview === "switched") {
+      await page.getByRole("button", { name: "Next frame", exact: true }).click();
+      await expect.poll(() => canvasColor(page)).toEqual([200, 80, 40]);
+      await freshImage!.fulfill({ contentType: "image/png", body: png });
+      await page.clock.runFor(1500);
+      expect(requests).toHaveLength(0);
+      await expect(page.getByText("1 point", { exact: true })).toHaveCount(0);
+      await expect(page.getByText("100%", { exact: true })).toBeVisible();
+      await expect.poll(() => canvasColor(page)).toEqual([200, 80, 40]);
+      return;
+    }
+    // Native PNG decoding is held beyond the point-preview debounce.
+    await page.clock.runFor(600);
+    expect(requests).toHaveLength(preview === "completed" ? 1 : 0);
+    if (preview === "completed") await expect(save).toBeEnabled();
+    await freshImage!.fulfill({ contentType: "image/png", body: png });
+    await expect.poll(() => canvasColor(page)).toEqual([40, 120, 200]);
+    await page.clock.runFor(600);
+    await expect.poll(() => requests.length).toBe(1);
+    expect(requests[0]).toEqual({ frame_id: "frame-0", points: [[expect.closeTo(4, 2), expect.closeTo(4, 2)]], labels: [1], threshold: 0.3 });
+    await expect(save).toBeEnabled();
+    await expect(page.getByText("1 point", { exact: true })).toBeVisible();
+    await expect(page.getByText("130%", { exact: true })).toBeVisible();
+    await expect(page.locator("select").last()).toHaveValue("camera");
+    await page.clock.runFor(1500);
+    expect(requests).toHaveLength(1);
+    // A deliberate edit still previews, with the same retained zoom/pan mapping.
+    await canvas.click({ position: point });
+    await page.clock.runFor(600);
+    await expect.poll(() => requests.length).toBe(2);
+    expect(requests[1]).toEqual({ frame_id: "frame-0", points: [[expect.closeTo(4, 2), expect.closeTo(4, 2)], [expect.closeTo(4, 2), expect.closeTo(4, 2)]], labels: [1, 1], threshold: 0.3 });
+    await page.getByRole("button", { name: "Next frame", exact: true }).click();
+    await expect.poll(() => canvasColor(page)).toEqual([200, 80, 40]);
+    await expect(page.getByText("1 point", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("2 points", { exact: true })).toHaveCount(0);
+    await page.clock.runFor(600);
+    expect(requests).toHaveLength(2);
+  });
+}
+
 test("thumbnail and inspector errors share one in-flight renewal", async ({ page, downloads }) => {
   const state = await fixture(page, downloads); await imageEvents(page);
   await inspector(page, "review");

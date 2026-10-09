@@ -62,6 +62,7 @@ export default function AnnotationCanvas({
   const [newClassName, setNewClassName] = useState("");
   const [saving, setSaving] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const submittedPointsRef = useRef<ClickPoint[] | null>(null);
 
   const { user, token } = useAuth();
   const { url: mediaUrl, onLoad: mediaOnLoad, onError: mediaOnError, loading: mediaLoading, error: mediaError, retry: mediaRetry } = useRenewableFrame(frameId, imageUrl);
@@ -255,14 +256,15 @@ export default function AnnotationCanvas({
 
   useEffect(() => { draw(); }, [draw]);
 
-  // Call SAM3 when points change
+  // Resume pending point work after image loading, without resubmitting a preview.
   useEffect(() => {
-    if (clickPoints.length === 0 || mode !== "annotate") return;
+    if (clickPoints.length === 0 || mode !== "annotate" || !imgLoaded || submittedPointsRef.current === clickPoints) return;
     if (debounceRef.current) clearTimeout(debounceRef.current);
 
     debounceRef.current = setTimeout(async () => {
       const img = imgRef.current;
       if (!img) return;
+      submittedPointsRef.current = clickPoints;
       setSegmenting(true);
       try {
         // Convert normalized points to pixel coords for SAM3
@@ -282,7 +284,7 @@ export default function AnnotationCanvas({
     }, 400);
 
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-  }, [clickPoints, frameId, mode]);
+  }, [clickPoints, frameId, mode, imgLoaded]);
 
   // Hit test for review mode
   const hitTest = useCallback((clientX: number, clientY: number): AnnotationOut | null => {
