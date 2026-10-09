@@ -1,3 +1,4 @@
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings
 
 INSECURE_DEV_DEFAULTS = {
@@ -50,9 +51,18 @@ class Settings(BaseSettings):
 
     # AI Agent — LangGraph ReAct loop served by a local Ollama.
     # Default uses gemma4:e4b (~9.6 GB, 4B-edge variant with native tool calling).
-    # Override with $WALDO_AGENT_MODEL on hardware-constrained boxes.
+    # Override with AGENT_MODEL on hardware-constrained boxes.
     ollama_url: str = "http://localhost:11434"
     agent_model: str = "gemma4:e4b"
+    agent_provider: str = "ollama"
+    agent_allowed_models: str = ""
+    agent_allow_cloud_text: bool = False
+    agent_timeout_seconds: float = 60.0
+    openai_api_key: SecretStr = SecretStr("")
+    anthropic_api_key: SecretStr = SecretStr("")
+    openrouter_api_key: SecretStr = SecretStr("")
+    vllm_api_key: SecretStr = SecretStr("")
+    vllm_url: str = "http://localhost:8001/v1"
     agent_temperature: float = 0.2  # low — we want stable tool-call JSON
 
     # Device

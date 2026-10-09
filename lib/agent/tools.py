@@ -7,8 +7,8 @@ The graph (lib.agent.graph) injects the context with `tools_with_context()`.
 Tools are split into two layers:
 
   * Read tools — list / inspect projects, datasets, models, training runs,
-    plus a `get_system_info` that exposes DEVICE/DTYPE so the agent can give
-    accurate hardware-aware advice (e.g. "you're on CPU, use yolo26n").
+    plus a `get_system_info` that scopes DEVICE/DTYPE to the API process;
+    workers and text providers may run on other hosts.
   * Action tools — kick off labeling jobs, start training, activate a model.
     These produce side effects, so we keep their argument surface narrow and
     we always return both a human string AND a structured JSON payload the
@@ -25,8 +25,10 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
 
+from fastapi import HTTPException
 from langchain_core.tools import tool
 
+from lib.authorization import Principal, require_scope, require_workspace_role, resolve_workspace, scope_resources
 from lib.config import settings
 from lib.db import (
     Annotation,
@@ -51,13 +53,23 @@ class AgentContext:
     """Auth-scoped context bound to one /agent/chat invocation.
 
     All tools read this — never bypass it. ``user_id`` and ``workspace_id``
-    must be set; ``allow_actions`` gates side-effecting tools so we can offer
-    a "read-only" mode in the UI.
+    must be set; the server-resolved ``workspace_role`` grants actions, while
+    ``allow_actions`` lets the caller narrow that grant to read-only.
     """
 
     user_id: str
     workspace_id: str | None = None
     allow_actions: bool = True
+    workspace_role: str | None = None
+    identity: Principal | None = None
+
+    @property
+    def actions_allowed(self) -> bool:
+        return (
+            self.allow_actions
+            and self.workspace_role in {"admin", "editor"}
+            and (self.identity is None or self.identity.auth_kind != "api_key" or "write" in self.identity.scopes)
+        )
 
 
 _ctx: ContextVar[AgentContext | None] = ContextVar("waldo_agent_ctx", default=None)
@@ -71,19 +83,33 @@ def _ctx_or_raise() -> AgentContext:
     c = _ctx.get()
     if c is None:
         raise RuntimeError("Agent tool called outside of an AgentContext — refusing for safety.")
+    if not c.user_id or not c.workspace_id:
+        raise RuntimeError("Agent requires an authenticated user and workspace — refusing for safety.")
     return c
 
 
 def _projects_query(session, ctx: AgentContext):
-    """Filter projects by the caller's workspace.
+    """Filter by exact workspace ownership; unassigned legacy rows are excluded."""
+    if not ctx.workspace_id:
+        raise RuntimeError("Agent requires a workspace — refusing for safety.")
+    return scope_resources(session.query(Project), Project, _live_principal(session, ctx))
 
-    Some legacy projects have NULL workspace_id (pre-multitenancy); include
-    them so single-workspace dev installs aren't suddenly empty.
-    """
-    q = session.query(Project)
-    if ctx.workspace_id:
-        q = q.filter((Project.workspace_id == ctx.workspace_id) | (Project.workspace_id.is_(None)))
-    return q
+
+def _live_principal(session, ctx: AgentContext):
+    """Membership and key grants can change while the model is thinking."""
+    try:
+        identity = ctx.identity or Principal(user_id=_safe_uuid(ctx.user_id, "user_id"))
+        if str(identity.user_id) != ctx.user_id:
+            raise RuntimeError("Agent identity does not match authenticated user")
+        principal = resolve_workspace(session, identity, ctx.workspace_id)
+        require_scope(principal.identity, "read")
+        return principal
+    except HTTPException as error:
+        raise RuntimeError(str(error.detail)) from error
+
+
+def _resource_query(session, model, ctx: AgentContext):
+    return scope_resources(session.query(model), model, _live_principal(session, ctx))
 
 
 # ── Read tools ─────────────────────────────────────────────────────
@@ -117,7 +143,7 @@ def list_videos(project_id: str | None = None, limit: int = 20) -> str:
         proj_ids = [p.id for p in _projects_query(session, ctx).all()]
         q = session.query(Video).filter(Video.project_id.in_(proj_ids))
         if project_id:
-            q = q.filter(Video.project_id == project_id)
+            q = q.filter(Video.project_id == _safe_uuid(project_id, "project_id"))
         videos = q.order_by(Video.created_at.desc()).limit(max(1, min(limit, 100))).all()
         if not videos:
             return "No videos in this workspace yet."
@@ -139,7 +165,7 @@ def list_datasets(limit: int = 10) -> str:
     try:
         proj_ids = [p.id for p in _projects_query(session, ctx).all()]
         jobs = (
-            session.query(LabelingJob)
+            _resource_query(session, LabelingJob, ctx)
             .filter(LabelingJob.project_id.in_(proj_ids))
             .filter(LabelingJob.status == "completed")
             .order_by(LabelingJob.created_at.desc())
@@ -166,7 +192,7 @@ def list_models(limit: int = 10) -> str:
     try:
         proj_ids = [p.id for p in _projects_query(session, ctx).all()]
         models = (
-            session.query(ModelRegistry)
+            _resource_query(session, ModelRegistry, ctx)
             .filter(ModelRegistry.project_id.in_(proj_ids))
             .order_by(ModelRegistry.created_at.desc())
             .limit(max(1, min(limit, 50)))
@@ -193,7 +219,7 @@ def list_training_runs(limit: int = 5) -> str:
     try:
         proj_ids = [p.id for p in _projects_query(session, ctx).all()]
         runs = (
-            session.query(TrainingRun)
+            _resource_query(session, TrainingRun, ctx)
             .filter(TrainingRun.project_id.in_(proj_ids))
             .order_by(TrainingRun.created_at.desc())
             .limit(max(1, min(limit, 25)))
@@ -214,13 +240,24 @@ def list_training_runs(limit: int = 5) -> str:
 
 @tool
 def get_system_info() -> str:
-    """Return current device/dtype + the active served model. Use this to
-    give hardware-aware advice (e.g. recommend smaller models on CPU).
+    """Return API-process hardware and workspace model configuration.
+
+    Worker and text-provider hardware are not inferred from the API device.
     """
+    ctx = _ctx_or_raise()
+    from lib.agent.providers import get_config
+
+    provider = get_config(ctx.workspace_id)
     info: dict[str, Any] = {
+        "hardware_scope": "api_process",
+        "worker_hardware": "not_reported",
+        "hardware_note": "API device/GPU checks do not describe native or remote workers or text-provider hardware.",
         "device": settings.device,
         "dtype": settings.dtype,
-        "agent_model": settings.agent_model,
+        "agent_model": provider.model,
+        "agent_provider": provider.provider,
+        "agent_configuration_source": provider.source,
+        "agent_model_note": "Configured workspace default; a request may select another allowed model.",
         "sam3_model_id": settings.sam3_model_id,
     }
 
@@ -244,10 +281,9 @@ def get_system_info() -> str:
     # Active served model (the one that /predict/* will use).
     session = SessionLocal()
     try:
-        ctx = _ctx_or_raise()
         proj_ids = [p.id for p in _projects_query(session, ctx).all()]
         active = (
-            session.query(ModelRegistry)
+            _resource_query(session, ModelRegistry, ctx)
             .filter(ModelRegistry.project_id.in_(proj_ids))
             .filter(ModelRegistry.is_active.is_(True))
             .first()
@@ -302,8 +338,14 @@ def get_training_tips(dataset_size: int, task_type: str = "segment") -> str:
 
 # ── Action tools ───────────────────────────────────────────────────
 def _require_actions(ctx: AgentContext) -> None:
-    if not ctx.allow_actions:
+    if not ctx.actions_allowed:
         raise RuntimeError("This conversation is read-only — action tools are disabled.")
+    with SessionLocal() as session:
+        principal = _live_principal(session, ctx)
+        try:
+            require_workspace_role(principal, "admin", "editor")
+        except HTTPException as error:
+            raise RuntimeError(str(error.detail)) from error
 
 
 def _safe_uuid(value: str, name: str) -> uuid.UUID:
@@ -352,6 +394,8 @@ def start_labeling_job(
             text_prompt=text_prompt.strip(),
             task_type=task_type,
             prompt_type="text",
+            score_threshold=threshold,
+            sample_fps=1.0,
             status="pending",
             total_frames=video.frame_count or 0,
         )
@@ -424,11 +468,17 @@ def start_training(
     session = SessionLocal()
     try:
         proj_ids = [p.id for p in _projects_query(session, ctx).all()]
-        job = session.query(LabelingJob).filter(LabelingJob.id == jid, LabelingJob.project_id.in_(proj_ids)).first()
+        job = (
+            _resource_query(session, LabelingJob, ctx)
+            .filter(LabelingJob.id == jid, LabelingJob.project_id.in_(proj_ids))
+            .first()
+        )
         if not job:
             raise ValueError(f"labeling job {job_id} not found in your workspace")
         if job.status != "completed":
             raise ValueError(f"labeling job {job_id} is {job.status!r} — it must be completed before training")
+        if not job.result_minio_key:
+            raise ValueError("Export the reviewed dataset in its training task format before starting training")
 
         # Infer task_type from variant suffix; falls back to job's task_type.
         if model_variant.endswith("-seg"):
@@ -446,6 +496,7 @@ def start_training(
             name=name.strip(),
             task_type=task_type,
             model_variant=model_variant,
+            dataset_minio_key=job.result_minio_key,
             hyperparameters={"epochs": epochs, "batch": batch_size, "imgsz": imgsz},
             status="queued",
             total_epochs=epochs,
@@ -498,13 +549,15 @@ def activate_model(model_id: str) -> str:
     try:
         proj_ids = [p.id for p in _projects_query(session, ctx).all()]
         model = (
-            session.query(ModelRegistry).filter(ModelRegistry.id == mid, ModelRegistry.project_id.in_(proj_ids)).first()
+            _resource_query(session, ModelRegistry, ctx)
+            .filter(ModelRegistry.id == mid, ModelRegistry.project_id.in_(proj_ids))
+            .first()
         )
         if not model:
             raise ValueError(f"model {model_id} not found in your workspace")
 
         # Atomic flip — clear all-active in the workspace, set one true.
-        session.query(ModelRegistry).filter(ModelRegistry.project_id.in_(proj_ids)).update(
+        _resource_query(session, ModelRegistry, ctx).filter(ModelRegistry.project_id.in_(proj_ids)).update(
             {ModelRegistry.is_active: False}, synchronize_session=False
         )
         model.is_active = True

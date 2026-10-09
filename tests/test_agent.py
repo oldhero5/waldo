@@ -26,12 +26,26 @@ os.environ.setdefault("WALDO_AGENT_SKIP_DISPATCH", "1")
 
 # ── Fixtures ───────────────────────────────────────────────────────
 @pytest.fixture
-def db_session():
-    from lib.db import SessionLocal
+def db_session(monkeypatch):
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
 
-    s = SessionLocal()
+    from lib import auth, authorization, db
+    from lib.agent import tools
+
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    db.Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    monkeypatch.setattr(db, "SessionLocal", factory)
+    monkeypatch.setattr(auth, "SessionLocal", factory)
+    monkeypatch.setattr(authorization, "SessionLocal", factory)
+    monkeypatch.setattr(tools, "SessionLocal", factory)
+    monkeypatch.setattr(tools, "SKIP_DISPATCH", True)
+    s = factory()
     yield s
     s.close()
+    engine.dispose()
 
 
 @pytest.fixture
@@ -67,6 +81,7 @@ def workspace_with_data(db_session):
         prompt_type="text",
         task_type="segment",
         status="completed",
+        result_minio_key="results/dataset.zip",
         total_frames=300,
         processed_frames=300,
     )
@@ -144,13 +159,21 @@ def workspace_with_data(db_session):
 
 
 @pytest.fixture
-def ctx_for(workspace_with_data):
+def ctx_for(workspace_with_data, db_session):
     from lib.agent.tools import AgentContext
+    from lib.db import User, WorkspaceMember
+
+    user = User(email=f"{uuid.uuid4()}@example.test", password_hash="x", display_name="Agent")
+    db_session.add(user)
+    db_session.flush()
+    db_session.add(WorkspaceMember(user_id=user.id, workspace_id=workspace_with_data["workspace"].id, role="admin"))
+    db_session.commit()
 
     def _make(*, allow_actions: bool = True) -> AgentContext:
         return AgentContext(
-            user_id=str(uuid.uuid4()),
+            user_id=str(user.id),
             workspace_id=str(workspace_with_data["workspace"].id),
+            workspace_role="admin",
             allow_actions=allow_actions,
         )
 
@@ -234,7 +257,7 @@ class TestTools:
         assert payload["text_prompt"] == "delivery truck"
         assert payload["ui_url"].startswith("/review/")
 
-        job = db_session.query(LabelingJob).filter_by(id=payload["job_id"]).one()
+        job = db_session.query(LabelingJob).filter_by(id=uuid.UUID(payload["job_id"])).one()
         assert job.text_prompt == "delivery truck"
         assert job.status == "pending"
         # Test mode is configured to skip Celery dispatch — celery_task_id stays None.
@@ -391,9 +414,9 @@ class TestGraph:
 
         original_build_graph = graph_mod.build_graph
 
-        def spying_build_graph(*, model=None, allow_actions=True):
+        def spying_build_graph(*, model=None, allow_actions=True, provider_config=None):
             captured["allow_actions"] = allow_actions
-            return original_build_graph(model=model, allow_actions=allow_actions)
+            return original_build_graph(model=model, allow_actions=allow_actions, provider_config=provider_config)
 
         monkeypatch.setattr(graph_mod, "build_graph", spying_build_graph)
         monkeypatch.setattr(graph_mod, "_build_llm", lambda *a, **kw: FakeChatOllama([AIMessage(content="ok")]))
@@ -448,11 +471,14 @@ class TestEndpoint:
         finally:
             s.close()
 
-        async def _fake_user():
+        async def _fake_user(request: __import__("fastapi").Request):
             from lib.db import SessionLocal as SL
 
             ss = SL()
             try:
+                from lib.authorization import Principal
+
+                request.state.principal = Principal(user_id=user_id)
                 return ss.query(User).filter_by(id=user_id).one()
             finally:
                 ss.close()
@@ -479,21 +505,48 @@ class TestEndpoint:
             finally:
                 ss.close()
 
-    def test_chat_rejects_empty_messages(self):
-        client = self._client()
-        r = client.post("/api/v1/agent/chat", json={"messages": []})
-        assert r.status_code == 400
+    def test_chat_rejects_empty_messages(self, ctx_for):
+        from app.main import app
+        from lib.authorization import Principal, WorkspacePrincipal, get_workspace_principal
 
-    def test_stream_emits_done_event(self, monkeypatch):
+        ctx = ctx_for()
+        app.dependency_overrides[get_workspace_principal] = lambda: WorkspacePrincipal(
+            Principal(user_id=uuid.UUID(ctx.user_id)), uuid.UUID(str(ctx.workspace_id)), "admin"
+        )
+        try:
+            from lib.auth import create_access_token
+
+            r = self._client().post(
+                "/api/v1/agent/chat",
+                json={"messages": []},
+                headers={"Authorization": f"Bearer {create_access_token(ctx.user_id)}"},
+            )
+            assert r.status_code == 400
+        finally:
+            app.dependency_overrides.pop(get_workspace_principal, None)
+
+    def test_stream_emits_done_event(self, monkeypatch, ctx_for):
+        from app.api import agent as api
         from lib.agent import graph as graph_mod
 
+        monkeypatch.setattr(api, "_ctx_for", lambda *a, **kw: ctx_for())
         monkeypatch.setattr(
             graph_mod,
             "_build_llm",
             lambda *a, **kw: FakeChatOllama([AIMessage(content="streamed")]),
         )
 
+        from app.main import app
+        from lib.authorization import Principal, WorkspacePrincipal, get_workspace_principal
+
+        ctx = ctx_for()
+        app.dependency_overrides[get_workspace_principal] = lambda: WorkspacePrincipal(
+            Principal(user_id=uuid.UUID(ctx.user_id)), uuid.UUID(str(ctx.workspace_id)), "admin"
+        )
+        from lib.auth import create_access_token
+
         client = self._client()
+        client.headers["Authorization"] = f"Bearer {create_access_token(ctx.user_id)}"
         with client.stream(
             "POST",
             "/api/v1/agent/stream",
@@ -507,4 +560,5 @@ class TestEndpoint:
                     if line.startswith("data:"):
                         events.append(json.loads(line[5:].strip()))
         types = [e.get("type") for e in events]
+        app.dependency_overrides.pop(get_workspace_principal, None)
         assert "done" in types

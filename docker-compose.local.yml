@@ -1,0 +1,16 @@
+# Apple Silicon local development: app/storage in OrbStack, inference on the Mac.
+# See docs-site/docs/deployment/local-testing.md for setup and worker commands.
+services:
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
+  minio-init:
+    image: quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z
+  waldo-app:
+    image: waldo:local
+    pull_policy: build
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      DEVICE: cpu
+      OLLAMA_URL: http://host.docker.internal:11434

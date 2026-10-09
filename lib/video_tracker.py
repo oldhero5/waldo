@@ -7,6 +7,7 @@ import cv2
 
 from lib.config import settings
 from lib.inference_engine import Detection, FrameResult, get_engine
+from lib.video_timing import frame_timing, probe_frame_timing
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,7 @@ def validate_video(path: str) -> dict:
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     cap.release()
 
-    if frame_count == 0 or fps == 0:
+    if frame_count <= 0 or not math.isfinite(fps) or fps <= 0 or width <= 0 or height <= 0:
         raise ValueError(f"Video has no frames or invalid FPS: {path}")
 
     return {"fps": fps, "frame_count": frame_count, "width": width, "height": height}
@@ -120,9 +121,10 @@ class CentroidTracker:
 
 
 class VideoTracker:
-    def __init__(self, conf: float = 0.25, tracker: str = "bytetrack.yaml"):
+    def __init__(self, conf: float = 0.25, tracker: str = "bytetrack.yaml", *, engine=None):
         self.conf = conf
         self.tracker = tracker
+        self.engine = engine
 
     def track_video(
         self,
@@ -131,7 +133,8 @@ class VideoTracker:
     ) -> list[FrameResult]:
         """Track objects across video frames with frame skipping for speed."""
         meta = validate_video(path)
-        engine = get_engine()
+        meta["timings"] = probe_frame_timing(path)
+        engine = self.engine if self.engine is not None else get_engine()
 
         needs_tiling = engine._needs_tiling(meta["height"], meta["width"])
 
@@ -178,14 +181,18 @@ class VideoTracker:
                     frame_idx += 1
                     continue
 
-                timestamp_s = frame_idx / meta["fps"] if meta["fps"] > 0 else 0.0
+                timestamp_s, duration_s, method = frame_timing(frame_idx, meta["fps"], meta.get("timings", []))
                 detections = engine._predict_tiled(frame, self.conf)
                 detections = tracker.update(detections)
 
                 fr = FrameResult(
                     frame_index=frame_idx,
-                    timestamp_s=round(timestamp_s, 4),
+                    timestamp_s=timestamp_s,
                     detections=detections,
+                    source_width=frame.shape[1],
+                    source_height=frame.shape[0],
+                    frame_duration_s=duration_s,
+                    timestamp_method=method,
                 )
                 frame_results.append(fr)
 
@@ -197,54 +204,46 @@ class VideoTracker:
         except RuntimeError as e:
             if "out of memory" in str(e).lower() or "MPS" in str(e):
                 engine._clear_device_cache()
-                return self._filter_transient_tracks(frame_results, meta)
+                return frame_results
             raise
         finally:
             cap.release()
 
-        return self._filter_transient_tracks(frame_results, meta)
-
-    def _filter_transient_tracks(self, frame_results, meta):
-        """Remove tracks that appear too briefly (likely false positives)."""
-        track_counts: dict[int, int] = {}
-        for fr in frame_results:
-            for d in fr.detections:
-                if d.track_id is not None:
-                    track_counts[d.track_id] = track_counts.get(d.track_id, 0) + 1
-
-        total_frames = len(frame_results)
-        min_frames = max(3, int(total_frames * 0.05))
-        valid_tracks = {tid for tid, count in track_counts.items() if count >= min_frames}
-
-        logger.info("Track filter: %d/%d tracks kept (min_frames=%d)", len(valid_tracks), len(track_counts), min_frames)
-
-        for fr in frame_results:
-            fr.detections = [d for d in fr.detections if d.track_id in valid_tracks]
-
+        # A brief sighting is still evidence, even in a long clip.
         return frame_results
 
     def _track_with_builtin(self, path, meta, engine, on_frame):
         """Use Ultralytics built-in model.track() for normal-resolution videos."""
-        # Use frame skipping via vid_stride for speed
         frame_skip = self._compute_frame_skip(meta["fps"])
-
-        results_gen = engine.model.track(
-            source=path,
-            conf=self.conf,
-            tracker=self.tracker,
-            device=settings.device,
-            half=engine._half,
-            persist=True,
-            stream=True,
-            verbose=False,
-            vid_stride=frame_skip,
-        )
-
+        cap = cv2.VideoCapture(path)
+        # In-memory sources preserve tracking state, so reset it once per clip.
+        for tracker in getattr(getattr(engine.model, "predictor", None), "trackers", []):
+            tracker.reset()
         frame_results = []
         try:
-            for result_idx, result in enumerate(results_gen):
-                frame_idx = result_idx * frame_skip
-                timestamp_s = frame_idx / meta["fps"] if meta["fps"] > 0 else 0.0
+            frame_idx = -1
+            while True:
+                decoded, frame = cap.read()
+                if not decoded:
+                    break
+                frame_idx += 1
+                # Preserve the file loader's existing stride phase, and also
+                # assess the first frame. Never infer source index from result ordinal.
+                if frame_idx != 0 and (frame_idx + 1) % frame_skip:
+                    continue
+                results = engine.model.track(
+                    source=frame,
+                    conf=self.conf,
+                    tracker=self.tracker,
+                    device=settings.device,
+                    half=engine._half,
+                    persist=True,
+                    verbose=False,
+                )
+                if len(results) != 1:
+                    raise ValueError("Tracking must return exactly one result per decoded source frame")
+                result = results[0]
+                timestamp_s, duration_s, method = frame_timing(frame_idx, meta["fps"], meta.get("timings", []))
                 detections = []
                 names = result.names
 
@@ -268,8 +267,12 @@ class VideoTracker:
 
                 fr = FrameResult(
                     frame_index=frame_idx,
-                    timestamp_s=round(timestamp_s, 4),
+                    timestamp_s=timestamp_s,
                     detections=detections,
+                    source_width=frame.shape[1],
+                    source_height=frame.shape[0],
+                    frame_duration_s=duration_s,
+                    timestamp_method=method,
                 )
                 frame_results.append(fr)
 
@@ -280,5 +283,7 @@ class VideoTracker:
                 engine._clear_device_cache()
                 return frame_results
             raise
+        finally:
+            cap.release()
 
         return frame_results

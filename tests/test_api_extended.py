@@ -3,20 +3,21 @@
 Requires running infrastructure (Postgres, Redis, MinIO).
 """
 
+import os
+
 import pytest
-from fastapi.testclient import TestClient
 
 
 @pytest.fixture
-def client():
-    from app.main import app
-
-    return TestClient(app)
+def client(service_client):
+    return service_client
 
 
 @pytest.fixture
 def uploaded_video(client):
     """Upload a test video and return video_id."""
+    if os.environ.get("WALDO_SERVICE_STACK") != "1":
+        pytest.skip("Set WALDO_SERVICE_STACK=1 for upload/worker tests on the disposable stack")
     from pathlib import Path
 
     clip = Path(__file__).parent / "fixtures" / "test_clip.mp4"
@@ -56,6 +57,9 @@ def completed_job(client, uploaded_video):
     if status["status"] not in ("completed", "failed"):
         pytest.skip("No labeler worker is processing jobs (set up the full stack to run this test)")
     assert status["status"] == "completed"
+    if not status.get("result_url"):
+        exported = client.post(f"/api/v1/jobs/{job_id}/export", json={"format": "segment"})
+        assert exported.status_code == 200
     return job_id
 
 

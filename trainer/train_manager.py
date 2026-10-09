@@ -1,7 +1,9 @@
 """YOLO26 training orchestrator — wraps Ultralytics training API."""
 
+import json
 import logging
 import tempfile
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -164,6 +166,21 @@ def run_training(celery_task, run_id: str) -> dict:
             dataset_dir = prepare_dataset_dir(dataset_key, tmpdir)
             data_yaml = str(dataset_dir / "data.yaml")
 
+            # Source-group validation cannot be manufactured from adjacent
+            # frames of a single video.
+            manifest_path = dataset_dir / "manifest.json"
+            if manifest_path.exists():
+                manifest = json.loads(manifest_path.read_text())
+                if manifest.get("split_strategy") == "group":
+                    groups = {
+                        sample.get("group_id") for sample in manifest.get("samples", []) if sample.get("group_id")
+                    }
+                    if len(groups) < 2:
+                        raise ValueError(
+                            "At least two independent source groups are required for held-out validation; "
+                            "add another source video and export the dataset again."
+                        )
+
             # Validate dataset is non-empty
             train_imgs = list((dataset_dir / "images" / "train").glob("*"))
             train_labels = list((dataset_dir / "labels" / "train").glob("*.txt"))
@@ -181,24 +198,28 @@ def run_training(celery_task, run_id: str) -> dict:
             variant = run.model_variant
             all_hp = {**DEFAULT_HYPERPARAMS, **(run.hyperparameters or {})}
             resume_from = all_hp.pop("resume_from", None)
+            auto_resume = False
 
             if resume_from:
-                # Fine-tune from an existing model's weights
+                # An explicit checkpoint must belong to this run's project.
+                try:
+                    checkpoint_id = uuid.UUID(str(resume_from))
+                except (ValueError, TypeError, AttributeError) as error:
+                    raise ValueError("resume_from must be a model registry UUID") from error
+                entry = session.query(ModelRegistry).filter_by(id=checkpoint_id).first()
+                if entry is None or not entry.weights_minio_key:
+                    raise ValueError("Requested resume checkpoint is unavailable")
+                if run.project_id is None or entry.project_id != run.project_id:
+                    raise ValueError("Resume checkpoint must belong to the training run's project")
                 checkpoint_path = tmpdir / "checkpoint.pt"
-                entry = session.query(ModelRegistry).filter_by(id=resume_from).first()
-                if entry and entry.weights_minio_key:
-                    download_file(entry.weights_minio_key, checkpoint_path)
-                    logger.info("Resuming from checkpoint: %s (%s)", entry.name, resume_from)
-                    model = YOLO(str(checkpoint_path))
-                else:
-                    logger.warning("resume_from model %s not found, using pretrained", resume_from)
-                    model = YOLO(VARIANTS.get(variant, f"{variant}.pt"))
+                download_file(entry.weights_minio_key, checkpoint_path)
+                logger.info("Resuming from checkpoint: %s (%s)", entry.name, resume_from)
+                model = YOLO(str(checkpoint_path))
             else:
                 weights = VARIANTS.get(variant, f"{variant}.pt")
 
                 # --- auto-resume from last.pt if a prior run was interrupted ---
                 # Determine the canonical output directory for this run.
-                auto_resume = False
                 run_train_dir = Path(f"/tmp/waldo-runs/{run_id}/train/weights")  # noqa: S108
                 last_pt = run_train_dir / "last.pt"
                 epoch_current = getattr(run, "epoch_current", 0) or 0
@@ -304,8 +325,8 @@ def run_training(celery_task, run_id: str) -> dict:
             if best_weights.exists():
                 upload_file(weights_key, best_weights)
             elif last_weights.exists():
-                upload_file(weights_key, last_weights)
                 weights_key = f"models/{run.id}/last.pt"
+                upload_file(weights_key, last_weights)
 
             # Read class names from data.yaml
             import yaml

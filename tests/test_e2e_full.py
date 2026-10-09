@@ -27,8 +27,8 @@ BASE_URL = "http://localhost:8000"
 )
 class TestFullLoopE2E:
     @pytest.fixture(autouse=True)
-    def client(self):
-        self.client = httpx.Client(base_url=BASE_URL, timeout=600)
+    def client(self, register_test_client):
+        self.client = register_test_client(httpx.Client(base_url=BASE_URL, timeout=600))
         yield
         self.client.close()
 
@@ -60,6 +60,10 @@ class TestFullLoopE2E:
                 break
             time.sleep(5)
         assert status["status"] == "completed", f"Labeling failed: {status.get('error_message')}"
+
+        if not status.get("result_url"):
+            exported = self.client.post(f"/api/v1/jobs/{job_id}/export", json={"format": "segment"})
+            assert exported.status_code == 200
 
         # 4. Start training (1 epoch)
         resp = self.client.post(

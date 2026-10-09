@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Upsert the bootstrap admin user and ensure it has admin membership.
+"""Operator recovery: upsert an installation admin with workspace membership.
+
+Run only as an authorized installation operator with direct database access.
+This command explicitly grants installation privilege, including on migrated
+installations where existing workspace admins remain unprivileged by default.
 
 Usage (host):
     uv run python scripts/reset_admin.py
@@ -10,8 +14,7 @@ Usage (docker):
 
 Idempotent: if the user exists, the password and admin role are updated in
 place. If not, the user + workspace + membership are created. Either way,
-the script prints the resolved credentials at the end so you know what to
-log in with.
+the script prints the account and workspace without echoing the password.
 
 Defaults match `bootstrap_admin_if_empty`: admin@waldo.ai / waldopass.
 """
@@ -20,7 +23,7 @@ import argparse
 import sys
 
 from lib.auth import hash_password
-from lib.db import Project, SessionLocal, User, Workspace, WorkspaceMember
+from lib.db import SessionLocal, User, Workspace, WorkspaceMember
 
 
 def main() -> int:
@@ -55,18 +58,11 @@ def main() -> int:
             action = "created"
 
         membership = session.query(WorkspaceMember).filter_by(workspace_id=workspace.id, user_id=user.id).first()
+        user.is_platform_admin = True
         if not membership:
             session.add(WorkspaceMember(workspace_id=workspace.id, user_id=user.id, role="admin"))
         elif membership.role != "admin":
             membership.role = "admin"
-
-        # Attach any orphan projects to the default workspace so the new admin
-        # actually sees existing data after login.
-        orphans = session.query(Project).filter(Project.workspace_id.is_(None)).all()
-        for p in orphans:
-            p.workspace_id = workspace.id
-        if orphans:
-            print(f"  · attached {len(orphans)} orphan project(s) to {workspace.name}")
 
         session.commit()
 
@@ -74,7 +70,6 @@ def main() -> int:
         print(banner)
         print(f"Admin {action}:")
         print(f"  email:    {args.email}")
-        print(f"  password: {args.password}")
         print(f"  workspace: {workspace.name}")
         print(banner)
         return 0

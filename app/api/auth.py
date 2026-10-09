@@ -1,6 +1,7 @@
 """Authentication endpoints — register, login, token refresh, user info."""
 
 from datetime import UTC, datetime
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -13,6 +14,7 @@ from lib.auth import (
     hash_password,
     verify_password,
 )
+from lib.authorization import WorkspacePrincipal, get_workspace_principal
 from lib.db import SessionLocal, User, Workspace, WorkspaceMember
 
 router = APIRouter()
@@ -44,6 +46,7 @@ class UserResponse(BaseModel):
     workspace_id: str | None = None
     workspace_name: str | None = None
     role: str | None = None
+    is_platform_admin: bool = False
 
 
 @router.post("/auth/register", response_model=TokenResponse, status_code=201)
@@ -60,17 +63,18 @@ def register(req: RegisterRequest):
             email=req.email,
             password_hash=hash_password(req.password),
             display_name=req.display_name,
+            is_platform_admin=False,
         )
         session.add(user)
         session.flush()
 
         # Create workspace
-        slug = req.workspace_name.lower().replace(" ", "-")[:50]
+        slug = f"{req.workspace_name.lower().replace(chr(32), chr(45))[:50]}-{uuid4().hex}"
         workspace = Workspace(name=req.workspace_name, slug=slug)
         session.add(workspace)
         session.flush()
 
-        # Add user as admin
+        # Workspace ownership never grants installation administration.
         member = WorkspaceMember(workspace_id=workspace.id, user_id=user.id, role="admin")
         session.add(member)
         session.commit()
@@ -116,21 +120,23 @@ def refresh_token(refresh_token: str):
 
 
 @router.get("/auth/me", response_model=UserResponse)
-def get_me(user: User = Depends(get_current_user)):
+def get_me(
+    user: User = Depends(get_current_user),
+    principal: WorkspacePrincipal = Depends(get_workspace_principal),
+):
     session = SessionLocal()
     try:
-        # Get user's primary workspace
-        member = session.query(WorkspaceMember).filter_by(user_id=user.id).first()
-        workspace = session.query(Workspace).filter_by(id=member.workspace_id).first() if member else None
+        workspace = session.query(Workspace).filter_by(id=principal.workspace_id).one()
 
         return UserResponse(
             id=str(user.id),
             email=user.email,
             display_name=user.display_name,
             avatar_url=user.avatar_url,
-            workspace_id=str(workspace.id) if workspace else None,
-            workspace_name=workspace.name if workspace else None,
-            role=member.role if member else None,
+            workspace_id=str(workspace.id),
+            workspace_name=workspace.name,
+            role=principal.role,
+            is_platform_admin=user.is_platform_admin,
         )
     finally:
         session.close()

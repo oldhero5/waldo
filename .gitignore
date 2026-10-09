@@ -8,6 +8,8 @@ build/
 
 # Environment
 .env
+.waldo-local.env
+.waldo-local/
 
 # Models & weights
 model_cache/
@@ -46,6 +48,8 @@ htmlcov/
 /tmp/
 
 # Large media files
+test_data/
+Test_Video/
 Target.mp4
 *.mp4
 !tests/fixtures/*.mp4

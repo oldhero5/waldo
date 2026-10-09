@@ -26,8 +26,8 @@ BASE_URL = "http://localhost:8000"
     reason="Set WALDO_E2E=1 to run against a live stack",
 )
 class TestE2E:
-    def test_full_pipeline(self, test_clip):
-        client = httpx.Client(base_url=BASE_URL, timeout=300)
+    def test_full_pipeline(self, test_clip, register_test_client):
+        client = register_test_client(httpx.Client(base_url=BASE_URL, timeout=300))
 
         # 1. Upload video
         with open(test_clip, "rb") as f:
@@ -62,7 +62,7 @@ class TestE2E:
         download_url = job_result["result_url"]
         if download_url.startswith("/"):
             download_url = f"{BASE_URL}{download_url}"
-        result_resp = httpx.get(download_url, timeout=60)
+        result_resp = client.get(download_url, timeout=60)
         assert result_resp.status_code == 200
 
         # 5. Verify YOLO dataset structure
