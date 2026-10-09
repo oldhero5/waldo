@@ -104,6 +104,19 @@ checks the server-recorded Celery task ID while work is running, so exhausted
 retries or revocation can become a failed result after the result store recovers.
 Worker success logs suppress result bodies, including preview thumbnails.
 
+Redis task visibility is configured for 25 hours. This prevents the default
+one-hour timeout from redelivering still-running jobs within that window. All
+workers sharing this broker must use the same setting; restart them together.
+After a forced termination, recovery can wait up to that timeout.
+[Celery Redis visibility rules](https://docs.celeryq.dev/en/stable/getting-started/backends-and-brokers/redis.html#visibility-timeout).
+
+Both the native helper and Docker entrypoint currently use Celery's `solo` pool.
+That pool does not enforce the configured task time limits. The 25-hour setting
+does not prevent overlap after that window or provide exactly-once execution.
+Use bounded local runs; supervised execution limits or job serialization need
+separate qualification before unattended long-running workloads.
+[Celery worker pools](https://docs.celeryq.dev/en/stable/userguide/concurrency/index.html).
+
 The agent's hardware information is scoped to the API process. Its GPU/device
 checks cannot establish the native worker or Ollama host's hardware; worker
 hardware remains unreported by that tool. Chat provider/model information uses
