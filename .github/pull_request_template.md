@@ -13,6 +13,7 @@ State the trigger, the previous behavior, and the new behavior.
 
 - Test-first evidence: expected failing test, then passing result:
 - Commands, results and CI links:
+- Latest run summary and downloadable evidence; PR head and tested merge SHA:
 - Skips and limits of mocks, hardware, sampling or datasets:
 - Data/model changes: dataset version, split, seed, metric, target and changed factor:
 
