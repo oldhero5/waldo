@@ -23,11 +23,22 @@ if [[ "$main_sha" != "$GITHUB_SHA" ]]; then
   exit 1
 fi
 
-checks="$(gh api "repos/${repo}/commits/${GITHUB_SHA}/check-runs?filter=latest&per_page=100")"
+checks="$(gh api "repos/${repo}/commits/${GITHUB_SHA}/check-runs?filter=all&per_page=100")"
+if ! jq -e '
+  (.total_count | type == "number") and
+  (.total_count <= 100) and
+  (.check_runs | type == "array") and
+  (.total_count == (.check_runs | length))
+' >/dev/null <<<"$checks"; then
+  echo "Check-run response is incomplete." >&2
+  exit 1
+fi
 for name in "Lint + Test + Build" "UI browser smoke"; do
   if ! jq -e --arg name "$name" '
     [.check_runs[] | select(.name == $name and .app.slug == "github-actions")]
-    | sort_by(.completed_at // "") | last | .conclusion == "success"
+    | if length == 0 or any(.id | type != "number") then false
+      else max_by(.id) | .status == "completed" and .conclusion == "success"
+      end
   ' >/dev/null <<<"$checks"; then
     echo "Required CI check is missing or not successful: $name" >&2
     exit 1

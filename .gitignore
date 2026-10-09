@@ -10,6 +10,7 @@ build/
 .env
 .waldo-local.env
 .waldo-local/
+.worktrees/
 
 # Models & weights
 model_cache/

@@ -13,6 +13,7 @@ build
 .env
 .waldo-local.env
 .waldo-local
+.worktrees
 Target.mp4
 test_data
 **/test_data

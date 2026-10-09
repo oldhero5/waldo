@@ -19,15 +19,18 @@ def release_api(tmp_path):
     (responses / "checks.json").write_text(
         json.dumps(
             {
+                "total_count": 2,
                 "check_runs": [
                     {
+                        "id": index,
                         "name": name,
                         "app": {"slug": "github-actions"},
+                        "status": "completed",
                         "conclusion": "success",
                         "completed_at": "2026-10-09T10:00:00Z",
                     }
-                    for name in ("Lint + Test + Build", "UI browser smoke")
-                ]
+                    for index, name in enumerate(("Lint + Test + Build", "UI browser smoke"), start=1)
+                ],
             }
         )
     )
@@ -46,7 +49,7 @@ def release_api(tmp_path):
         "#!/bin/sh\n"
         'case "$2" in\n'
         "  */git/ref/heads/main) jq -r '.object.sha' \"$FAKE_API_DIR/ref.json\" ;;\n"
-        '  */check-runs*) cat "$FAKE_API_DIR/checks.json" ;;\n'
+        '  */check-runs*filter=all*) cat "$FAKE_API_DIR/checks.json" ;;\n'
         '  */status) cat "$FAKE_API_DIR/statuses.json" ;;\n'
         "  *) exit 2 ;;\n"
         "esac\n"
@@ -99,6 +102,7 @@ def test_release_gate_requires_each_ci_check(release_api, missing):
     path = responses / "checks.json"
     data = json.loads(path.read_text())
     data["check_runs"] = [check for check in data["check_runs"] if check["name"] != missing]
+    data["total_count"] = len(data["check_runs"])
     path.write_text(json.dumps(data))
     assert run_gate(env).returncode != 0
 
@@ -119,14 +123,48 @@ def test_release_gate_rejects_latest_failed_check(release_api):
     data = json.loads(path.read_text())
     data["check_runs"].append(
         {
+            "id": 101,
             "name": "UI browser smoke",
             "app": {"slug": "github-actions"},
+            "status": "completed",
             "conclusion": "failure",
             "completed_at": "2026-10-09T11:00:00Z",
         }
     )
+    data["total_count"] = len(data["check_runs"])
     path.write_text(json.dumps(data))
     assert run_gate(env).returncode != 0
+
+
+def test_release_gate_rejects_truncated_check_run_response(release_api):
+    responses, env = release_api
+    path = responses / "checks.json"
+    data = json.loads(path.read_text())
+    data["total_count"] = 101
+    path.write_text(json.dumps(data))
+    assert run_gate(env).returncode != 0
+
+
+def test_release_gate_rejects_in_progress_rerun_after_old_success(release_api):
+    responses, env = release_api
+    path = responses / "checks.json"
+    data = json.loads(path.read_text())
+    old = next(check for check in data["check_runs"] if check["name"] == "UI browser smoke")
+    old.update({"id": 100, "status": "completed"})
+    data["check_runs"].append(
+        {
+            "id": 101,
+            "name": "UI browser smoke",
+            "app": {"slug": "github-actions"},
+            "status": "in_progress",
+            "conclusion": None,
+            "completed_at": None,
+        }
+    )
+    data["total_count"] = len(data["check_runs"])
+    path.write_text(json.dumps(data))
+    result = run_gate(env)
+    assert result.returncode != 0, result.stdout
 
 
 def test_release_gate_rejects_failed_approval_status(release_api):
