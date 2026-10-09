@@ -150,6 +150,13 @@ export function CompareDemo({ confThreshold, models }: { confThreshold: number; 
     return timestamp + Math.min(source?.frame_duration_s ? source.frame_duration_s / 4 : 0.001, 0.005);
   }, [timeline, resultA, resultB]);
 
+  const sourceTimestamp = useCallback((idx: number) => {
+    const timestamp = timeline[idx].timestamp_s;
+    const source = [...(resultA?.frames || []), ...(resultB?.frames || [])].find((frame) =>
+      Math.abs(frame.timestamp_s - timestamp) < 0.001 && (!frame.timestamp_method || frame.timestamp_method === "source_pts"));
+    return source ? timestamp : null;
+  }, [timeline, resultA, resultB]);
+
   const seekToFrame = useCallback(async (idx: number) => {
     stopPlayback();
     const video = videoRef.current;
@@ -157,14 +164,14 @@ export function CompareDemo({ confThreshold, models }: { confThreshold: number; 
     const controller = new AbortController();
     seekRequest.current = controller;
     try {
-      await seekDecodedVideo(video, seekTimestamp(idx), controller.signal);
+      await seekDecodedVideo(video, seekTimestamp(idx), controller.signal, sourceTimestamp(idx));
       if (controller.signal.aborted) return;
       setCurrentFrame(idx);
       drawFrame(idx);
     } catch (error) {
       if (!controller.signal.aborted) setError(error instanceof Error ? error.message : "Video seek failed");
     }
-  }, [timeline, drawFrame, seekTimestamp, stopPlayback]);
+  }, [timeline, drawFrame, seekTimestamp, sourceTimestamp, stopPlayback]);
 
   const handlePlayPause = useCallback(() => {
     if (!isVideo || totalFrames < 2) return;
@@ -180,7 +187,7 @@ export function CompareDemo({ confThreshold, models }: { confThreshold: number; 
       if (controller.signal.aborted) return;
       if (next >= totalFrames || !video) { stopPlayback(); return; }
       try {
-        await seekDecodedVideo(video, seekTimestamp(next), controller.signal);
+        await seekDecodedVideo(video, seekTimestamp(next), controller.signal, sourceTimestamp(next));
         if (controller.signal.aborted) return;
         playIdxRef.current = next;
         setCurrentFrame(next);
@@ -192,7 +199,7 @@ export function CompareDemo({ confThreshold, models }: { confThreshold: number; 
       }
     };
     playTimerRef.current = window.setTimeout(step, 0);
-  }, [isVideo, totalFrames, playing, currentFrame, timeline, stopPlayback, drawFrame, seekTimestamp]);
+  }, [isVideo, totalFrames, playing, currentFrame, timeline, stopPlayback, drawFrame, seekTimestamp, sourceTimestamp]);
 
   useEffect(() => () => { seekRequest.current?.abort(); if (playTimerRef.current != null) clearTimeout(playTimerRef.current); }, []);
 
