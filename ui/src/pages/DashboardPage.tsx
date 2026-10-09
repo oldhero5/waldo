@@ -1,8 +1,5 @@
-/**
- * Dashboard — editorial home with data-driven typographic ASCII hero,
- * contextual next-action, and live status. Pretext design system.
- */
-import { useEffect, useMemo, useRef } from "react";
+/** Dashboard — workspace activity and the next useful action. */
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { listJobs, listModels, listProjects, listTrainingRuns, getServeStatus } from "../api";
@@ -12,113 +9,6 @@ import {
   Upload, Cpu, Rocket, ArrowRight, Play, FlaskConical, Database,
   Sparkles, TrendingUp, Eye, Zap,
 } from "lucide-react";
-
-/**
- * Data stream ASCII canvas — falling streams of real workspace data.
- * Shows class names, metrics, counts, model names in warm gold serif.
- */
-function AsciiCanvas({ dataWords }: { dataWords: string[] }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    const container = containerRef.current;
-    if (!canvas || !container) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    const dpr = window.devicePixelRatio || 1;
-    const rect = container.getBoundingClientRect();
-    const W = rect.width;
-    const H = rect.height;
-    if (W === 0 || H === 0) return;
-    canvas.width = W * dpr;
-    canvas.height = H * dpr;
-    canvas.style.width = `${W}px`;
-    canvas.style.height = `${H}px`;
-    ctx.scale(dpr, dpr);
-
-    // Words to display — real data from workspace
-    const words = dataWords.length > 0 ? dataWords : ["waldo", "detect", "segment", "train"];
-
-    interface Stream {
-      x: number;
-      y: number;
-      speed: number;
-      word: string;
-      weight: number;
-      italic: boolean;
-      alpha: number;
-    }
-
-    const streamCount = Math.min(25, Math.max(10, words.length * 3));
-    const streams: Stream[] = [];
-    for (let i = 0; i < streamCount; i++) {
-      streams.push({
-        x: Math.random() * W,
-        y: Math.random() * H * 2 - H,
-        speed: 0.15 + Math.random() * 0.35,
-        word: words[Math.floor(Math.random() * words.length)],
-        weight: [300, 500, 800][Math.floor(Math.random() * 3)],
-        italic: Math.random() > 0.6,
-        alpha: 0.08 + Math.random() * 0.25,
-      });
-    }
-
-    function draw() {
-      if (!ctx) return;
-      ctx.clearRect(0, 0, W, H);
-
-      for (const s of streams) {
-        s.y += s.speed;
-
-        ctx.font = `${s.italic ? "italic " : ""}${s.weight} 11px Georgia, serif`;
-        const measured = ctx.measureText(s.word).width;
-
-        // Reset when off screen
-        if (s.y > H + 20) {
-          s.y = -20;
-          s.x = Math.random() * (W - measured);
-          s.word = words[Math.floor(Math.random() * words.length)];
-          s.weight = [300, 500, 800][Math.floor(Math.random() * 3)];
-          s.italic = Math.random() > 0.6;
-          s.alpha = 0.08 + Math.random() * 0.25;
-        }
-
-        // Fade at edges
-        const edgeFade = Math.min(1, s.y / 30, (H - s.y) / 30);
-        const a = Math.max(0, s.alpha * edgeFade);
-        if (a < 0.02) continue;
-
-        ctx.fillStyle = `rgba(149, 95, 59, ${a})`;
-        ctx.fillText(s.word, s.x, s.y);
-      }
-    }
-
-    const interval = setInterval(draw, 40);
-    setTimeout(draw, 60);
-    return () => clearInterval(interval);
-  }, [dataWords]);
-
-  return (
-    <div ref={containerRef} className="absolute inset-0">
-      <canvas ref={canvasRef} className="absolute inset-0" style={{ pointerEvents: "none" }} />
-    </div>
-  );
-}
-
-
-const GREETINGS = [
-  "Every pixel tells a story — let's find the ones that matter.",
-  "Welcome back. Your models are sharpening their focus.",
-  "Another day, another gradient descent. Let's make it count.",
-  "The best CV models come from disciplined iteration.",
-  "From raw footage to deployed model — one pipeline at a time.",
-  "Teaching machines to see, one annotation at a time.",
-  "Where's Waldo? Right here, finding objects in your video.",
-  "Precision. Recall. Deploy. Repeat.",
-];
 
 
 export default function DashboardPage() {
@@ -150,26 +40,6 @@ export default function DashboardPage() {
     [jobs]
   );
 
-  const staticGreeting = GREETINGS[Math.floor(Date.now() / 86400000) % GREETINGS.length];
-
-  const greeting = staticGreeting;
-  const aiSuggestions: string[] = [];
-
-  // Build data words for the ASCII canvas from real workspace state
-  const dataWords: string[] = [];
-  // Class names from completed jobs
-  completedJobs.forEach((j) => { if (j.text_prompt) dataWords.push(j.text_prompt); });
-  // Model names and variants
-  models?.forEach((m) => { dataWords.push(m.model_variant); if (m.name) dataWords.push(m.name.split("_")[0]); });
-  // Metrics
-  if (bestMaP > 0) dataWords.push(`mAP:${(bestMaP * 100).toFixed(0)}%`);
-  if (totalAnnotations > 0) dataWords.push(`${totalAnnotations}×labels`);
-  if (totalVideos > 0) dataWords.push(`${totalVideos}×videos`);
-  // Common CV terms to fill gaps
-  if (dataWords.length < 6) dataWords.push("detect", "segment", "precision", "recall", "train", "deploy");
-  // Deduplicate
-  const uniqueWords = [...new Set(dataWords)];
-
   // Determine what the user should do next
   const nextAction = activeRun
     ? { icon: Eye, label: "Monitor training", desc: `${activeRun.name} — epoch ${activeRun.epoch_current}/${activeRun.total_epochs}`, to: `/train/${activeRun.run_id}`, color: "var(--accent)" }
@@ -180,56 +50,17 @@ export default function DashboardPage() {
     : completedJobs.length > 0 && totalModels === 0
     ? { icon: Zap, label: "Train your first model", desc: `${completedJobs.length} dataset${completedJobs.length !== 1 ? "s" : ""} ready`, to: "/experiments", color: "var(--accent)" }
     : activeModel
-    ? { icon: Play, label: "Try your model", desc: activeModel.name, to: "/demo", color: "var(--success)" }
+    ? { icon: Play, label: "Try your model", desc: activeModel.name, to: "/deploy/test", color: "var(--success)" }
     : { icon: Upload, label: "Upload more footage", desc: "Add videos to improve your dataset", to: "/upload", color: "var(--accent)" };
 
   return (
     <div className="max-w-4xl mx-auto mt-6 px-4 sm:px-6 pb-16">
 
-      {/* Hero — data stream ASCII with AI greeting */}
-      <div className="relative overflow-hidden rounded-2xl mb-6" style={{ backgroundColor: "var(--bg-surface)", border: "1px solid var(--border-subtle)" }}>
-        <AsciiCanvas dataWords={uniqueWords} />
-
-        <div className="relative z-10 px-8 py-7">
-          {/* AI greeting — integrated naturally */}
-          <div className="flex items-start gap-3 mb-5">
-            <Link
-              to="/agent"
-              className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 mt-0.5"
-              style={{ backgroundColor: "var(--accent-soft)", color: "var(--accent)" }}
-              title="Ask Waldo anything"
-            >
-              <Sparkles size={13} />
-            </Link>
-            <div>
-              <p style={{ fontFamily: "var(--font-serif)", fontSize: 14, fontWeight: 400, fontStyle: "italic", color: "var(--accent)", lineHeight: 1.5 }}>
-                {greeting}
-              </p>
-              {aiSuggestions.length > 0 && (
-                <div className="flex flex-wrap gap-2 mt-2" style={{ animation: "fadeIn 0.4s ease" }}>
-                  {aiSuggestions.map((s, i) => (
-                    <span
-                      key={i}
-                      style={{
-                        fontSize: 10,
-                        fontFamily: "var(--font-mono)",
-                        color: "var(--text-secondary)",
-                        padding: "2px 8px",
-                        borderRadius: 6,
-                        backgroundColor: "var(--accent-soft)",
-                        border: "1px solid var(--border-subtle)",
-                      }}
-                    >
-                      {s}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-
+      <section className="mb-6" aria-labelledby="dashboard-title">
+        <h1 id="dashboard-title" className="text-2xl font-semibold" style={{ color: "var(--text-primary)" }}>Workspace overview</h1>
+        <p className="text-sm mt-2 mb-6" style={{ color: "var(--text-secondary)" }}>Review your footage, labeled datasets, and model activity.</p>
           {/* Stat strip */}
-          <div className="flex gap-8">
+          <div className="flex flex-wrap gap-x-8 gap-y-4">
             {[
               { label: "Videos", value: totalVideos },
               { label: "Annotations", value: totalAnnotations.toLocaleString() },
@@ -242,7 +73,7 @@ export default function DashboardPage() {
                   fontFamily: "var(--font-serif)",
                   fontSize: 26,
                   fontWeight: 700,
-                  color: (s as any).accent ? "var(--success)" : "var(--text-primary)",
+                  color: "accent" in s && s.accent ? "var(--success)" : "var(--text-primary)",
                   fontVariantNumeric: "tabular-nums",
                   letterSpacing: "-0.02em",
                 }}>
@@ -251,8 +82,7 @@ export default function DashboardPage() {
               </div>
             ))}
           </div>
-        </div>
-      </div>
+      </section>
 
       {/* Next action — the ONE thing to do */}
       <Link
@@ -319,7 +149,7 @@ export default function DashboardPage() {
         {bestModel && (
           <div className="surface" style={{ padding: 18 }}>
             <div className="flex items-center gap-2 mb-3">
-              <Sparkles size={13} style={{ color: "var(--warning)" }} />
+              <Sparkles size={13} style={{ color: "var(--text-secondary)" }} />
               <span className="eyebrow" style={{ color: "var(--success)" }}>Best model</span>
             </div>
             <p style={{ fontFamily: "var(--font-serif)", fontSize: 15, fontWeight: 600, color: "var(--text-primary)", marginBottom: 8 }}>
@@ -331,7 +161,7 @@ export default function DashboardPage() {
               ))}
             </div>
             <Link
-              to={bestModel.is_active ? "/demo" : "/deploy"}
+              to={bestModel.is_active ? "/deploy/test" : "/deploy"}
               className="inline-flex items-center gap-1.5 text-xs font-medium"
               style={{ color: "var(--accent)" }}
             >
@@ -355,7 +185,7 @@ export default function DashboardPage() {
                   onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-primary)")}
                 >
                   <div className="flex items-center gap-2 min-w-0">
-                    <StatusBadge status={job.status as any} />
+                    <StatusBadge status={job.status} />
                     <span className="truncate" style={{ fontSize: 13, fontWeight: 500 }}>
                       {job.name || job.text_prompt || "Exemplar"}
                     </span>

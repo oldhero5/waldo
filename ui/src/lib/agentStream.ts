@@ -16,7 +16,7 @@ export type AgentEvent =
   | { type: "error"; message: string };
 
 export interface ChatMessageWire {
-  role: "user" | "assistant" | "system" | "tool";
+  role: "user" | "assistant";
   content: string;
   tool_call_id?: string;
 }

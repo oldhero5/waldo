@@ -1,5 +1,5 @@
 /**
- * Pretext-style rich inline text — pills, code spans, and chips
+ * Rich inline text — pills, code spans, and chips
  * that stay whole while surrounding text wraps naturally.
  */
 
@@ -39,7 +39,7 @@ export function Code({ children }: { children: React.ReactNode }) {
         backgroundColor: "var(--bg-inset)",
         padding: "1px 5px",
         borderRadius: 4,
-        color: "var(--accent-warm)",
+        color: "var(--text-secondary)",
         whiteSpace: "nowrap",
       }}
     >
@@ -77,7 +77,7 @@ export function MetricChip({ label, value, trend }: {
 
 /** Status indicator with dot */
 export function StatusBadge({ status, label }: {
-  status: "active" | "inactive" | "training" | "completed" | "failed" | "pending";
+  status: string;
   label?: string;
 }) {
   const colors: Record<string, string> = {

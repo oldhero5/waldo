@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 import { Workflow, Plus, ArrowRight } from "lucide-react";
 import { TEMPLATES } from "../lib/workflow-templates";
+import type { SavedWorkflow } from "../lib/workflowTypes";
 import { authFetch } from "../api";
 
 const BASE = "/api/v1";
@@ -14,7 +15,7 @@ export default function WorkflowsPage() {
 
   const { data: saved } = useQuery({
     queryKey: ["saved-workflows"],
-    queryFn: async () => {
+    queryFn: async (): Promise<SavedWorkflow[]> => {
       const res = await authFetch(`${BASE}/workflows/saved`);
       if (!res.ok) return [];
       return res.json();
@@ -53,7 +54,7 @@ export default function WorkflowsPage() {
         </div>
         <Link
           to="/workflows/new"
-          className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-xl text-sm hover:bg-blue-700"
+          className="flex items-center gap-1.5 px-4 py-2 bg-accent text-on-accent rounded-xl text-sm hover:bg-accent-hover"
           style={{ transition: "all 160ms ease" }}
         >
           <Plus size={14} />
@@ -106,7 +107,7 @@ export default function WorkflowsPage() {
         <p className="eyebrow mb-3">Your workflows</p>
         {saved && saved.length > 0 ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {saved.map((wf: any) => (
+            {saved.map((wf) => (
               <Link
                 key={wf.id}
                 to={`/workflows/${wf.slug}`}

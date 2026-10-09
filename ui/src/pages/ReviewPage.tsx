@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   getJobStats,
@@ -9,7 +9,9 @@ import {
   type AnnotationOut,
 } from "../api";
 import AnnotationCanvas from "../components/AnnotationCanvas";
-import { classColor, hslToHex } from "../components/AnnotationOverlay";
+import JobCoverage from "../components/JobCoverage";
+import { hasTrainingArtifact, isTerminalJobStatus } from "../lib/jobStatus";
+import { classColor, hslToHex } from "../lib/annotationColors";
 import StatsPanel from "../components/StatsPanel";
 import { Keyboard, CheckCheck, XCircle, ChevronLeft, ChevronRight, Filter, Maximize2 } from "lucide-react";
 
@@ -182,6 +184,12 @@ const LazyFrameCard = React.memo(function LazyFrameCard({
                   }}
                 />
                 <span className="font-medium" style={{ color: "var(--text-primary)" }}>{a.class_name}</span>
+                {a.track_id != null && <span className="text-xs" title={`Local to this job and source video ${a.source_video_id || "unknown"}`}>Track #{a.track_id}</span>}
+                <span className="text-xs" style={{ color: "var(--text-muted)" }}>
+                  {a.timestamp_s != null && Number.isFinite(a.timestamp_s)
+                    ? `${a.timestamp_method === "source_pts" ? "" : "Approx. "}${a.timestamp_s.toFixed(2)}s`
+                    : "Time unknown"}
+                </span>
                 {a.confidence != null && (
                   <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-muted)" }}>
                     {(a.confidence * 100).toFixed(0)}%
@@ -248,21 +256,22 @@ export default function ReviewPage() {
     queryKey: ["job", jobId],
     queryFn: () => getJobStatus(jobId!),
     enabled: !!jobId,
+    refetchInterval: (query) => query.state.data && !isTerminalJobStatus(query.state.data.status) ? 2000 : false,
   });
 
   const { data: annotations } = useQuery({
-    queryKey: ["annotations", jobId],
+    queryKey: ["annotations", jobId, job?.status],
     queryFn: () => listAnnotations(jobId!, undefined, undefined, 10000),
     enabled: !!jobId,
   });
 
   const { data: stats } = useQuery({
-    queryKey: ["stats", jobId],
+    queryKey: ["stats", jobId, job?.status],
     queryFn: () => getJobStats(jobId!),
     enabled: !!jobId,
   });
 
-  const handleReview = async (annotationId: string, status: string) => {
+  const handleReview = useCallback(async (annotationId: string, status: string) => {
     try {
       await updateAnnotation(annotationId, { status });
     } catch (e) {
@@ -270,14 +279,21 @@ export default function ReviewPage() {
     }
     queryClient.invalidateQueries({ queryKey: ["annotations", jobId] });
     queryClient.invalidateQueries({ queryKey: ["stats", jobId] });
-  };
+  }, [queryClient, jobId]);
 
   // Filter by confidence + status
-  const filtered = annotations?.filter((a) => {
+  const filtered = useMemo(() => annotations?.filter((a) => {
     if (confFilter > 0 && (a.confidence == null || a.confidence < confFilter)) return false;
     if (statusFilter !== "all" && a.status !== statusFilter) return false;
     return true;
-  });
+  }).sort((left, right) => {
+    const sourceOrder = (left.source_video_id || "").localeCompare(right.source_video_id || "");
+    if (sourceOrder) return sourceOrder;
+    const leftTime = left.timestamp_s != null && Number.isFinite(left.timestamp_s) ? left.timestamp_s : Infinity;
+    const rightTime = right.timestamp_s != null && Number.isFinite(right.timestamp_s) ? right.timestamp_s : Infinity;
+    if (leftTime !== rightTime) return leftTime - rightTime;
+    return left.frame_id.localeCompare(right.frame_id) || left.id.localeCompare(right.id);
+  }), [annotations, confFilter, statusFilter]);
 
   // Count by status (unfiltered by status, but filtered by confidence)
   const confFiltered = annotations?.filter(
@@ -291,12 +307,15 @@ export default function ReviewPage() {
   };
 
   // Group annotations by frame
-  const byFrame = new Map<string, AnnotationOut[]>();
-  filtered?.forEach((a) => {
-    const group = byFrame.get(a.frame_id) || [];
-    group.push(a);
-    byFrame.set(a.frame_id, group);
-  });
+  const byFrame = useMemo(() => {
+    const groups = new Map<string, AnnotationOut[]>();
+    filtered?.forEach((annotation) => {
+      const group = groups.get(annotation.frame_id) || [];
+      group.push(annotation);
+      groups.set(annotation.frame_id, group);
+    });
+    return groups;
+  }, [filtered]);
 
   const frameEntries = Array.from(byFrame.entries());
   const totalPages = Math.ceil(frameEntries.length / FRAMES_PER_PAGE);
@@ -306,7 +325,7 @@ export default function ReviewPage() {
   );
 
   // Flat list for keyboard nav
-  const flatAnnotations = filtered || [];
+  const flatAnnotations = useMemo(() => filtered || [], [filtered]);
 
   // Bulk actions
   const handleBulkAccept = useCallback(async () => {
@@ -386,7 +405,7 @@ export default function ReviewPage() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [flatAnnotations, focusedIdx, jumpToNextPending]);
+  }, [flatAnnotations, focusedIdx, jumpToNextPending, handleReview]);
 
   const acceptedCount = annotations?.filter((a) => a.status === "accepted").length || 0;
   const pendingCount = annotations?.filter((a) => a.status === "pending").length || 0;
@@ -414,11 +433,11 @@ export default function ReviewPage() {
               </p>
             )}
           </div>
-          {job && (
+          {job && hasTrainingArtifact(job) && (
             <Link
               to={`/train/${jobId}`}
               className="px-4 py-2 text-white rounded-lg text-sm"
-              style={{ backgroundColor: "var(--accent)" }}
+              style={{ backgroundColor: "var(--accent)", color: "var(--text-on-accent)" }}
             >
               Train Model
             </Link>
@@ -426,6 +445,11 @@ export default function ReviewPage() {
         </div>
 
         {/* Status filter tabs */}
+        {job && <JobCoverage job={job} />}
+        {annotations?.some((annotation) => annotation.track_id != null) && (
+          <p className="text-sm mb-4" style={{ color: "var(--text-muted)" }}>Track IDs are local to this job and source video; they do not identify physical assets.</p>
+        )}
+
         <div className="flex items-center gap-1 mb-4">
           {STATUS_FILTERS.map((f) => (
             <button
@@ -526,6 +550,7 @@ export default function ReviewPage() {
                 </span>
                 <div className="flex items-center gap-1">
                   <button
+                    aria-label="Previous page of frames"
                     onClick={() => setFramePage((p) => Math.max(0, p - 1))}
                     disabled={framePage === 0}
                     className="p-1 rounded disabled:opacity-30"
@@ -553,6 +578,7 @@ export default function ReviewPage() {
                     </span>
                   )}
                   <button
+                    aria-label="Next page of frames"
                     onClick={() => setFramePage((p) => Math.min(totalPages - 1, p + 1))}
                     disabled={framePage >= totalPages - 1}
                     className="p-1 rounded disabled:opacity-30"
@@ -589,7 +615,7 @@ export default function ReviewPage() {
       </div>
 
       {/* Sticky train bar — show after >50% reviewed */}
-      {job && acceptedCount > 0 && annotations && (acceptedCount + (annotations.filter((a) => a.status === "rejected").length)) > annotations.length * 0.5 && (
+      {job && hasTrainingArtifact(job) && acceptedCount > 0 && annotations && (acceptedCount + (annotations.filter((a) => a.status === "rejected").length)) > annotations.length * 0.5 && (
         <div
           className="fixed bottom-0 left-0 right-0 py-3 px-6 flex items-center justify-between z-50"
           style={{ backgroundColor: "var(--success)", color: "#fff" }}

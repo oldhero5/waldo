@@ -44,8 +44,8 @@ export function QueueAdminTab() {
     try {
       await revokeTask(taskId, true);
       invalidate();
-    } catch (e: any) {
-      alert(`Revoke failed: ${e.message}`);
+    } catch (e: unknown) {
+      alert(`Revoke failed: ${(e instanceof Error ? e.message : "Request failed")}`);
     }
   };
 
@@ -54,8 +54,8 @@ export function QueueAdminTab() {
     try {
       await markJobFailed(jobId, "Marked failed from admin panel");
       invalidate();
-    } catch (e: any) {
-      alert(`Mark-failed failed: ${e.message}`);
+    } catch (e: unknown) {
+      alert(`Mark-failed failed: ${(e instanceof Error ? e.message : "Request failed")}`);
     }
   };
 
@@ -66,8 +66,8 @@ export function QueueAdminTab() {
       const res = await purgeQueue(queueName);
       invalidate();
       alert(`Purged ${res.removed} task(s) from ${queueName}`);
-    } catch (e: any) {
-      alert(`Purge failed: ${e.message}`);
+    } catch (e: unknown) {
+      alert(`Purge failed: ${(e instanceof Error ? e.message : "Request failed")}`);
     }
   };
 

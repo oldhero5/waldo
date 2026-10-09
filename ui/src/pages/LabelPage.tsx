@@ -14,6 +14,8 @@ import {
 } from "../api";
 import ClickCanvas from "../components/ClickCanvas";
 import TaskSelector from "../components/TaskSelector";
+import JobCoverage from "../components/JobCoverage";
+import { isTerminalJobStatus, jobCompletionProgress } from "../lib/jobStatus";
 
 type Mode = "text" | "exemplar";
 
@@ -107,7 +109,7 @@ export default function LabelPage() {
     enabled: !!jobId,
     refetchInterval: (query) => {
       const status = query.state.data?.status;
-      return status === "completed" || status === "failed" ? false : 2000;
+      return status && isTerminalJobStatus(status) ? false : 2000;
     },
   });
 
@@ -152,8 +154,8 @@ export default function LabelPage() {
         taskType,
       });
       setJobId(result.job_id);
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e: unknown) {
+      setError((e instanceof Error ? e.message : String(e)));
     }
   }, [videoId, projectId, validEntries, taskType]);
 
@@ -174,8 +176,8 @@ export default function LabelPage() {
         threshold: previewThreshold,
       });
       setPreview(result);
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e: unknown) {
+      setError((e instanceof Error ? e.message : String(e)));
     } finally {
       setPreviewing(false);
     }
@@ -194,12 +196,12 @@ export default function LabelPage() {
         className
       );
       setJobId(result.job_id);
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e: unknown) {
+      setError((e instanceof Error ? e.message : String(e)));
     }
   }, [videoId, selectedFrame, points, taskType, className]);
 
-  const isRunning = jobStatus && !["completed", "failed"].includes(jobStatus.status);
+  const isRunning = !!jobId && (!jobStatus || !isTerminalJobStatus(jobStatus.status));
   const title = projectId ? "Label Collection" : "Label Video";
 
   return (
@@ -237,7 +239,7 @@ export default function LabelPage() {
           {!projectId && (
             <div className="grid grid-cols-2 gap-3 mb-4">
               {[
-                { key: "text" as Mode, label: "Describe with text", desc: "Type what you're looking for and the AI will find it in every frame." },
+                { key: "text" as Mode, label: "Describe with text", desc: "Describe what to look for in sampled video frames." },
                 { key: "exemplar" as Mode, label: "Click on examples", desc: "Point at objects in a frame and the AI will track them across the video." },
               ].map((opt) => (
                 <button
@@ -364,7 +366,7 @@ export default function LabelPage() {
                   onClick={handleTextLabel}
                   disabled={validEntries.length === 0 || !!isRunning}
                   className="px-6 py-2.5 text-white rounded-lg font-medium disabled:opacity-40 transition-colors"
-                  style={{ backgroundColor: "var(--accent)" }}
+                  style={{ backgroundColor: "var(--accent)", color: "var(--text-on-accent)" }}
                 >
                   {validEntries.length > 1 ? `Find ${validEntries.length} Object Types` : "Find Objects"}
                 </button>
@@ -463,7 +465,7 @@ export default function LabelPage() {
                     onClick={handleExemplarLabel}
                     disabled={points.length === 0 || !!isRunning}
                     className="px-6 py-2 text-white rounded-lg disabled:opacity-50"
-                    style={{ backgroundColor: "var(--accent)" }}
+                    style={{ backgroundColor: "var(--accent)", color: "var(--text-on-accent)" }}
                   >
                     Label with {points.length} point(s)
                   </button>
@@ -476,31 +478,33 @@ export default function LabelPage() {
         {/* Job progress */}
         {jobStatus && (() => {
           const statusColor = jobStatus.status === "completed" ? "var(--success)"
-            : jobStatus.status === "failed" ? "var(--danger)" : "var(--accent)";
+            : ["failed", "partial"].includes(jobStatus.status) ? "var(--danger)" : "var(--accent)";
           const statusBg = jobStatus.status === "completed" ? "var(--success-soft)"
-            : jobStatus.status === "failed" ? "var(--danger-soft)" : "var(--bg-inset)";
+            : ["failed", "partial"].includes(jobStatus.status) ? "var(--danger-soft)" : "var(--bg-inset)";
+          const progress = jobCompletionProgress(jobStatus);
           return (
             <div className="rounded-lg p-4 mb-4" style={{ backgroundColor: statusBg, border: `1px solid ${statusColor}` }}>
               <div className="flex justify-between items-center mb-2">
                 <span className="font-medium capitalize" style={{ color: statusColor }}>{jobStatus.status}</span>
                 <span style={{ fontSize: 12, fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}>
-                  {jobStatus.processed_frames}/{jobStatus.total_frames} videos
+                  {jobStatus.processed_frames}/{jobStatus.total_frames} {jobStatus.processing_summary?.coverage === "sampled" ? "sampled frames" : "recorded entries"}
                 </span>
               </div>
-              <div className="w-full rounded-full h-2" style={{ backgroundColor: "rgba(0,0,0,0.1)" }}>
+              {progress != null && <div role="progressbar" aria-label="Processing progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={jobStatus.status === "completed" ? 100 : Math.floor(progress * 100)} className="w-full rounded-full h-2" style={{ backgroundColor: "rgba(0,0,0,0.1)" }}>
                 <div
                   className="h-2 rounded-full transition-all"
-                  style={{ width: `${(jobStatus.progress || 0) * 100}%`, backgroundColor: statusColor }}
+                  style={{ width: `${progress * 100}%`, backgroundColor: statusColor }}
                 />
-              </div>
-              {jobStatus.status === "completed" && (
+              </div>}
+              <JobCoverage job={jobStatus} />
+              {isTerminalJobStatus(jobStatus.status) && (
                 <div className="mt-3 flex gap-3">
                   <button
                     onClick={() => navigate(`/review/${jobStatus.job_id}`)}
                     className="px-4 py-2 text-white rounded-lg text-sm font-medium"
                     style={{ backgroundColor: "var(--success)" }}
                   >
-                    Review Results
+                    {jobStatus.status === "completed" ? "Review Results" : "Review available evidence"}
                   </button>
                   {jobStatus.result_url && (
                     <a
@@ -512,11 +516,6 @@ export default function LabelPage() {
                     </a>
                   )}
                 </div>
-              )}
-              {jobStatus.status === "failed" && (
-                <p className="mt-2 text-sm" style={{ color: "var(--danger)" }}>
-                  {jobStatus.error_message}
-                </p>
               )}
             </div>
           );

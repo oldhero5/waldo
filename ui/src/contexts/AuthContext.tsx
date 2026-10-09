@@ -1,59 +1,40 @@
 /**
- * Auth context — manages JWT tokens, user state, and workspace selection.
+ * Auth context — manages JWT tokens, user state, and authenticated workspace context.
  * Wraps the entire app. If no token is stored, redirects to login.
  */
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+
+import { useQueryClient } from "@tanstack/react-query";
+
+import { AuthContext, type User } from "./authState";
 
 const API = "/api/v1";
 
-interface User {
-  id: string;
-  email: string;
-  display_name: string;
-  avatar_url: string | null;
-  workspace_id: string | null;
-  workspace_name: string | null;
-  role: string | null;
-}
-
-interface AuthState {
-  user: User | null;
-  token: string | null;
-  loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
-  register: (email: string, password: string, displayName: string) => Promise<void>;
-  logout: () => void;
-}
-
-const AuthContext = createContext<AuthState>({
-  user: null,
-  token: null,
-  loading: true,
-  login: async () => {},
-  register: async () => {},
-  logout: () => {},
-});
-
-export function useAuth() {
-  return useContext(AuthContext);
-}
-
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const queryClient = useQueryClient();
+  const revision = useRef(0);
+  const clearSessionData = useCallback(() => {
+    // Cancel first so delayed requests cannot populate the next account's cache.
+    void queryClient.cancelQueries();
+    queryClient.clear();
+    sessionStorage.removeItem("waldo_compare_session");
+    sessionStorage.removeItem("waldo_compare_meta");
+    sessionStorage.removeItem("waldo_workflow_template");
+  }, [queryClient]);
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(() => localStorage.getItem("waldo_token"));
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => Boolean(localStorage.getItem("waldo_token")));
 
   // Fetch user info when token changes
   useEffect(() => {
-    if (!token) {
-      setUser(null);
-      setLoading(false);
-      return;
-    }
+    if (!token) return;
 
+    const controller = new AbortController();
+    const requestRevision = revision.current;
     let status = 0;
     fetch(`${API}/auth/me`, {
       headers: { Authorization: `Bearer ${token}` },
+      signal: controller.signal,
     })
       .then((res) => {
         status = res.status;
@@ -61,11 +42,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return res.json();
       })
       .then((data) => {
+        if (controller.signal.aborted || requestRevision !== revision.current) return;
         setUser(data);
         setLoading(false);
       })
       .catch(() => {
+        if (controller.signal.aborted || requestRevision !== revision.current) return;
         if (status === 401 || status === 403) {
+          clearSessionData();
           // Token invalid — clear auth
           localStorage.removeItem("waldo_token");
           localStorage.removeItem("waldo_refresh");
@@ -75,9 +59,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Network errors: keep token, just stop loading
         setLoading(false);
       });
-  }, [token]);
+    return () => controller.abort();
+  }, [token, clearSessionData]);
 
   const login = useCallback(async (email: string, password: string) => {
+    const requestRevision = ++revision.current;
     const res = await fetch(`${API}/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -88,8 +74,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new Error(err.detail || "Login failed");
     }
     const data = await res.json();
-    localStorage.setItem("waldo_token", data.access_token);
-    localStorage.setItem("waldo_refresh", data.refresh_token);
 
     // Fetch user before updating token state so the route guard sees
     // a valid user immediately — avoids the redirect-back-to-login race.
@@ -98,12 +82,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
     if (!meRes.ok) throw new Error("Failed to fetch user");
     const me = await meRes.json();
+    if (requestRevision !== revision.current) throw new Error("Sign-in was interrupted");
+    clearSessionData();
+    localStorage.setItem("waldo_token", data.access_token);
+    localStorage.setItem("waldo_refresh", data.refresh_token);
     setUser(me);
     setToken(data.access_token);
     setLoading(false);
-  }, []);
+  }, [clearSessionData]);
 
   const register = useCallback(async (email: string, password: string, displayName: string) => {
+    const requestRevision = ++revision.current;
     const res = await fetch(`${API}/auth/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -114,25 +103,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new Error(err.detail || "Registration failed");
     }
     const data = await res.json();
-    localStorage.setItem("waldo_token", data.access_token);
-    localStorage.setItem("waldo_refresh", data.refresh_token);
 
     const meRes = await fetch(`${API}/auth/me`, {
       headers: { Authorization: `Bearer ${data.access_token}` },
     });
     if (!meRes.ok) throw new Error("Failed to fetch user");
     const me = await meRes.json();
+    if (requestRevision !== revision.current) throw new Error("Sign-in was interrupted");
+    clearSessionData();
+    localStorage.setItem("waldo_token", data.access_token);
+    localStorage.setItem("waldo_refresh", data.refresh_token);
     setUser(me);
     setToken(data.access_token);
     setLoading(false);
-  }, []);
+  }, [clearSessionData]);
 
   const logout = useCallback(() => {
+    revision.current += 1;
+    clearSessionData();
     localStorage.removeItem("waldo_token");
     localStorage.removeItem("waldo_refresh");
     setToken(null);
     setUser(null);
-  }, []);
+    setLoading(false);
+  }, [clearSessionData]);
 
   return (
     <AuthContext.Provider value={{ user, token, loading, login, register, logout }}>

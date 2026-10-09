@@ -15,7 +15,7 @@ export async function authFetch(url: string, init?: RequestInit): Promise<Respon
 /** Generic Celery job result envelope returned by `GET /api/v1/job/{job_id}`. */
 export interface JobResult<T = unknown> {
   job_id: string;
-  status: "queued" | "running" | "completed" | "failed";
+  status: "queued" | "running" | "completed" | "partial" | "failed";
   result?: T | null;
   error?: string | null;
 }
@@ -47,8 +47,8 @@ export async function pollJob<T = unknown>(
     if (body.status === "completed") {
       return body.result as T;
     }
-    if (body.status === "failed") {
-      throw new Error(body.error || "Job failed");
+    if (body.status === "failed" || body.status === "partial") {
+      throw new Error(body.error || (body.status === "partial" ? "Job only partially processed; review available evidence" : "Job failed"));
     }
     await new Promise((resolve) => setTimeout(resolve, delay));
     delay = Math.min(maxDelayMs, Math.floor(delay * 1.5));
@@ -69,7 +69,30 @@ export interface LabelResult {
   celery_task_id: string;
 }
 
+export interface ProcessingVideoSummary {
+  video_id: string;
+  status: string;
+  sampled_frames?: number;
+  observations?: number;
+  assessed_timestamps_s?: (number | null)[];
+  assessed_source_frame_indices?: number[];
+  source_fps?: number | null;
+  sampling_stride?: number | null;
+  error?: string;
+}
+
+export interface ProcessingSummary {
+  merged_runs?: { job_id: string }[];
+  backend?: string;
+  coverage?: string;
+  timestamp_method?: string;
+  requested_sample_fps?: number | null;
+  score_threshold?: number | null;
+  videos?: ProcessingVideoSummary[];
+}
+
 export interface JobStatus {
+  task_type?: string;
   job_id: string;
   name: string | null;
   video_id: string;
@@ -85,6 +108,9 @@ export interface JobStatus {
   class_count: number | null;
   version: number;
   parent_id: string | null;
+  processing_summary?: ProcessingSummary | null;
+  score_threshold?: number | null;
+  sample_fps?: number | null;
 }
 
 export interface AnnotationOut {
@@ -97,6 +123,10 @@ export interface AnnotationOut {
   confidence: number | null;
   status: string;
   frame_url: string | null;
+  track_id?: number | null;
+  source_video_id?: string | null;
+  timestamp_s?: number | null;
+  timestamp_method?: string | null;
 }
 
 export interface FrameOut {
@@ -141,6 +171,10 @@ export interface PreviewDetection {
 }
 
 export interface PreviewFrame {
+  source_width?: number | null;
+  source_height?: number | null;
+  frame_duration_s?: number | null;
+  timestamp_method?: string | null;
   frame_idx: number;
   image_b64: string;
   timestamp_s: number;
@@ -239,6 +273,8 @@ export async function startLabeling(
     textPrompt?: string;
     classPrompts?: ClassPrompt[];
     taskType?: string;
+    threshold?: number;
+    fps?: number;
   }
 ): Promise<LabelResult> {
   const res = await authFetch(`${BASE}/label`, {
@@ -250,6 +286,8 @@ export async function startLabeling(
       text_prompt: opts.textPrompt || null,
       class_prompts: opts.classPrompts || null,
       task_type: opts.taskType || "segment",
+      threshold: opts.threshold,
+      fps: opts.fps,
     }),
   });
   if (!res.ok) throw new Error(await res.text());
@@ -645,6 +683,10 @@ export interface ImagePredictionResponse {
 }
 
 export interface FrameResultOut {
+  source_width?: number | null;
+  source_height?: number | null;
+  frame_duration_s?: number | null;
+  timestamp_method?: string | null;
   frame_index: number;
   timestamp_s: number;
   detections: DetectionOut[];
@@ -717,42 +759,101 @@ export async function predictVideo(
   return res.json();
 }
 
+export function openAuthenticatedWebSocket(path: string): WebSocket {
+  const token = localStorage.getItem("waldo_token");
+  if (!token) throw new Error("Sign in to receive live updates");
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return new WebSocket(`${protocol}//${window.location.host}${path}`, ["waldo", `bearer.${token}`]);
+}
+
+export type VideoSessionResult =
+  | { status: "running"; session_id: string }
+  | ({ status: "completed"; session_id: string } & VideoPredictionResponse)
+  | { status: "failed"; session_id: string; error: string };
+
+export class InferenceStatusError extends Error {
+  readonly status: number;
+  constructor(message: string, status: number) { super(message); this.status = status; }
+}
+
+export async function getVideoPredictionResult(sessionId: string, signal?: AbortSignal): Promise<VideoSessionResult> {
+  const res = await authFetch(`${BASE}/predict/video/result/${encodeURIComponent(sessionId)}`, { signal });
+  if (!res.ok) throw new InferenceStatusError(`Cannot check video processing status (${res.status})`, res.status);
+  return res.json();
+}
+
+/** Pub/sub supplies progress; durable status supplies the complete result, including missed frames. */
 export function streamPredictFrames(
   sessionId: string,
   onFrame: (frame: FrameResultOut) => void,
-  onComplete: (totalFrames: number) => void,
+  onComplete: (totalFrames: number, frames?: FrameResultOut[]) => void,
   onError: (err: string) => void,
+  onRecovering?: () => void,
 ): () => void {
-  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const ws = new WebSocket(`${protocol}//${window.location.host}/ws/predict/${sessionId}`);
-
-  ws.onmessage = (event) => {
-    const data = JSON.parse(event.data);
-    if (data.status === "completed") {
-      onComplete(data.total_frames);
-      ws.close();
-    } else if (data.status === "failed") {
-      onError(data.error || "Video processing failed");
-      ws.close();
-    } else {
-      onFrame({
-        frame_index: data.frame_index,
-        timestamp_s: data.timestamp_s,
-        detections: data.detections,
-      });
+  let active = true, polling = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let ws: WebSocket | undefined;
+  const controller = new AbortController();
+  const cleanup = () => {
+    active = false;
+    clearTimeout(timer);
+    controller.abort();
+    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) ws.close();
+  };
+  const finish = (action: () => void) => { if (!active) return; cleanup(); action(); };
+  const poll = async () => {
+    if (!active || polling) return;
+    clearTimeout(timer);
+    polling = true;
+    try {
+      const result = await getVideoPredictionResult(sessionId, controller.signal);
+      if (!active) return;
+      if (result.status === "completed") {
+        if (!Array.isArray(result.frames)) { finish(() => onError("Video result is missing its assessed frames")); return; }
+        finish(() => onComplete(result.total_frames, result.frames));
+      } else if (result.status === "failed") {
+        finish(() => onError(result.error || "Video processing failed"));
+      }
+    } catch (error) {
+      if (!active) return;
+      if (error instanceof InferenceStatusError && [401, 403, 404].includes(error.status)) {
+        finish(() => onError(error.message));
+      } else {
+        onRecovering?.();
+      }
+    } finally {
+      polling = false;
+      if (active) timer = setTimeout(poll, 2000);
     }
   };
-
-  ws.onerror = () => {
-    onError("WebSocket connection failed");
-  };
-
-  // Return cleanup function
-  return () => {
-    if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-      ws.close();
-    }
-  };
+  try {
+    ws = openAuthenticatedWebSocket(`/ws/predict/${encodeURIComponent(sessionId)}`);
+    ws.onmessage = (event) => {
+      if (!active) return;
+      try {
+        const data = JSON.parse(event.data);
+        if (data.status === "completed") {
+          // A terminal event can arrive after the subscription missed earlier frames.
+          void poll();
+        } else if (data.status === "failed") {
+          finish(() => onError(data.error || "Video processing failed"));
+        } else if (Array.isArray(data.detections) && Number.isFinite(data.frame_index) && Number.isFinite(data.timestamp_s)) {
+          onFrame({
+            frame_index: data.frame_index,
+            timestamp_s: data.timestamp_s,
+            source_width: data.source_width,
+            source_height: data.source_height,
+            frame_duration_s: data.frame_duration_s,
+            timestamp_method: data.timestamp_method,
+            detections: data.detections,
+          });
+        }
+      } catch { onRecovering?.(); }
+    };
+    ws.onerror = ws.onclose = () => { if (active) { onRecovering?.(); void poll(); } };
+  } catch { onRecovering?.(); }
+  void poll();
+  return cleanup;
 }
 
 export async function activateModel(modelId: string): Promise<{ status: string; model_id: string; name: string }> {
@@ -1148,18 +1249,19 @@ export async function startComparison(
 }
 
 export interface CompareResultResponse {
-  status: "completed" | "running";
+  status: "completed" | "running" | "failed";
   session_id: string;
+  error?: string;
   results?: {
     a: { dets: DetectionOut[]; frames: FrameResultOut[] | null; latency: number; error: string | null };
     b: { dets: DetectionOut[]; frames: FrameResultOut[] | null; latency: number; error: string | null };
   };
 }
 
-export async function getComparisonResult(sessionId: string): Promise<CompareResultResponse> {
-  const res = await authFetch(`${BASE}/comparisons/result/${sessionId}`);
+export async function getComparisonResult(sessionId: string, signal?: AbortSignal): Promise<CompareResultResponse> {
+  const res = await authFetch(`${BASE}/comparisons/result/${encodeURIComponent(sessionId)}`, { signal });
   if (res.status === 202) return { status: "running", session_id: sessionId };
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) throw new InferenceStatusError(`Cannot check comparison status (${res.status})`, res.status);
   return res.json();
 }
 

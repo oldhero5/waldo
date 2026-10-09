@@ -44,8 +44,8 @@ export function ModelsTab({ onActivated }: { onActivated: () => void }) {
       queryClient.invalidateQueries({ queryKey: ["experiments"] });
       queryClient.invalidateQueries({ queryKey: ["models"] });
       setShowExperiment(false);
-    } catch (e: any) {
-      console.error(e.message);
+    } catch (e: unknown) {
+      console.error((e instanceof Error ? e.message : "Request failed"));
     }
   };
 
