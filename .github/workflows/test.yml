@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -12,7 +15,7 @@ concurrency:
 jobs:
   test:
     name: Lint + Test + Build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
 
     services:
@@ -46,6 +49,8 @@ jobs:
       POSTGRES_USER: waldo
       POSTGRES_PASSWORD: waldo  # pragma: allowlist secret
       POSTGRES_DB: waldo
+      WALDO_TEST_POSTGRES_URL: postgresql://waldo:waldo@localhost:5432/waldo  # pragma: allowlist secret
+      WALDO_SERVICE_STACK: "1"
       REDIS_URL: redis://localhost:6379/0
       MINIO_ENDPOINT: localhost:9000
       MINIO_ACCESS_KEY: minioadmin
@@ -55,7 +60,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # Gitleaks needs the entire PR or push commit range.
 
       # ── System deps (ffmpeg/ffprobe used by lib/frame_extractor + frame_cache) ──
       - name: Install ffmpeg
@@ -71,7 +79,7 @@ jobs:
             --network host \
             -e MINIO_ROOT_USER=minioadmin \
             -e MINIO_ROOT_PASSWORD="$MINIO_ROOT_PASSWORD" \
-            minio/minio server /data
+            quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z server /data
           # Wait for MinIO to be ready
           timeout 30 bash -c 'until curl -sf http://localhost:9000/minio/health/live; do sleep 1; done'
 
@@ -79,19 +87,19 @@ jobs:
       #    we mirror it here so tests that store/retrieve via lib.s3 don't 404) ──
       - name: Create MinIO 'waldo' bucket
         run: |
-          docker run --rm --network host --entrypoint=/bin/sh minio/mc -c '
+          docker run --rm --network host --entrypoint=/bin/sh quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z -c '
             mc alias set local http://localhost:9000 minioadmin minioadmin &&
             mc mb --ignore-existing local/waldo
           '
 
       # ── Python / uv ──────────────────────────────────────────────────────────
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@22695119d769bdb6f7032ad67b9bca0ef8c4a174 # v5.4.0
         with:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
@@ -116,7 +124,7 @@ jobs:
 
       # ── Frontend ─────────────────────────────────────────────────────────────
       - name: Set up Node.js 20
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "20"
           cache: npm
@@ -130,13 +138,68 @@ jobs:
         working-directory: ui
         run: npm run build
 
-      - name: TypeScript strict check
+      - name: Lint UI
         working-directory: ui
-        run: npx tsc --noEmit
+        run: npm run lint
 
       # ── Secret scanning ──────────────────────────────────────────────────────
       - name: Gitleaks — secret scan
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
         run: |
-          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz \
-            | tar -xz -C /usr/local/bin gitleaks
-          gitleaks detect --source . --no-banner --redact
+          set -euo pipefail
+          archive="$RUNNER_TEMP/gitleaks_8.21.2_linux_x64.tar.gz"
+          curl -fsSL --retry 3 -o "$archive" https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz
+          printf '%s  %s\n' 5bc41815076e6ed6ef8fbecc9d9b75bcae31f39029ceb55da08086315316e3ba "$archive" | sha256sum --check
+          tar -xz -C "$RUNNER_TEMP" -f "$archive" gitleaks
+
+          case "$GITHUB_EVENT_NAME" in
+            pull_request) base="$PR_BASE_SHA" ;;
+            push) base="$PUSH_BEFORE_SHA" ;;
+            *) echo "Unsupported secret-scan event: $GITHUB_EVENT_NAME" >&2; exit 1 ;;
+          esac
+          if [[ "$GITHUB_EVENT_NAME" == push && "$base" == 0000000000000000000000000000000000000000 ]]; then
+            # A newly created branch has no previous commit to compare.
+            log_opts="--all"
+          else
+            [[ "$base" =~ ^[0-9a-f]{40}$ ]] || { echo "Invalid scan base SHA" >&2; exit 1; }
+            git cat-file -e "$base^{commit}"
+            log_opts="$base..HEAD"
+            [[ "$(git rev-list --count "$log_opts")" -gt 0 ]] || { echo "Empty secret-scan range" >&2; exit 1; }
+          fi
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]] || { echo "Checkout SHA mismatch" >&2; exit 1; }
+          "$RUNNER_TEMP/gitleaks" git --log-opts="$log_opts" --no-banner --redact .
+
+  ui-browser:
+    name: UI browser smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install UI dependencies
+        working-directory: ui
+        run: npm ci --legacy-peer-deps
+
+      - name: Build UI
+        working-directory: ui
+        run: npm run build
+
+      - name: Install Chromium
+        working-directory: ui
+        run: npx playwright install --with-deps chromium
+
+      - name: Run UI browser smoke tests
+        working-directory: ui
+        run: npx playwright test -c playwright.smoke.config.ts
