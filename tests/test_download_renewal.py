@@ -272,3 +272,21 @@ def test_endpoint_rejects_invalid_capability(renewal_job, invalid_token):
     token = jwt.encode(claims, secret, algorithm=settings.jwt_algorithm)
     response = client.get(f"/api/v1/jobs/{job_id}/download-url", params={"token": token})
     assert response.status_code == 401
+
+
+@pytest.mark.parametrize("claim", ["iat", "nbf"])
+@pytest.mark.parametrize("value", [None, float("inf")])
+def test_malformed_time_claim_is_unauthorized(claim, value):
+    token = expired_capability(LEGACY_KEY, exp=0, **{claim: value})
+    job = SimpleNamespace(id=JOB_ID, result_minio_key=None)
+    with pytest.raises(HTTPException) as caught:
+        review._renewable_export_object(token, job)
+    assert caught.value.status_code == 401
+
+
+@pytest.mark.parametrize("claim", ["iat", "nbf"])
+@pytest.mark.parametrize("value", [None, float("inf")])
+def test_endpoint_rejects_malformed_time_claim(renewal_job, claim, value):
+    client, job_id, _, _ = renewal_job
+    response = renew(client, job_id, f"results/{job_id}/dataset.zip", exp=0, **{claim: value})
+    assert response.status_code == 401

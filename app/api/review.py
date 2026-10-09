@@ -812,7 +812,7 @@ def _renewable_export_object(token: str, job: LabelingJob) -> str:
             algorithms=[settings.jwt_algorithm],
             options={"verify_exp": False},
         )
-    except JWTError as error:
+    except (JWTError, TypeError, OverflowError) as error:
         raise invalid from error
     expiry = claims.get("exp")
     key = claims.get("object")
