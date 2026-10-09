@@ -75,24 +75,89 @@ export function watchVideoPresentation(video: HTMLVideoElement, draw: (time: num
   };
 }
 
-/** Await decoder completion; timeout fails instead of painting the previous decoded frame. */
-export function seekDecodedVideo(video: HTMLVideoElement, time: number, signal: AbortSignal): Promise<void> {
+interface VideoSeek {
+  time: number;
+  sourceTimestamp: number | null;
+  promise: Promise<void>;
+  cancel: () => void;
+}
+
+const videoSeeks = new WeakMap<HTMLVideoElement, { source: string; current?: VideoSeek; unconfirmed: boolean }>();
+
+/** Caller cancellation stops capture, while bounded decoder observation can serve a same-frame retry. */
+export function seekDecodedVideo(video: HTMLVideoElement, time: number, signal: AbortSignal, sourceTimestamp: number | null): Promise<void> {
+  const abortError = () => new DOMException("Video seek cancelled", "AbortError");
+  if (signal.aborted) return Promise.reject(abortError());
+  let state = videoSeeks.get(video);
+  if (!state || state.source !== video.currentSrc) {
+    state?.current?.cancel();
+    state = { source: video.currentSrc, unconfirmed: false };
+    videoSeeks.set(video, state);
+  }
+  const sameTime = Math.abs(video.currentTime - time) < 0.00001;
+  let current = state.current;
+  if (!current || current.time !== time || current.sourceTimestamp !== sourceTimestamp || !sameTime) {
+    current?.cancel();
+    const owner = state;
+    const seek: VideoSeek = { time, sourceTimestamp, promise: Promise.resolve(), cancel: () => {} };
+    owner.current = seek;
+    if (!owner.unconfirmed && sameTime && !video.seeking && video.readyState >= 2) current = seek;
+    else {
+      owner.unconfirmed = true;
+      seek.promise = new Promise<void>((resolve, reject) => {
+        const hasFrameCallbacks = typeof video.requestVideoFrameCallback === "function";
+        let callback = 0, seeked = false, presented = !hasFrameCallbacks, active = true;
+        const cleanup = () => {
+          active = false;
+          clearTimeout(timeout);
+          if (callback) video.cancelVideoFrameCallback(callback);
+          video.removeEventListener("seeked", done);
+          video.removeEventListener("error", failed);
+        };
+        const fail = (error: Error) => {
+          if (!active) return;
+          cleanup();
+          if (owner.current === seek) owner.current = undefined;
+          reject(error);
+        };
+        const done = () => {
+          if (!active || video.seeking || video.readyState < 2) return;
+          seeked = true;
+          if (!presented) return;
+          owner.unconfirmed = false;
+          cleanup(); resolve();
+        };
+        const nextPresentation = () => {
+          callback = video.requestVideoFrameCallback((_, metadata) => {
+            if (!active) return;
+            callback = 0;
+            // Approximate timestamps support navigation, but carry no exact PTS/alignment claim.
+            presented = sourceTimestamp == null || Math.abs(metadata.mediaTime - sourceTimestamp) < 0.001;
+            if (presented && seeked) done();
+            else if (!presented) nextPresentation();
+          });
+        };
+        const failed = () => fail(new Error("Unable to decode the requested video frame"));
+        const timeout = setTimeout(() => fail(new Error("Video seeking timed out")), 10_000);
+        seek.cancel = () => fail(abortError());
+        video.addEventListener("seeked", done);
+        video.addEventListener("error", failed);
+        if (hasFrameCallbacks) nextPresentation();
+        video.currentTime = time;
+      });
+      current = seek;
+    }
+  }
   return new Promise((resolve, reject) => {
-    const cleanup = () => {
-      clearTimeout(timeout);
-      video.removeEventListener("seeked", done);
-      video.removeEventListener("error", failed);
-      signal.removeEventListener("abort", aborted);
-    };
-    const done = () => { if (video.seeking || video.readyState < 2) return; cleanup(); resolve(); };
-    const failed = () => { cleanup(); reject(new Error("Unable to decode the requested video frame")); };
-    const aborted = () => { cleanup(); reject(new DOMException("Video seek cancelled", "AbortError")); };
-    const timeout = setTimeout(() => { cleanup(); reject(new Error("Video seeking timed out")); }, 10_000);
-    video.addEventListener("seeked", done);
-    video.addEventListener("error", failed);
+    const aborted = () => { signal.removeEventListener("abort", aborted); reject(abortError()); };
     signal.addEventListener("abort", aborted, { once: true });
-    if (signal.aborted) { aborted(); return; }
-    if (Math.abs(video.currentTime - time) < 0.00001 && !video.seeking && video.readyState >= 2) { done(); return; }
-    video.currentTime = time;
+    current.promise.then(() => {
+      signal.removeEventListener("abort", aborted);
+      if (!signal.aborted) resolve();
+    }, (error: Error) => {
+      signal.removeEventListener("abort", aborted);
+      if (!signal.aborted) reject(error);
+    });
+    if (signal.aborted) aborted();
   });
 }

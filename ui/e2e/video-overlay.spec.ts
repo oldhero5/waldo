@@ -1,6 +1,8 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { seekDecodedVideo } from "../src/lib/videoPresentation";
+import ts from "typescript";
 const clip = fileURLToPath(new URL("./fixtures/moving-object.webm", import.meta.url));
 const json = (route: Route, value: unknown) => route.fulfill({ contentType: "application/json", body: JSON.stringify(value) });
 const frames = (coordinateScale = 1) => Array.from({ length: 7 }, (_, i) => {
@@ -59,6 +61,213 @@ async function setup(page: Page, coordinateScale = 1, metadata: { timestamp_meth
 }
 const samples = (page: Page) => page.evaluate(() => (window as Window & { overlaySamples?: OverlaySample[] }).overlaySamples || []);
 
+// Control the native decoder boundary while exercising the real seek helper.
+class ControlledVideo extends EventTarget {
+  currentSrc = "fixture.webm";
+  readyState = 2;
+  seeking = false;
+  duration = 2;
+  onSeek: (() => void) | null = null;
+  private time = 0;
+  private nextCallback = 0;
+  readonly callbacks = new Map<number, VideoFrameRequestCallback>();
+  get currentTime() { return this.time; }
+  set currentTime(value: number) { this.time = value; this.seeking = true; this.onSeek?.(); }
+  requestVideoFrameCallback(callback: VideoFrameRequestCallback) {
+    const id = ++this.nextCallback;
+    this.callbacks.set(id, callback);
+    return id;
+  }
+  cancelVideoFrameCallback(id: number) { this.callbacks.delete(id); }
+  seeked() { this.seeking = false; this.dispatchEvent(new Event("seeked")); }
+  present(mediaTime: number) {
+    const pending = [...this.callbacks];
+    this.callbacks.clear();
+    for (const [, callback] of pending) callback(0, { mediaTime } as VideoFrameCallbackMetadata);
+  }
+}
+
+for (const first of ["seeked", "presentation"] as const) {
+  test(`decoded seek waits for the requested presentation when ${first} arrives first`, async () => {
+    const video = new ControlledVideo();
+    const controller = new AbortController();
+    let complete = false;
+    const pending = seekDecodedVideo(video as unknown as HTMLVideoElement, 0.605, controller.signal, 0.6).then(() => { complete = true; });
+    if (first === "seeked") video.seeked(); else video.present(0.6);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(complete).toBe(false);
+    if (first === "seeked") {
+      video.present(0.3); // A queued callback for the preceding frame is insufficient.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(complete).toBe(false);
+      video.present(0.6);
+    } else video.seeked();
+    await pending;
+    expect(complete).toBe(true);
+  });
+}
+
+test("caller cancellation preserves bounded decoder observation for a same-frame retry", async () => {
+  const video = new ControlledVideo();
+  const controller = new AbortController();
+  const pending = seekDecodedVideo(video as unknown as HTMLVideoElement, 0.605, controller.signal, 0.6);
+  expect(video.callbacks.size).toBe(1);
+  controller.abort();
+  await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+  expect(video.callbacks.size).toBe(1);
+  video.seeked();
+  video.present(0.6);
+  await seekDecodedVideo(video as unknown as HTMLVideoElement, 0.605, new AbortController().signal, 0.6);
+  expect(video.callbacks.size).toBe(0);
+});
+
+test("caller cancellation after native confirmation keeps the confirmed retry available", async () => {
+  const video = new ControlledVideo();
+  const controller = new AbortController();
+  const pending = seekDecodedVideo(video as unknown as HTMLVideoElement, 0.605, controller.signal, 0.6);
+  video.seeked(); video.present(0.6);
+  controller.abort();
+  await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+  await seekDecodedVideo(video as unknown as HTMLVideoElement, 0.605, new AbortController().signal, 0.6);
+  expect(video.callbacks.size).toBe(0);
+});
+
+test("retrying an aborted seek at the same time still waits for presentation", async () => {
+  const video = new ControlledVideo();
+  const controller = new AbortController();
+  const aborted = seekDecodedVideo(video as unknown as HTMLVideoElement, 0.605, controller.signal, 0.6);
+  controller.abort();
+  await expect(aborted).rejects.toMatchObject({ name: "AbortError" });
+  video.seeked(); // The decoder completes after the first caller stopped listening.
+  let complete = false;
+  const pending = seekDecodedVideo(video as unknown as HTMLVideoElement, 0.605, new AbortController().signal, 0.6).then(() => { complete = true; });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(complete).toBe(false);
+  video.seeked();
+  video.present(0.6);
+  await pending;
+});
+
+test("an unconfirmed paused seek recovers when the same frame produces no callback", async () => {
+  const video = new ControlledVideo();
+  const controller = new AbortController();
+  const aborted = seekDecodedVideo(video as unknown as HTMLVideoElement, 0.605, controller.signal, 0.6);
+  controller.abort();
+  await expect(aborted).rejects.toMatchObject({ name: "AbortError" });
+  video.seeked();
+  video.present(0.6); // Original presentation finishes after its caller aborts.
+  let displayedTime = 0.605;
+  video.onSeek = () => {
+    const time = video.currentTime;
+    queueMicrotask(() => {
+      video.seeked();
+      if (displayedTime !== time) {
+        displayedTime = time;
+        video.present(time === 0.605 ? 0.6 : time);
+      }
+    });
+  };
+  const recovery = new AbortController();
+  let complete = false;
+  const pending = seekDecodedVideo(video as unknown as HTMLVideoElement, 0.605, recovery.signal, 0.6).then(() => { complete = true; });
+  try {
+    await expect.poll(() => complete).toBe(true);
+    expect(video.currentTime).toBe(0.605);
+  } finally { recovery.abort(); await pending.catch(() => {}); }
+});
+
+test("a different seek cancels the old presentation observer and rejects stale metadata", async () => {
+  const video = new ControlledVideo();
+  const old = seekDecodedVideo(video as unknown as HTMLVideoElement, 0.305, new AbortController().signal, 0.3);
+  const oldResult = expect(old).rejects.toMatchObject({ name: "AbortError" });
+  let complete = false;
+  const current = seekDecodedVideo(video as unknown as HTMLVideoElement, 0.605, new AbortController().signal, 0.6).then(() => { complete = true; });
+  await oldResult;
+  expect(video.callbacks.size).toBe(1);
+  video.seeked();
+  video.present(0.3);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(complete).toBe(false);
+  video.present(0.6);
+  await current;
+});
+
+test("presentation confirmation never crosses a video source change", async () => {
+  const video = new ControlledVideo();
+  const first = seekDecodedVideo(video as unknown as HTMLVideoElement, 0.605, new AbortController().signal, 0.6);
+  video.seeked(); video.present(0.6); await first;
+  video.currentSrc = "other.webm";
+  video.seeking = true;
+  let complete = false;
+  const next = seekDecodedVideo(video as unknown as HTMLVideoElement, 0.605, new AbortController().signal, 0.6).then(() => { complete = true; });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(complete).toBe(false);
+  video.seeked(); video.present(0.6); await next;
+});
+
+for (const first of ["seeked", "presentation"] as const) {
+  test(`approximate seek supports ${first} first without claiming exact source PTS`, async () => {
+    const video = new ControlledVideo();
+    let complete = false;
+    const pending = seekDecodedVideo(video as unknown as HTMLVideoElement, 0.605, new AbortController().signal, null).then(() => { complete = true; });
+    if (first === "seeked") video.seeked(); else video.present(0.58);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(complete).toBe(false);
+    if (first === "seeked") video.present(0.58); else video.seeked();
+    await pending;
+  });
+}
+
+test("a decoded seek to the current time needs no new presentation", async () => {
+  const video = new ControlledVideo();
+  await seekDecodedVideo(video as unknown as HTMLVideoElement, 0, new AbortController().signal, 0);
+  expect(video.callbacks.size).toBe(0);
+});
+
+test("decoded seeking supports browsers without presentation callbacks", async () => {
+  const video = new ControlledVideo();
+  Object.defineProperty(video, "requestVideoFrameCallback", { value: undefined });
+  const pending = seekDecodedVideo(video as unknown as HTMLVideoElement, 0.605, new AbortController().signal, 0.6);
+  video.seeked();
+  await pending;
+});
+
+test("a real paused decoder can retry an aborted seek at the same time", async ({ page }) => {
+  await setup(page);
+  const source = readFileSync(fileURLToPath(new URL("../src/lib/videoPresentation.ts", import.meta.url)), "utf8");
+  await page.route("**/fixture-video-presentation.js", (route) => route.fulfill({
+    contentType: "text/javascript", body: ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext } }).outputText,
+  }));
+  const result = await page.evaluate(async () => {
+    const moduleUrl = "/fixture-video-presentation.js";
+    const { seekDecodedVideo: seek } = await import(moduleUrl);
+    const video = document.querySelector("video")!;
+    const events: { event: string; time: number; mediaTime?: number; seeking: boolean }[] = [];
+    for (const event of ["seeking", "seeked"]) video.addEventListener(event, () => events.push({ event, time: video.currentTime, seeking: video.seeking }));
+    const requestPresentation = video.requestVideoFrameCallback.bind(video);
+    video.requestVideoFrameCallback = (callback) => requestPresentation((now, metadata) => {
+      events.push({ event: "presentation", time: video.currentTime, mediaTime: metadata.mediaTime, seeking: video.seeking });
+      callback(now, metadata);
+    });
+    const controller = new AbortController();
+    const settled = new Promise<void>((resolve) => video.addEventListener("seeked", () => resolve(), { once: true }));
+    const pending = seek(video, 0.605, controller.signal, 0.6);
+    controller.abort();
+    const error = await pending.catch((value: Error) => value.name);
+    await settled;
+    try { await seek(video, 0.605, new AbortController().signal, 0.6); }
+    catch (error) { throw new Error(`${error}: ${JSON.stringify(events)}`); }
+    const canvas = document.createElement("canvas"); canvas.width = 320; canvas.height = 180;
+    const context = canvas.getContext("2d")!;
+    context.drawImage(video, 0, 0);
+    const row = context.getImageData(0, 100, 320, 1).data;
+    let objectX = -1;
+    for (let x = 0; x < 320; x++) if (row[x * 4] > 240 && row[x * 4 + 1] > 240) { objectX = x; break; }
+    return { error, objectX };
+  });
+  expect(result).toEqual({ error: "AbortError", objectX: 92 });
+});
+
 test("sampled masks stay on the moving object during real decoded playback", async ({ page }) => {
   await setup(page);
   await page.getByRole("button", { name: "Play", exact: true }).click();
@@ -95,6 +304,28 @@ test("inference pixel coordinates scale with source dimensions through resize an
   expect(Math.max(...painted.map((sample) => Math.abs(sample.maskX - sample.objectX)))).toBeLessThanOrEqual(2);
 });
 
+test("panning clears video and mask pixels from the exposed canvas edge", async ({ page }) => {
+  await setup(page);
+  const canvas = page.locator("canvas");
+  // The paused fixture has its white object and red mask at x=20..50, y=90..120.
+  await expect.poll(() => canvas.evaluate((element: HTMLCanvasElement) => {
+    const [red, green, , alpha] = element.getContext("2d")!.getImageData(30, 100, 1, 1).data;
+    return alpha === 255 && red > green;
+  })).toBe(true);
+  const box = (await canvas.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + box.width / 4, box.y + box.height / 2);
+  await page.mouse.up();
+  // Panning by 80 source pixels exposes x=0..79. It must contain no old image or mask.
+  await expect.poll(() => canvas.evaluate((element: HTMLCanvasElement) => {
+    const pixels = element.getContext("2d")!.getImageData(0, 0, 79, element.height).data;
+    let opaque = 0;
+    for (let offset = 3; offset < pixels.length; offset += 4) if (pixels[offset] !== 0) opaque++;
+    return opaque;
+  })).toBe(0);
+});
+
 test("feedback snapshots retain the inference coordinate dimensions", async ({ page }) => {
   await setup(page, 2);
   let submitted: { model_id?: string; bbox: number[]; frame_image_b64: string; source_filename: string }[] = [];
@@ -129,31 +360,38 @@ test("incompatible rotated coordinate dimensions block the mask", async ({ page 
   expect(await samples(page)).toHaveLength(0);
 });
 
-test("comparison never borrows masks from a different model's assessment time", async ({ page }) => {
-  await setup(page);
-  const dense = frames(), sparse = dense.filter((_, index) => index % 2 === 0);
-  await page.route("**/api/v1/comparisons/**", (route) => {
-    if (new URL(route.request().url()).pathname.endsWith("/run")) return json(route, { session_id: "fixture-compare" });
-    return json(route, { status: "completed", session_id: "fixture-compare", results: {
-      a: { dets: [], frames: dense, latency: 1, error: null }, b: { dets: [], frames: sparse, latency: 1, error: null },
-    } });
+for (const approximate of [false, true]) {
+  test(approximate ? "approximate comparison navigation never invents aligned masks" : "comparison never borrows masks from a different model's assessment time", async ({ page }) => {
+    await setup(page);
+    const dense = frames().map((frame) => approximate ? { ...frame, timestamp_s: frame.timestamp_s + 0.02, timestamp_method: "frame_index/fps" } : frame);
+    const sparse = dense.filter((_, index) => index % 2 === 0);
+    await page.route("**/api/v1/comparisons/**", (route) => {
+      if (new URL(route.request().url()).pathname.endsWith("/run")) return json(route, { session_id: "fixture-compare" });
+      return json(route, { status: "completed", session_id: "fixture-compare", results: {
+        a: { dets: [], frames: dense, latency: 1, error: null }, b: { dets: [], frames: sparse, latency: 1, error: null },
+      } });
+    });
+    await page.getByRole("button", { name: "Compare", exact: true }).click();
+    if (approximate) await page.evaluate(() => { (window as Window & { overlaySamples?: OverlaySample[] }).overlaySamples!.length = 0; });
+    await page.getByRole("combobox").first().selectOption("__sam3.1__");
+    await page.locator('input[type="file"][accept="image/*,video/*"]').setInputFiles(clip);
+    await page.getByRole("button", { name: "Compare Models", exact: true }).click();
+    await expect(page.locator("canvas")).toHaveCount(2);
+    const slider = page.locator('input[type="range"][max="6"]');
+    await slider.evaluate((element: HTMLInputElement) => { element.value = "1"; element.dispatchEvent(new Event("input", { bubbles: true })); });
+    await expect.poll(() => page.locator("video").evaluate((video: HTMLVideoElement) => video.currentTime)).toBeGreaterThan(0.3);
+    await expect(page.getByText(/0 dets/)).toHaveCount(approximate ? 2 : 1);
+    await page.getByRole("button", { name: "Play", exact: true }).click();
+    await expect.poll(() => page.locator("video").evaluate((video: HTMLVideoElement) => video.currentTime)).toBeGreaterThan(1.79);
+    await expect(page.getByRole("button", { name: "Play", exact: true })).toBeVisible();
+    const painted = await samples(page);
+    if (approximate) expect(painted).toHaveLength(0);
+    else {
+      expect(painted.length).toBeGreaterThan(5);
+      expect(Math.max(...painted.map((sample) => Math.abs(sample.maskX - sample.objectX)))).toBeLessThanOrEqual(2);
+    }
   });
-  await page.getByRole("button", { name: "Compare", exact: true }).click();
-  await page.getByRole("combobox").first().selectOption("__sam3.1__");
-  await page.locator('input[type="file"][accept="image/*,video/*"]').setInputFiles(clip);
-  await page.getByRole("button", { name: "Compare Models", exact: true }).click();
-  await expect(page.locator("canvas")).toHaveCount(2);
-  const slider = page.locator('input[type="range"][max="6"]');
-  await slider.evaluate((element: HTMLInputElement) => { element.value = "1"; element.dispatchEvent(new Event("input", { bubbles: true })); });
-  await expect.poll(() => page.locator("video").evaluate((video: HTMLVideoElement) => video.currentTime)).toBeGreaterThan(0.3);
-  await expect(page.getByText(/0 dets/)).toHaveCount(1);
-  await page.getByRole("button", { name: "Play", exact: true }).click();
-  await expect.poll(() => page.locator("video").evaluate((video: HTMLVideoElement) => video.currentTime)).toBeGreaterThan(1.79);
-  await expect(page.getByRole("button", { name: "Play", exact: true })).toBeVisible();
-  const painted = await samples(page);
-  expect(painted.length).toBeGreaterThan(5);
-  expect(Math.max(...painted.map((sample) => Math.abs(sample.maskX - sample.objectX)))).toBeLessThanOrEqual(2);
-});
+}
 
 async function mockPredictionTransport(page: Page, mode: "close" | "silent" | "completed") {
   await page.addInitScript(({ mode, frame }) => {

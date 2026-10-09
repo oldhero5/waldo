@@ -121,6 +121,8 @@ export function VideoDemo({ confThreshold, classFilter, classFilterArr, modelId 
 
     const ctx = canvas.getContext("2d")!;
     ctx.save();
+    ctx.resetTransform();
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
     applyZoomPan(ctx, zpRef.current.zoom, zpRef.current.panX, zpRef.current.panY);
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
@@ -206,7 +208,8 @@ export function VideoDemo({ confThreshold, classFilter, classFilterArr, modelId 
     captureRequest.current?.abort();
     captureRequest.current = controller;
     if (!compatibleSourceSize(frame, video.videoWidth, video.videoHeight)) throw new Error("Cannot capture feedback with incompatible source dimensions");
-    await seekDecodedVideo(video, frame.timestamp_s + Math.min((frame.frame_duration_s || 0) / 4, 0.005), controller.signal);
+    await seekDecodedVideo(video, frame.timestamp_s + Math.min((frame.frame_duration_s || 0) / 4, 0.005), controller.signal,
+      !frame.timestamp_method || frame.timestamp_method === "source_pts" ? frame.timestamp_s : null);
     const tmp = document.createElement("canvas");
     tmp.width = frame.source_width || video.videoWidth; tmp.height = frame.source_height || video.videoHeight;
     const ctx = tmp.getContext("2d");
