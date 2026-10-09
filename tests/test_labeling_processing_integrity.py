@@ -181,6 +181,7 @@ def test_text_pipeline_reports_successful_subset_when_another_video_fails(monkey
     session = MagicMock()
     session.query.return_value.filter_by.return_value.one.return_value = job
     session.query.return_value.filter_by.return_value.all.return_value = videos
+    session.query.return_value.filter.return_value.first.return_value = None
     monkeypatch.setattr(subject, "SessionLocal", lambda: session)
     monkeypatch.setattr(subject, "get_engine", lambda: object())
 
@@ -193,16 +194,15 @@ def test_text_pipeline_reports_successful_subset_when_another_video_fails(monkey
             [SimpleNamespace(timestamp_s=0)],
         )
 
-    exported = []
+    persisted = []
     monkeypatch.setattr(subject, "_process_single_video", process)
-    monkeypatch.setattr(
-        subject, "convert_and_store", lambda s, j, results, frames, *a: exported.extend(frames) or "result.zip"
-    )
+    monkeypatch.setattr(subject, "replace_raw_observations", lambda s, j, results, frames, *a: persisted.extend(frames))
 
     result = subject.run_labeling_pipeline(MagicMock(), "job")
 
     assert result["status"] == "partial"
-    assert [frame.video_id for frame in exported] == ["video-a"]
+    assert [frame.video_id for frame in persisted] == ["video-a"]
+    assert result["result_minio_key"] is None
     assert [entry["status"] for entry in job.processing_summary["videos"]] == ["completed", "failed"]
     assert job.progress == 0.5
 
@@ -229,6 +229,7 @@ def native_run(monkeypatch, sam_stub):
     session.query.return_value.filter_by.return_value.one.return_value = job
     session.query.return_value.filter_by.return_value.all.return_value = videos
     session.query.return_value.filter_by.return_value.first.return_value = None
+    session.query.return_value.filter.return_value.first.return_value = None
     monkeypatch.setattr(subject, "SessionLocal", lambda: session)
     monkeypatch.setattr(subject, "download_file", lambda key, path: path.write_bytes(b"video"))
     monkeypatch.setattr(subject, "upload_file", lambda *a: None)
@@ -548,6 +549,7 @@ def test_transient_download_failure_is_retried_then_completes(monkeypatch, tmp_p
     session.query.return_value.filter_by.return_value.one.return_value = job
     session.query.return_value.filter_by.return_value.all.return_value = [video]
     session.query.return_value.filter_by.return_value.first.return_value = None
+    session.query.return_value.filter.return_value.first.return_value = None
     monkeypatch.setattr(subject, "SessionLocal", lambda: session)
     attempts = []
 
@@ -592,7 +594,6 @@ def test_transient_download_failure_is_retried_then_completes(monkeypatch, tmp_p
             ],
         )
         monkeypatch.setattr(subject, "upload_file", lambda *a: None)
-        monkeypatch.setattr(subject, "convert_and_store", lambda *a: "result.zip")
         runner = subject.run_labeling_pipeline
 
     with pytest.raises(subject.RetryableLabelingError, match="object store unavailable"):

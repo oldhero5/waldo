@@ -14,8 +14,8 @@ def generate_data_yaml(class_names: list[str], task: str = "segment") -> str:
 
     data = {
         "path": ".",
-        "train": "images/train",
-        "val": "images/val",
+        "train": "train" if task == "classify" else "images/train",
+        "val": "val" if task == "classify" else "images/val",
         "nc": len(class_names),
         "names": {i: name for i, name in enumerate(class_names)},
         "waldo_task": task,

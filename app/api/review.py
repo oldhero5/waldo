@@ -1,3 +1,5 @@
+import json
+import math
 import tempfile
 import uuid as _uuid
 import zipfile
@@ -783,7 +785,7 @@ def get_job_stats(
         session.close()
 
 
-EXPORT_FORMATS = ("segment", "detect", "obb")
+EXPORT_FORMATS = ("segment", "detect", "obb", "classify", "pose")
 
 
 class ExportRequest(BaseModel):
@@ -834,6 +836,8 @@ def _annotation_to_label_line(ann: Annotation, fmt: str, class_index: int | None
 
 def _write_review_export(dataset_dir, source_dir, frames_map, frame_anns, class_names, fmt):
     """Export whole video groups and never silently omit a visible annotation."""
+    if fmt in ("classify", "pose"):
+        return _write_reviewed_region_export(dataset_dir, source_dir, frames_map, frame_anns, class_names, fmt)
     from labeler.converters.common import write_yolo_label_dataset
 
     source_dir.mkdir(parents=True, exist_ok=True)
@@ -863,6 +867,153 @@ def _write_review_export(dataset_dir, source_dir, frames_map, frame_anns, class_
     write_yolo_label_dataset(dataset_dir, paths, labels, class_names, task=fmt, group_ids=groups)
 
 
+def _reviewed_polygon(ann):
+    import numpy as np
+
+    polygon = ann.polygon
+    if (
+        not isinstance(polygon, list)
+        or len(polygon) < 6
+        or len(polygon) % 2
+        or any(
+            isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or not 0 <= v <= 1
+            for v in polygon
+        )
+    ):
+        raise HTTPException(status_code=400, detail="Export requires a finite normalized polygon; review its geometry")
+    points = np.array(polygon, dtype=np.float64).reshape(-1, 2)
+    return points, _polygon_centroid(points)
+
+
+def _polygon_centroid(points):
+    import cv2
+
+    origin, extent = points.min(axis=0), points.max(axis=0) - points.min(axis=0)
+    if any(extent <= 0):
+        raise HTTPException(status_code=400, detail="Export requires a non-degenerate reviewed polygon")
+    # Condition small normalized polygons before OpenCV's moment calculation.
+    moments = cv2.moments(((points - origin) / extent).astype("float32"))
+    if moments["m00"] <= 0:
+        raise HTTPException(status_code=400, detail="Export requires a non-degenerate reviewed polygon")
+    return origin + extent * [moments["m10"] / moments["m00"], moments["m01"] / moments["m00"]]
+
+
+def _reviewed_pose_box(ann, points, centroid):
+    if ann.bbox is None:
+        x1, y1 = points.min(axis=0)
+        x2, y2 = points.max(axis=0)
+        box = [(x1 + x2) / 2, (y1 + y2) / 2, x2 - x1, y2 - y1]
+    else:
+        box = ann.bbox
+    if (
+        not isinstance(box, list)
+        or len(box) != 4
+        or any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) for v in box)
+    ):
+        raise HTTPException(status_code=400, detail="Pose export requires a finite normalized cx/cy/width/height box")
+    cx, cy, width, height = box
+    if (
+        width <= 0
+        or height <= 0
+        or min(cx - width / 2, cy - height / 2) < -1e-6
+        or max(cx + width / 2, cy + height / 2) > 1 + 1e-6
+    ):
+        raise HTTPException(status_code=400, detail="Pose export box must have positive area within the source image")
+    if not (
+        cx - width / 2 - 1e-6 <= centroid[0] <= cx + width / 2 + 1e-6
+        and cy - height / 2 - 1e-6 <= centroid[1] <= cy + height / 2 + 1e-6
+    ):
+        raise HTTPException(
+            status_code=400, detail="Polygon centroid lies outside the edited pose box; review its geometry"
+        )
+    return box
+
+
+def _write_reviewed_region_export(dataset_dir, source_dir, frames_map, frame_anns, class_names, fmt):
+    import cv2
+
+    from labeler.converters.common import write_yolo_label_dataset
+    from labeler.converters.to_classify import write_yolo_dataset
+
+    if fmt == "classify" and any(
+        not name or name in (".", "..") or any(value in name for value in ("/", "\\", "\x00")) for name in class_names
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Classification class name must be one safe directory component; rename it before export",
+        )
+    # Validate all reviewed regions before downloading any frame.
+    regions = []
+    for fid in sorted(frame_anns):
+        annotations = sorted((ann for ann in frame_anns[fid] if ann.status != "rejected"), key=lambda ann: str(ann.id))
+        if not annotations:
+            continue
+        frame = frames_map.get(fid)
+        if frame is None or not frame.minio_key:
+            raise HTTPException(status_code=400, detail=f"Missing source frame {fid}")
+        geometry = []
+        for ann in annotations:
+            points, centroid = _reviewed_polygon(ann)
+            geometry.append(
+                (ann, points, _reviewed_pose_box(ann, points, centroid) if fmt == "pose" else None, centroid)
+            )
+        regions.append((fid, frame, geometry))
+    if not regions:
+        raise HTTPException(status_code=400, detail="No non-rejected annotations to export")
+    source_dir.mkdir(parents=True, exist_ok=True)
+    paths, values, groups = [], [], []
+    indices = {name: index for index, name in enumerate(class_names)}
+    for fid, frame, geometry in regions:
+        path = source_dir / (fid + (Path(frame.minio_key).suffix or ".jpg"))
+        download_file(frame.minio_key, path)
+        output = []
+        if fmt == "classify":
+            image = cv2.imread(str(path))
+            if image is None:
+                raise HTTPException(status_code=400, detail=f"Cannot decode source frame {fid}")
+            height, width = image.shape[:2]
+        for ann, points, box, centroid in geometry:
+            if fmt == "classify":
+                minimum, maximum = points.min(axis=0), points.max(axis=0)
+                x1, y1 = (
+                    max(0, math.floor(float(minimum[0]) * width) - 5),
+                    max(0, math.floor(float(minimum[1]) * height) - 5),
+                )
+                x2, y2 = (
+                    min(width, math.ceil(float(maximum[0]) * width) + 5),
+                    min(height, math.ceil(float(maximum[1]) * height) + 5),
+                )
+                output.append((image[y1:y2, x1:x2], ann.class_name))
+            else:
+                output.append(f"{indices[ann.class_name]} " + " ".join(f"{v:.6f}" for v in [*box, *centroid]) + " 2")
+        paths.append(path)
+        values.append(output)
+        groups.append(str(frame.video_id))
+    if fmt == "classify":
+        write_yolo_dataset(dataset_dir, paths, values, class_names, group_ids=groups)
+    else:
+        write_yolo_label_dataset(dataset_dir, paths, values, class_names, task="pose", group_ids=groups)
+    manifest_path = dataset_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest.update(
+        version=2,
+        geometry_method="polygon_envelope_padding_5px_v1"
+        if fmt == "classify"
+        else "polygon_centroid_single_keypoint_v1",
+    )
+    if fmt == "pose":
+        manifest["keypoint_semantics"] = "derived_polygon_centroid; not anatomical landmarks"
+        manifest["bbox_semantics"] = "reviewed_bbox_or_polygon_bounds_when_absent"
+    for sample in manifest["samples"]:
+        fid, _, geometry = regions[sample["source_index"]]
+        sample["source_frame_id"] = fid
+        if fmt == "classify":
+            sample["source_annotation_id"] = str(geometry[sample["crop_index"]][0].id)
+        else:
+            sample["source_annotation_ids"] = [str(ann.id) for ann, _, _, _ in geometry]
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+
 @router.post("/jobs/{job_id}/export")
 def export_dataset(
     job_id: str,
@@ -882,7 +1033,12 @@ def export_dataset(
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
 
-        annotations = scope_resources(session.query(Annotation), Annotation, principal).filter_by(job_id=job_id).all()
+        annotations = (
+            scope_resources(session.query(Annotation), Annotation, principal)
+            .filter_by(job_id=job_id)
+            .order_by(Annotation.id)
+            .all()
+        )
         if not annotations:
             raise HTTPException(status_code=400, detail="No annotations to export")
 
@@ -897,7 +1053,9 @@ def export_dataset(
         frames_map = {str(f.id): f for f in frames}
 
         # Class name → index mapping
-        class_names = sorted(set(a.class_name for a in annotations))
+        class_names = sorted(
+            set(a.class_name for a in annotations if fmt not in ("classify", "pose") or a.status != "rejected")
+        )
 
         with tempfile.TemporaryDirectory() as tmpdir:
             tmpdir = Path(tmpdir)

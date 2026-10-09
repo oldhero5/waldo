@@ -15,7 +15,7 @@ def masks_to_yolo_pose(
 ) -> list[str]:
     """Convert masks to YOLO pose format: class_idx cx cy w h kp_x kp_y visible (normalized).
 
-    Uses the mask centroid as a single keypoint. Users can add more keypoints in the review UI.
+    Uses the mask centroid as a single derived keypoint, not an anatomical landmark.
     """
     lines: list[str] = []
     h, w = masks.shape[1], masks.shape[2]

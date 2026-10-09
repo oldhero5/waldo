@@ -181,18 +181,49 @@ def run_training(celery_task, run_id: str) -> dict:
                             "add another source video and export the dataset again."
                         )
 
-            # Validate dataset is non-empty
-            train_imgs = list((dataset_dir / "images" / "train").glob("*"))
-            train_labels = list((dataset_dir / "labels" / "train").glob("*.txt"))
-            non_empty_labels = [l for l in train_labels if l.stat().st_size > 0]
-            if not train_imgs:
-                raise ValueError(f"Dataset has no training images (expected in {dataset_dir / 'images' / 'train'})")
-            if not non_empty_labels:
-                raise ValueError(
-                    f"Dataset has {len(train_imgs)} images but no label files with annotations. "
-                    f"This usually means all annotations were filtered out during conversion. "
-                    f"Check that your labeled objects are large enough (min_area=100px²)."
-                )
+            # Classification uses class directories as labels and takes the
+            # dataset root, while other tasks use numeric labels and data.yaml.
+            classification_names = None
+            training_data = data_yaml
+            if run.task_type == "classify":
+                classes_by_split = {}
+                for split, description in (("train", "training"), ("val", "validation")):
+                    class_dirs = [path for path in (dataset_dir / split).glob("*") if path.is_dir()]
+                    images = [
+                        path
+                        for directory in class_dirs
+                        for path in directory.rglob("*")
+                        if path.is_file()
+                        and path.suffix.lower() in (".jpg", ".jpeg", ".png")
+                        and path.stat().st_size > 0
+                    ]
+                    if not images:
+                        raise ValueError(
+                            f"Classification dataset has no non-empty {description} images; "
+                            "add sources and export the dataset again."
+                        )
+                    classes_by_split[split] = {directory.name for directory in class_dirs}
+                if classes_by_split["train"] != classes_by_split["val"]:
+                    raise ValueError(
+                        "Classification class directories differ between train and val; "
+                        "add sources and export the dataset again."
+                    )
+                # Ultralytics derives classification indices from sorted folder
+                # names, independently of the export's original YAML order.
+                classification_names = sorted(classes_by_split["train"])
+                training_data = str(dataset_dir)
+            else:
+                train_imgs = list((dataset_dir / "images" / "train").glob("*"))
+                train_labels = list((dataset_dir / "labels" / "train").glob("*.txt"))
+                non_empty_labels = [l for l in train_labels if l.stat().st_size > 0]
+                if not train_imgs:
+                    raise ValueError(f"Dataset has no training images (expected in {dataset_dir / 'images' / 'train'})")
+                if not non_empty_labels:
+                    raise ValueError(
+                        f"Dataset has {len(train_imgs)} images but no label files with annotations. "
+                        f"This usually means all annotations were filtered out during conversion. "
+                        f"Check that your labeled objects are large enough (min_area=100px²)."
+                    )
 
             # Phase 2: Load model (pretrained or from checkpoint)
             variant = run.model_variant
@@ -286,7 +317,7 @@ def run_training(celery_task, run_id: str) -> dict:
             train_dir.mkdir(parents=True, exist_ok=True)
 
             train_kwargs: dict = dict(
-                data=data_yaml,
+                data=training_data,
                 epochs=hp["epochs"],
                 imgsz=hp["imgsz"],
                 batch=hp["batch"],
@@ -328,12 +359,13 @@ def run_training(celery_task, run_id: str) -> dict:
                 weights_key = f"models/{run.id}/last.pt"
                 upload_file(weights_key, last_weights)
 
-            # Read class names from data.yaml
+            # Classification follows the provider's folder-derived class order.
+            # Numeric-label tasks retain the class indices from data.yaml.
             import yaml
 
-            class_names_list = None
+            class_names_list = classification_names
             data_yaml_path = Path(data_yaml)
-            if data_yaml_path.exists():
+            if classification_names is None and data_yaml_path.exists():
                 with open(data_yaml_path) as f:
                     data_cfg = yaml.safe_load(f)
                 names = data_cfg.get("names")
