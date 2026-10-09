@@ -59,6 +59,7 @@ function DatasetCard({ job, onDeleted, selected, onToggleSelect }: {
   const videoInputRef = useRef<HTMLInputElement>(null);
 
   const displayName = job.name || job.text_prompt || "Exemplar labeling";
+  const canDuplicate = ["completed", "partial", "failed"].includes(job.status);
 
   const handleRename = async () => {
     const trimmed = editName.trim();
@@ -849,11 +850,17 @@ function DatasetCard({ job, onDeleted, selected, onToggleSelect }: {
                     </button>
                     <button
                       onClick={async () => {
-                        const result = await duplicateDataset(job.job_id);
-                        queryClient.invalidateQueries({ queryKey: ["jobs"] });
-                        alert(`Dataset duplicated. ${result.annotations_copied} annotations copied.`);
+                        try {
+                          const result = await duplicateDataset(job.job_id);
+                          queryClient.invalidateQueries({ queryKey: ["jobs"] });
+                          alert(`Dataset duplicated. ${result.annotations_copied} annotations copied.`);
+                        } catch (e: unknown) {
+                          setUploadMsg(`Error: ${(e instanceof Error ? e.message : String(e))}`);
+                        }
                       }}
-                      className="flex items-center gap-1 text-xs px-3 py-1.5 surface"
+                      disabled={!canDuplicate}
+                      title={canDuplicate ? undefined : "Wait for labeling to finish before duplicating this dataset."}
+                      className="flex items-center gap-1 text-xs px-3 py-1.5 surface disabled:opacity-50"
                       style={{ color: "var(--text-secondary)", borderRadius: 8 }}
                     >
                       <Copy size={11} /> Duplicate Dataset
