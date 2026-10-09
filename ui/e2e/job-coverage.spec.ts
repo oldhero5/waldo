@@ -1,4 +1,13 @@
-import { expect, test, type Page, type Route } from "@playwright/test";
+import { expect, test as base, type Page, type Route } from "@playwright/test";
+import { createDownloadBoundary, syntheticArchive, type DownloadBoundary } from "./downloadBoundary";
+import { readFile } from "node:fs/promises";
+const test = base.extend<{ downloads: DownloadBoundary }>({
+  downloads: async ({ browser }, runFixture) => {
+    void browser;
+    const boundary = await createDownloadBoundary();
+    try { await runFixture(boundary); } finally { await boundary.close(); }
+  },
+});
 const json = (route: Route, data: unknown) => route.fulfill({ contentType: "application/json", body: JSON.stringify(data) });
 const summary = {
   backend: "mlx-image-iou-tracker", coverage: "sampled", timestamp_method: "source_frame_index/fps",
@@ -187,12 +196,12 @@ test("completed native evidence requires export before offering training", async
 });
 
 
-test("exported artifact offers an actionable download when popups are blocked and unlocks training", async ({ page }) => {
+test("exported artifact offers an actionable download when popups are blocked and unlocks training", async ({ page, downloads }) => {
   await mock(page, "completed", null);
   let exported = false, exportRequests = 0;
   await page.route("**/api/v1/status", (route) => json(route, [{ ...job("completed", null), result_url: exported ? "/ready.zip" : null }]));
-  await page.route("**/api/v1/jobs/coverage-job/export**", (route) => { exported = true; exportRequests++; return json(route, { download_url: "/ready.zip" }); });
-  await page.route("**/ready.zip", (route) => route.fulfill({ contentType: "application/zip", headers: { "Content-Disposition": 'attachment; filename="ready-segment.zip"' }, body: "fixture archive" }));
+  await page.route("**/api/v1/jobs/coverage-job/export**", (route) => { exported = true; exportRequests++; return json(route, { download_url: "/ready.zip?token=ready" }); });
+  await page.route("**/api/v1/jobs/coverage-job/download-url?*", (route) => json(route, { download_url: `${downloads.origin}/ready.zip?token=renewed-ready` }));
   await page.addInitScript(() => { window.open = () => null; });
   await page.goto("/datasets");
   await page.getByText("Road footage", { exact: true }).click();
@@ -201,22 +210,27 @@ test("exported artifact offers an actionable download when popups are blocked an
   await page.getByRole("button", { name: /YOLO Segment/ }).click();
   await expect(page.getByRole("link", { name: "Train New Model", exact: true })).toBeVisible();
   const link = page.getByRole("link", { name: "Download YOLO Segment export", exact: true });
-  await expect(link).toHaveAttribute("href", "/ready.zip");
+  await expect(link).toHaveAttribute("href", "/ready.zip?token=ready");
   const downloading = page.waitForEvent("download");
   await link.click();
-  expect((await downloading).suggestedFilename()).toBe("ready.zip");
+  const artifact = await downloading;
+  expect(artifact.suggestedFilename()).toBe("ready.zip");
+  expect(await readFile((await artifact.path())!)).toEqual(syntheticArchive);
   expect(exportRequests).toBe(1);
 });
 
-test("classification and centroid pose exports request their own formats and offer downloads", async ({ page }) => {
+test("classification and centroid pose exports request their own formats and offer downloads", async ({ page, downloads }) => {
   await mock(page, "completed", null);
   const formats: string[] = [];
   await page.route("**/api/v1/jobs/coverage-job/export**", (route) => {
     const format = route.request().postDataJSON().format;
     formats.push(format);
-    return json(route, { download_url: `/ready-${format}.zip` });
+    return json(route, { download_url: `/ready-${format}.zip?token=${format}` });
   });
-  await page.route("**/ready-*.zip", (route) => route.fulfill({ contentType: "application/zip", body: "fixture archive" }));
+  await page.route("**/api/v1/jobs/coverage-job/download-url?*", (route) => {
+    const format = new URL(route.request().url()).searchParams.get("token");
+    return json(route, { download_url: `${downloads.origin}/ready-${format}.zip?token=renewed-${format}` });
+  });
   await page.goto("/datasets");
   await page.getByText("Road footage", { exact: true }).click();
   for (const { format, label, description } of [
@@ -227,10 +241,12 @@ test("classification and centroid pose exports request their own formats and off
     await expect(page.getByText(description, { exact: true })).toBeVisible();
     await page.getByRole("button", { name: new RegExp(label) }).click();
     const link = page.getByRole("link", { name: `Download ${label} export`, exact: true });
-    await expect(link).toHaveAttribute("href", `/ready-${format}.zip`);
+    await expect(link).toHaveAttribute("href", `/ready-${format}.zip?token=${format}`);
     const downloading = page.waitForEvent("download");
     await link.click();
-    expect((await downloading).suggestedFilename()).toBe(`ready-${format}.zip`);
+    const artifact = await downloading;
+    expect(artifact.suggestedFilename()).toBe(`ready-${format}.zip`);
+    expect(await readFile((await artifact.path())!)).toEqual(syntheticArchive);
   }
   expect(formats).toEqual(["classify", "pose"]);
 });

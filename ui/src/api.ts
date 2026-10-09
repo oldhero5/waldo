@@ -470,6 +470,23 @@ export async function listFrames(videoId: string): Promise<FrameOut[]> {
   return res.json();
 }
 
+/** Get a fresh capability for the same scoped frame. */
+export async function getFrame(frameId: string, signal?: AbortSignal): Promise<{ image_url: string }> {
+  const res = await authFetch(`${BASE}/frames/${encodeURIComponent(frameId)}`, { signal });
+  if (!res.ok) throw new Error(`Could not reload image (${res.status}). Try again.`);
+  return res.json();
+}
+
+/** Renew the signed object in this URL, including historical immutable exports. */
+export async function renewJobDownload(jobId: string, oldUrl: string, signal?: AbortSignal): Promise<string> {
+  const token = new URL(oldUrl, window.location.origin).searchParams.get("token");
+  if (!token) throw new Error("This download link has no token. Refresh the dataset and try again.");
+  const res = await authFetch(`${BASE}/jobs/${encodeURIComponent(jobId)}/download-url?${new URLSearchParams({ token })}`, { signal });
+  if (!res.ok) throw new Error(`Could not renew this download (${res.status}). Try again.`);
+  const body: { download_url: string } = await res.json();
+  return body.download_url;
+}
+
 // Collections
 
 export interface ProjectOut {

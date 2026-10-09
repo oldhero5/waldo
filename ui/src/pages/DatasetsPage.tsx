@@ -3,6 +3,8 @@ import { useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { listJobs, getDatasetOverview, uploadImages, uploadVideo, listFeedback, listProjects, listProjectVideos, linkVideos, deleteJob, renameJob, duplicateDataset, mergeClasses, deleteClass, listAnnotations, updateAnnotation, exportDataset, addClassToDataset, type JobStatus } from "../api";
 import AnnotationCanvas from "../components/AnnotationCanvas";
+import RenewableFrameImage from "../components/RenewableFrameImage";
+import RenewableDownloadLink from "../components/RenewableDownloadLink";
 import { Database, CheckCircle, Clock, AlertCircle, Download, Eye, Cpu, MessageSquareWarning, Images, Plus, Upload as UploadIcon, Loader, FolderInput, Trash2, Copy, Merge, Tag, Pencil, Check, X, Search, ChevronDown, ArrowUpDown, SquareCheck } from "lucide-react";
 import Accordion from "../components/Accordion";
 import JobCoverage from "../components/JobCoverage";
@@ -21,7 +23,7 @@ function DatasetAnnotationViewer({ frameId, imageUrl, jobId, classes, onClose, o
 
   return (
     <AnnotationCanvas
-      imageUrl={imageUrl}
+      imageUrl={frameAnnotations[0]?.frame_url || imageUrl}
       frameId={frameId}
       jobId={jobId}
       annotations={frameAnnotations}
@@ -377,14 +379,14 @@ function DatasetCard({ job, onDeleted, selected, onToggleSelect }: {
                   </p>
                   <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
                     {overview.sample_frames.map((f, idx) => (
-                      <button
+                      <div
                         key={f.frame_id}
-                        onClick={() => setGalleryIdx(idx)}
-                        className="relative group text-left cursor-pointer"
+                        className="relative group text-left"
                       >
                         {f.thumbnail_url ? (
-                          <img
-                            src={f.thumbnail_url}
+                          <RenewableFrameImage
+                            frameId={f.frame_id}
+                            initialUrl={f.thumbnail_url}
                             alt={`Frame ${f.frame_number}`}
                             className="w-full aspect-video object-cover rounded-lg transition-colors"
                             style={{ border: "1px solid var(--border-default)" }}
@@ -395,12 +397,13 @@ function DatasetCard({ job, onDeleted, selected, onToggleSelect }: {
                         ) : (
                           <div className="w-full aspect-video rounded-lg" style={{ backgroundColor: "var(--bg-inset)" }} />
                         )}
-                        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent rounded-b-lg px-1.5 py-1">
+                        <button type="button" aria-label={`Inspect frame ${f.frame_number}`} onClick={() => setGalleryIdx(idx)} className="absolute inset-0 rounded-lg cursor-pointer" />
+                        <div className="pointer-events-none absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent rounded-b-lg px-1.5 py-1">
                           <span style={{ fontSize: 10, color: "#fff", fontWeight: 500, fontFamily: "var(--font-mono)" }}>
                             {f.annotation_count} label{f.annotation_count !== 1 ? "s" : ""}
                           </span>
                         </div>
-                      </button>
+                      </div>
                     ))}
                   </div>
                 </div>
@@ -538,13 +541,11 @@ function DatasetCard({ job, onDeleted, selected, onToggleSelect }: {
                     >
                       <p className="eyebrow px-3 py-1">Export format</p>
                       {overview.dataset_url && (
-                        <a
-                          href={overview.dataset_url}
-                          onClick={() => setShowExport(false)}
+                        <RenewableDownloadLink
+                          jobId={job.job_id}
+                          url={overview.dataset_url}
                           className="flex items-center gap-2 px-3 py-2 text-sm w-full text-left"
                           style={{ color: "var(--text-primary)" }}
-                          onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "var(--bg-surface-hover)")}
-                          onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "")}
                         >
                           <Download size={13} style={{ color: "var(--text-muted)" }} />
                           <div>
@@ -553,7 +554,7 @@ function DatasetCard({ job, onDeleted, selected, onToggleSelect }: {
                               Pre-built dataset zip
                             </span>
                           </div>
-                        </a>
+                        </RenewableDownloadLink>
                       )}
                       {[
                         { fmt: "segment", label: "YOLO Segment", desc: "Polygon labels" },
@@ -611,9 +612,9 @@ function DatasetCard({ job, onDeleted, selected, onToggleSelect }: {
               {readyExport && (
                 <p className="text-sm mb-3" role="status" style={{ color: "var(--text-secondary)" }}>
                   Export ready. {" "}
-                  <a href={readyExport.url} download className="underline" style={{ color: "var(--text-primary)" }}>
+                  <RenewableDownloadLink jobId={job.job_id} url={readyExport.url} className="underline" style={{ color: "var(--text-primary)" }}>
                     Download {readyExport.label} export
-                  </a>
+                  </RenewableDownloadLink>
                 </p>
               )}
 
@@ -981,9 +982,9 @@ export default function DatasetsPage() {
             <p className="mb-2" style={{ color: "var(--text-secondary)" }}>Exports ready. Download each dataset:</p>
             <div className="flex flex-wrap gap-3">
               {bulkDownloads.map((item) => (
-                <a key={item.jobId} href={item.url} download className="underline" style={{ color: "var(--text-primary)" }}>
+                <RenewableDownloadLink key={item.jobId} jobId={item.jobId} url={item.url} className="underline" style={{ color: "var(--text-primary)" }}>
                   Download {item.name} export
-                </a>
+                </RenewableDownloadLink>
               ))}
             </div>
           </div>
