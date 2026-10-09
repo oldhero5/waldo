@@ -7,6 +7,7 @@ import zipfile
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from jose import JWTError, jwt
 from pydantic import BaseModel
 from sqlalchemy import distinct, func, or_
 
@@ -18,6 +19,7 @@ from lib.authorization import (
     require_workspace_editor,
     scope_resources,
 )
+from lib.config import settings
 from lib.dataset_evidence import assessed_frame_count, invalidate_current_export, publish_current_export
 from lib.db import Annotation, Frame, LabelingJob, SessionLocal
 from lib.storage import delete_object, download_file, get_download_url, upload_file
@@ -798,6 +800,58 @@ def get_job_stats(
 
 
 EXPORT_FORMATS = ("segment", "detect", "obb", "classify", "pose")
+
+
+def _renewable_export_object(token: str, job: LabelingJob) -> str:
+    """Validate an old signed export capability without replacing its object."""
+    invalid = HTTPException(status_code=401, detail="Invalid download capability")
+    try:
+        claims = jwt.decode(
+            token,
+            settings.jwt_secret,
+            algorithms=[settings.jwt_algorithm],
+            options={"verify_exp": False},
+        )
+    except JWTError as error:
+        raise invalid from error
+    expiry = claims.get("exp")
+    key = claims.get("object")
+    if (
+        claims.get("type") != "download"
+        or isinstance(expiry, bool)
+        or not isinstance(expiry, (int, float))
+        or (isinstance(expiry, float) and not math.isfinite(expiry))
+        or not isinstance(key, str)
+        or not key
+    ):
+        raise invalid
+    if key == job.result_minio_key or key == f"results/{job.id}/dataset.zip":
+        return key
+    parts = key.split("/")
+    if len(parts) == 5 and parts[:3] == ["results", str(job.id), "exports"]:
+        try:
+            export_id = _uuid.UUID(parts[3])
+        except ValueError as error:
+            raise invalid from error
+        if str(export_id) == parts[3] and parts[4] in {f"dataset-{fmt}.zip" for fmt in EXPORT_FORMATS}:
+            return key
+    raise invalid
+
+
+@router.get("/jobs/{job_id}/download-url")
+def renew_job_download(
+    job_id: str,
+    token: str = Query(...),
+    principal: WorkspacePrincipal = Depends(get_workspace_principal),
+):
+    _validate_uuid(job_id, "job_id")
+    session = SessionLocal()
+    try:
+        job = require_resource(session, principal, LabelingJob, job_id)
+        key = _renewable_export_object(token, job)
+        return {"download_url": get_download_url(key)}
+    finally:
+        session.close()
 
 
 class ExportRequest(BaseModel):
