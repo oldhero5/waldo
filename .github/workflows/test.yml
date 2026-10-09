@@ -69,28 +69,24 @@ jobs:
       - name: Install ffmpeg
         run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
 
-      # ── MinIO (started as a step — GH Actions services can't pass `command:`) ──
+      # Archived MinIO release, used only as a disposable CI dependency.
+      # Its official GitHub asset is available while public image pulls are not.
       - name: Start MinIO
         env:
+          MINIO_ROOT_USER: minioadmin
           MINIO_ROOT_PASSWORD: minioadmin  # pragma: allowlist secret
         run: |
-          docker run -d \
-            --name minio \
-            --network host \
-            -e MINIO_ROOT_USER=minioadmin \
-            -e MINIO_ROOT_PASSWORD="$MINIO_ROOT_PASSWORD" \
-            quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z server /data
-          # Wait for MinIO to be ready
-          timeout 30 bash -c 'until curl -sf http://localhost:9000/minio/health/live; do sleep 1; done'
-
-      # ── MinIO bucket (compose's minio-init creates this for the runtime stack;
-      #    we mirror it here so tests that store/retrieve via lib.s3 don't 404) ──
-      - name: Create MinIO 'waldo' bucket
-        run: |
-          docker run --rm --network host --entrypoint=/bin/sh quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z -c '
-            mc alias set local http://localhost:9000 minioadmin minioadmin &&
-            mc mb --ignore-existing local/waldo
-          '
+          set -euo pipefail
+          minio_bin="$RUNNER_TEMP/minio"
+          curl -fsSL --retry 3 -o "$minio_bin" https://github.com/minio/minio/releases/download/RELEASE.2025-04-22T22-12-26Z/minio.linux-amd64.RELEASE.2025-04-22T22-12-26Z
+          printf '%s  %s\n' 53e2a2cb16c5366ea6fbbc479c19ddb4c6a0948273e752f740fb1fbf27bb817c "$minio_bin" | sha256sum --check
+          chmod +x "$minio_bin"
+          mkdir -p "$RUNNER_TEMP/minio-data"
+          "$minio_bin" server "$RUNNER_TEMP/minio-data" --address 127.0.0.1:9000 >"$RUNNER_TEMP/minio.log" 2>&1 &
+          if ! timeout 30 bash -c 'until curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null; do sleep 1; done'; then
+            cat "$RUNNER_TEMP/minio.log"
+            exit 1
+          fi
 
       # ── Python / uv ──────────────────────────────────────────────────────────
       - name: Set up Python 3.12
@@ -106,6 +102,24 @@ jobs:
 
       - name: Sync dependencies (frozen)
         run: uv sync --frozen
+
+      # Compose's minio-init creates this bucket for the runtime stack. The
+      # locked MinIO Python SDK does the same here without a second image.
+      - name: Create MinIO 'waldo' bucket
+        run: |
+          uv run python - <<'PY'
+          import os
+          from minio import Minio
+
+          client = Minio(
+              os.environ["MINIO_ENDPOINT"],
+              access_key=os.environ["MINIO_ACCESS_KEY"],
+              secret_key=os.environ["MINIO_SECRET_KEY"],
+              secure=os.environ["MINIO_SECURE"].lower() == "true",
+          )
+          if not client.bucket_exists("waldo"):
+              client.make_bucket("waldo")
+          PY
 
       # ── Ruff lint + format ───────────────────────────────────────────────────
       - name: Ruff — lint
