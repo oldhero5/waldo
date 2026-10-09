@@ -13,6 +13,7 @@ from sqlalchemy import (
     String,
     Text,
     create_engine,
+    false,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, Session, deferred, relationship, sessionmaker
@@ -47,6 +48,7 @@ class User(Base):
     password_hash = Column(String(255), nullable=False)
     display_name = Column(String(255), nullable=False)
     avatar_url = Column(String(1024), nullable=True)
+    is_platform_admin = Column(Boolean, nullable=False, default=False, server_default=false())
     created_at = Column(DateTime, default=datetime.utcnow)
     last_login = Column(DateTime, nullable=True)
 
@@ -144,6 +146,10 @@ class LabelingJob(Base):
     prompt_type = Column(String(20), default="text")
     point_prompts = Column(JSON, nullable=True)
     class_prompts = Column(JSON, nullable=True)
+    # Null preserves unknown configuration on historical jobs.
+    processing_summary = Column(JSON, nullable=True)
+    score_threshold = Column(Float, nullable=True)
+    sample_fps = Column(Float, nullable=True)
     task_type = Column(String(20), default="segment")
     status = Column(String(50), default="pending", index=True)
     progress = Column(Float, default=0.0)
@@ -171,6 +177,8 @@ class Annotation(Base):
     class_index = Column(Integer, nullable=False)
     polygon = Column(JSON, nullable=False)
     bbox = Column(JSON, nullable=True)
+    # Tracker-local identity; meaningful only with job_id and source video.
+    track_id = Column(Integer, nullable=True)
     confidence = Column(Float)
     status = Column(String(20), default="pending")
 
@@ -260,6 +268,7 @@ class EdgeDevice(Base):
 
     __tablename__ = "edge_devices"
 
+    workspace_id = Column(UUID(as_uuid=True), ForeignKey("workspaces.id"), nullable=True, index=True)
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String(255), nullable=False)
     device_type = Column(String(50), nullable=False)  # jetson_orin, jetson_nano, pi5_tpu
@@ -283,6 +292,7 @@ class ComparisonRun(Base):
 
     __tablename__ = "comparison_runs"
 
+    workspace_id = Column(UUID(as_uuid=True), ForeignKey("workspaces.id"), nullable=True, index=True)
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String(255), nullable=False)
     file_name = Column(String(512), nullable=False)
@@ -314,7 +324,7 @@ class SavedWorkflow(Base):
     description = Column(Text, nullable=True)
     graph = Column(JSON, nullable=False)
     is_deployed = Column(Boolean, default=False)
-    workspace_id = Column(UUID(as_uuid=True), ForeignKey("workspaces.id"), nullable=True)
+    workspace_id = Column(UUID(as_uuid=True), ForeignKey("workspaces.id"), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -324,6 +334,7 @@ class DeploymentTarget(Base):
 
     __tablename__ = "deployment_targets"
 
+    workspace_id = Column(UUID(as_uuid=True), ForeignKey("workspaces.id"), nullable=True, index=True)
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String(255), nullable=False)
     slug = Column(String(100), unique=True, nullable=True)  # URL-safe name for endpoint
@@ -343,6 +354,7 @@ class InferenceLog(Base):
 
     __tablename__ = "inference_logs"
 
+    workspace_id = Column(UUID(as_uuid=True), ForeignKey("workspaces.id"), nullable=True, index=True)
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     model_id = Column(UUID(as_uuid=True), ForeignKey("model_registry.id"), nullable=True)
     target_id = Column(UUID(as_uuid=True), ForeignKey("deployment_targets.id"), nullable=True)
@@ -361,6 +373,7 @@ class DemoFeedback(Base):
 
     __tablename__ = "demo_feedback"
 
+    workspace_id = Column(UUID(as_uuid=True), ForeignKey("workspaces.id"), nullable=True, index=True)
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     model_id = Column(UUID(as_uuid=True), ForeignKey("model_registry.id"), nullable=True)
     class_name = Column(String(255), nullable=False)

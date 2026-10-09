@@ -1,13 +1,9 @@
 import pytest
-from fastapi.testclient import TestClient
 
 
 @pytest.fixture
-def client():
-    """Create a test client. Requires running infrastructure."""
-    from app.main import app
-
-    return TestClient(app)
+def client(service_client):
+    return service_client
 
 
 @pytest.mark.skipif(

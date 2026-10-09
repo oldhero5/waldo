@@ -49,5 +49,9 @@ def write_yolo_dataset(
     annotation_lines: list[list[str]],
     class_names: list[str],
     val_split: float = 0.1,
+    *,
+    group_ids: list[str] | None = None,
 ) -> Path:
-    return write_yolo_label_dataset(output_dir, frame_paths, annotation_lines, class_names, val_split, task="segment")
+    return write_yolo_label_dataset(
+        output_dir, frame_paths, annotation_lines, class_names, val_split, task="segment", group_ids=group_ids
+    )

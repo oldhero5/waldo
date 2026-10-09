@@ -1,19 +1,28 @@
 """Shared labeling pipeline utilities — frame extraction, conversion, dataset packaging."""
 
+from __future__ import annotations
+
+import copy
+import logging
 import zipfile
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import cv2
 
 from labeler.converters import to_classify, to_detect, to_obb, to_pose, to_segment
-from labeler.sam3_engine import SegmentationResult
 from lib.db import Annotation, Frame, LabelingJob
 from lib.storage import upload_file
+
+if TYPE_CHECKING:
+    from labeler.sam3_engine import SegmentationResult
+
+logger = logging.getLogger(__name__)
 
 
 def _update_job(session, job: LabelingJob, **kwargs) -> None:
     for k, v in kwargs.items():
-        setattr(job, k, v)
+        setattr(job, k, copy.deepcopy(v) if k == "processing_summary" else v)
     session.commit()
 
 
@@ -40,7 +49,24 @@ def convert_and_store(
     tmpdir: Path,
 ) -> str:
     """Convert segmentation results to YOLO format, store in DB, zip and upload."""
+    if not (len(seg_results) == len(db_frames) == len(frame_infos)):
+        raise ValueError("Segmentation, database-frame and source-frame list lengths must match")
+    for result in seg_results:
+        count = len(result.masks)
+        if len(result.boxes) != count or len(result.scores) != count:
+            raise ValueError("Mask, box and score lengths must match")
+        if result.class_indices is not None and len(result.class_indices) != count:
+            raise ValueError("Mask and class-index lengths must match")
     task_type = job.task_type or "segment"
+    if task_type not in ("classify", "detect", "segment", "obb", "pose"):
+        raise ValueError(f"Unsupported task type: {task_type}")
+    # Replace only this run's annotations, atomically with the caller's final
+    # commit. A failed conversion/upload rolls back to the prior attempt.
+    video_ids = {frame.video_id for frame in db_frames}
+    prior_frames = session.query(Frame.id).filter(Frame.video_id.in_(video_ids))
+    session.query(Annotation).filter(Annotation.job_id == job.id, Annotation.frame_id.in_(prior_frames)).delete(
+        synchronize_session=False
+    )
     dataset_dir = tmpdir / "dataset"
 
     if task_type == "classify":
@@ -60,150 +86,110 @@ def convert_and_store(
     return result_key
 
 
+def _mask_polygon(mask) -> list[float]:
+    height, width = mask.shape
+    contours, _ = cv2.findContours(mask.astype("uint8") * 255, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return []
+    contour = max(contours, key=cv2.contourArea)
+    polygon = cv2.approxPolyDP(contour, 0.001 * cv2.arcLength(contour, True), True).reshape(-1, 2)
+    if len(polygon) < 3:
+        return []
+    return [value for x, y in polygon for value in (float(x / width), float(y / height))]
+
+
+def _store_observation(session, job, result, frame, mask_index, class_names):
+    class_index = int(result.class_indices[mask_index]) if result.class_indices is not None else 0
+    if not 0 <= class_index < len(class_names):
+        raise ValueError(f"Unknown class index: {class_index}")
+    height, width = result.masks.shape[1:]
+    if not width or not height:
+        raise ValueError("Invalid mask dimensions")
+    x1, y1, x2, y2 = result.boxes[mask_index]
+    track_ids = getattr(result, "track_ids", None)
+    annotation = Annotation(
+        frame_id=frame.id,
+        job_id=job.id,
+        class_name=class_names[class_index],
+        class_index=class_index,
+        polygon=_mask_polygon(result.masks[mask_index]),
+        bbox=[
+            float((x1 + x2) / 2 / width),
+            float((y1 + y2) / 2 / height),
+            float((x2 - x1) / width),
+            float((y2 - y1) / height),
+        ],
+        confidence=float(result.scores[mask_index]),
+        track_id=int(track_ids[mask_index]) if track_ids is not None else None,
+    )
+    session.add(annotation)
+    return annotation
+
+
+def replace_raw_observations(session, job, results, frames, class_names):
+    """Commit-ready evidence for successful clips, independently of dataset export."""
+    if len(results) != len(frames):
+        raise ValueError("Segmentation and database-frame list lengths must match")
+    for result in results:
+        count = len(result.masks)
+        if len(result.boxes) != count or len(result.scores) != count:
+            raise ValueError("Mask, box and score lengths must match")
+        if result.class_indices is not None and len(result.class_indices) != count:
+            raise ValueError("Mask and class-index lengths must match")
+    source_frames = session.query(Frame.id).filter(Frame.video_id.in_({frame.video_id for frame in frames}))
+    session.query(Annotation).filter(
+        Annotation.job_id == job.id,
+        Annotation.frame_id.in_(source_frames),
+    ).delete(synchronize_session=False)
+    for result, frame in zip(results, frames, strict=True):
+        for index in range(len(result.masks)):
+            _store_observation(session, job, result, frame, index, class_names)
+
+
 def _convert_label_format(session, job, seg_results, db_frames, frame_infos, class_names, dataset_dir, task_type):
-    """Convert for segment/detect/obb/pose tasks (label-file based formats)."""
+    """Store raw sightings separately from task-specific export geometry."""
     masks_to_yolo, write_dataset = get_converter(task_type)
-
-    all_annotation_lines: list[list[str]] = []
-    frame_paths: list[Path] = []
-
-    class_name = class_names[0] if class_names else "object"
-
-    for seg_result, db_frame, fi in zip(seg_results, db_frames, frame_infos):
-        class_indices = (
-            seg_result.class_indices.tolist()
-            if seg_result.class_indices is not None
-            else [0] * seg_result.masks.shape[0]
-        )
-        num_masks = seg_result.masks.shape[0]
-        ann_lines = masks_to_yolo(seg_result.masks, class_indices)
-        all_annotation_lines.append(ann_lines)
-        frame_paths.append(fi.file_path)
-
-        # Build a mapping from converter output lines back to original mask indices.
-        # The converter may filter masks (min_area, contour checks), so ann_lines
-        # can be shorter than seg_result.scores. We match by class index + order to
-        # pair each surviving line with the correct score.
-        # mask_cursor removed — was unused
-        line_to_mask_idx: list[int] = []
-
-        # Track which masks survived conversion by re-running class index counts
-        surviving_cls = [int(line.split()[0]) for line in ann_lines]
-        cls_seen: dict[int, int] = {}
-        per_cls_masks: dict[int, list[int]] = {}
-        for mi in range(num_masks):
-            ci = class_indices[mi] if mi < len(class_indices) else 0
-            per_cls_masks.setdefault(ci, []).append(mi)
-
-        for ci in surviving_cls:
-            occurrence = cls_seen.get(ci, 0)
-            masks_for_cls = per_cls_masks.get(ci, [])
-            if occurrence < len(masks_for_cls):
-                line_to_mask_idx.append(masks_for_cls[occurrence])
-            else:
-                line_to_mask_idx.append(0)
-            cls_seen[ci] = occurrence + 1
-
-        # Store annotations in DB with correct score alignment
-        scores = seg_result.scores
-        for line_idx, line in enumerate(ann_lines):
-            parts = line.split()
-            polygon_coords = [float(x) for x in parts[1:]]
-            cls_idx = int(parts[0])
-
-            # Use the correct mask index to get the right score and bbox
-            mask_idx = line_to_mask_idx[line_idx] if line_idx < len(line_to_mask_idx) else line_idx
-            score = float(scores[mask_idx]) if mask_idx < len(scores) else 1.0
-
-            bbox = None
-            if seg_result.boxes.shape[0] > 0 and mask_idx < seg_result.boxes.shape[0]:
-                x1, y1, x2, y2 = seg_result.boxes[mask_idx]
-                h, w = seg_result.masks.shape[1], seg_result.masks.shape[2]
-                if w > 0 and h > 0:
-                    bbox = [
-                        float((x1 + x2) / 2 / w),
-                        float((y1 + y2) / 2 / h),
-                        float((x2 - x1) / w),
-                        float((y2 - y1) / h),
-                    ]
-
-            ann_class_name = class_names[cls_idx] if cls_idx < len(class_names) else class_name
-
-            annotation = Annotation(
-                frame_id=db_frame.id,
-                job_id=job.id,
-                class_name=ann_class_name,
-                class_index=cls_idx,
-                polygon=polygon_coords,
-                bbox=bbox,
-                confidence=score,
-            )
-            session.add(annotation)
-
-        _update_job(
-            session,
-            job,
-            processed_frames=seg_result.frame_index + 1,
-            progress=(seg_result.frame_index + 1) / len(frame_infos),
-        )
-
-    write_dataset(dataset_dir, frame_paths, all_annotation_lines, class_names)
+    frame_paths, annotations_per_frame, group_ids = [], [], []
+    for result, frame, info in zip(seg_results, db_frames, frame_infos, strict=True):
+        lines = []
+        complete = True
+        for mask_index in range(len(result.masks)):
+            annotation = _store_observation(session, job, result, frame, mask_index, class_names)
+            converted = masks_to_yolo(result.masks[mask_index : mask_index + 1], [annotation.class_index], min_area=0)
+            if task_type == "detect" and not converted:
+                converted = [str(annotation.class_index) + " " + " ".join(f"{value:.6f}" for value in annotation.bbox)]
+            if not converted:
+                complete = False
+            lines.extend(converted)
+        if complete:
+            frame_paths.append(info.file_path)
+            annotations_per_frame.append(lines)
+            group_ids.append(str(frame.video_id))
+        else:
+            logger.warning("Skipping %s export image with unrepresentable sighting: %s", task_type, info.file_path)
+        job.processed_frames = result.frame_index + 1
+        job.progress = (result.frame_index + 1) / len(frame_infos)
+    write_dataset(dataset_dir, frame_paths, annotations_per_frame, class_names, group_ids=group_ids)
 
 
 def _convert_classify(session, job, seg_results, db_frames, frame_infos, class_names, dataset_dir):
-    """Convert for classification task (crop-based format)."""
-    class_name = class_names[0] if class_names else "object"
+    """All classification crops inherit their source video's split."""
     crops_per_frame = []
-
-    for seg_result, db_frame, fi in zip(seg_results, db_frames, frame_infos):
-        frame_img = cv2.imread(str(fi.file_path))
-        class_indices = (
-            seg_result.class_indices.tolist()
-            if seg_result.class_indices is not None
-            else [0] * seg_result.masks.shape[0]
-        )
-        crops = to_classify.masks_to_crops(seg_result.masks, frame_img, class_names, class_indices)
-        crops_per_frame.append(crops)
-
-        # Store annotations in DB (bbox-only for classify)
-        for idx in range(seg_result.masks.shape[0]):
-            if idx < seg_result.scores.shape[0]:
-                score = float(seg_result.scores[idx])
-            else:
-                score = 1.0
-
-            bbox = None
-            if idx < seg_result.boxes.shape[0]:
-                x1, y1, x2, y2 = seg_result.boxes[idx]
-                h, w = seg_result.masks.shape[1], seg_result.masks.shape[2]
-                if w > 0 and h > 0:
-                    bbox = [
-                        float((x1 + x2) / 2 / w),
-                        float((y1 + y2) / 2 / h),
-                        float((x2 - x1) / w),
-                        float((y2 - y1) / h),
-                    ]
-
-            cls_idx = class_indices[idx] if idx < len(class_indices) else 0
-            ann_class_name = class_names[cls_idx] if cls_idx < len(class_names) else class_name
-
-            annotation = Annotation(
-                frame_id=db_frame.id,
-                job_id=job.id,
-                class_name=ann_class_name,
-                class_index=cls_idx,
-                polygon=[],
-                bbox=bbox,
-                confidence=score,
-            )
-            session.add(annotation)
-
-        _update_job(
-            session,
-            job,
-            processed_frames=seg_result.frame_index + 1,
-            progress=(seg_result.frame_index + 1) / len(frame_infos),
-        )
-
-    frame_paths = [fi.file_path for fi in frame_infos]
-    to_classify.write_yolo_dataset(dataset_dir, frame_paths, crops_per_frame, class_names)
+    for result, frame, info in zip(seg_results, db_frames, frame_infos, strict=True):
+        image = cv2.imread(str(info.file_path))
+        if image is None:
+            raise ValueError(f"Cannot decode source frame: {info.file_path}")
+        classes = []
+        for mask_index in range(len(result.masks)):
+            annotation = _store_observation(session, job, result, frame, mask_index, class_names)
+            classes.append(annotation.class_index)
+        crops_per_frame.append(to_classify.masks_to_crops(result.masks, image, class_names, classes, min_area=0))
+        job.processed_frames = result.frame_index + 1
+        job.progress = (result.frame_index + 1) / len(frame_infos)
+    to_classify.write_yolo_dataset(
+        dataset_dir,
+        [info.file_path for info in frame_infos],
+        crops_per_frame,
+        class_names,
+        group_ids=[str(frame.video_id) for frame in db_frames],
+    )

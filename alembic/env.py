@@ -8,8 +8,9 @@ from lib.db import Base
 
 config = context.config
 
-# Override sqlalchemy.url from our app settings (respects POSTGRES_HOST env var)
-config.set_main_option("sqlalchemy.url", settings.postgres_dsn)
+# Programmatic callers can explicitly target a disposable database. Normal CLI
+# runs continue to use application settings; never infer a test database.
+config.set_main_option("sqlalchemy.url", config.attributes.get("database_url") or settings.postgres_dsn)
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)

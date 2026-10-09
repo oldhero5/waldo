@@ -1,13 +1,15 @@
 """Workspace management — create, list, switch workspaces."""
 
 import re
+from uuid import uuid4
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import joinedload
 
 from lib.auth import get_current_user
+from lib.authorization import Principal, get_principal
 from lib.db import SessionLocal, User, Workspace, WorkspaceMember
 
 router = APIRouter()
@@ -30,13 +32,14 @@ def _slugify(text: str) -> str:
 
 
 @router.post("/workspaces", status_code=201, response_model=WorkspaceOut)
-def create_workspace(req: CreateWorkspaceRequest, user: User = Depends(get_current_user)):
+def create_workspace(
+    req: CreateWorkspaceRequest, user: User = Depends(get_current_user), principal: Principal = Depends(get_principal)
+):
+    if principal.auth_kind == "api_key":
+        raise HTTPException(status_code=403, detail="API keys cannot create another workspace")
     session = SessionLocal()
     try:
-        slug = _slugify(req.name)
-        existing = session.query(Workspace).filter_by(slug=slug).first()
-        if existing:
-            slug = f"{slug}-{str(existing.id)[:6]}"
+        slug = f"{_slugify(req.name)}-{uuid4().hex}"
 
         ws = Workspace(name=req.name, slug=slug)
         session.add(ws)
@@ -52,7 +55,7 @@ def create_workspace(req: CreateWorkspaceRequest, user: User = Depends(get_curre
 
 
 @router.get("/workspaces", response_model=list[WorkspaceOut])
-def list_workspaces(user: User = Depends(get_current_user)):
+def list_workspaces(user: User = Depends(get_current_user), principal: Principal = Depends(get_principal)):
     session = SessionLocal()
     try:
         # Single query: memberships + their workspace in one round-trip
@@ -62,6 +65,9 @@ def list_workspaces(user: User = Depends(get_current_user)):
             .options(joinedload(WorkspaceMember.workspace))
             .all()
         )
+
+        if principal.auth_kind == "api_key":
+            memberships = [member for member in memberships if member.workspace_id == principal.workspace_id]
 
         # Batch member counts for all workspaces in a single GROUP BY query
         ws_ids = [m.workspace_id for m in memberships]

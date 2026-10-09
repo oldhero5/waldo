@@ -21,8 +21,7 @@ app = [
     "python-multipart",
     "python-jose[cryptography]",
     "passlib[bcrypt]",
-    # AI agent — LangGraph ReAct loop served by a local Ollama. ChatOllama
-    # is the LangChain binding; langgraph drives the tool-calling state machine.
+    # AI agent — LangGraph tool loop with shared local and hosted text adapters.
     "langgraph>=0.6",
     "langchain-core>=0.3",
     "langchain-ollama>=0.3",
@@ -31,6 +30,8 @@ app = [
     # at 30+ fps) where JSON serialization shows up in profiles. WS clients
     # still receive JSON; the WS layer transparently unpacks msgpack.
     "msgpack>=1.0",
+    "langchain-openai>=1.6.7",
+    "langchain-anthropic>=1.7.5",
 ]
 labeler = [
     "transformers>=4.47",

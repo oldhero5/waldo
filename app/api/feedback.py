@@ -5,7 +5,14 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 from lib.auth import get_current_user
-from lib.db import DemoFeedback, SessionLocal
+from lib.authorization import (
+    WorkspacePrincipal,
+    get_workspace_principal,
+    require_resource,
+    require_workspace_editor,
+    scope_resources,
+)
+from lib.db import DemoFeedback, ModelRegistry, SessionLocal
 from lib.storage import get_download_url, upload_bytes
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
@@ -69,15 +76,20 @@ def _fb_to_out(fb: DemoFeedback) -> FeedbackOut:
 
 
 @router.post("/feedback", response_model=FeedbackOut, status_code=201)
-def submit_feedback(body: FeedbackIn):
+def submit_feedback(
+    body: FeedbackIn,
+    principal: WorkspacePrincipal = Depends(require_workspace_editor),
+):
     session = SessionLocal()
     try:
+        model = require_resource(session, principal, ModelRegistry, body.model_id) if body.model_id else None
         minio_key = None
         if body.frame_image_b64:
             minio_key = _store_frame_image(body.frame_image_b64)
 
         fb = DemoFeedback(
-            model_id=body.model_id,
+            workspace_id=principal.workspace_id,
+            model_id=model.id if model else None,
             class_name=body.class_name,
             bbox=body.bbox,
             polygon=body.polygon,
@@ -99,17 +111,25 @@ def submit_feedback(body: FeedbackIn):
 
 
 @router.post("/feedback/batch", response_model=list[FeedbackOut], status_code=201)
-def submit_feedback_batch(body: FeedbackBatchIn):
+def submit_feedback_batch(
+    body: FeedbackBatchIn,
+    principal: WorkspacePrincipal = Depends(require_workspace_editor),
+):
     session = SessionLocal()
     try:
+        models = [
+            require_resource(session, principal, ModelRegistry, item.model_id) if item.model_id else None
+            for item in body.items
+        ]
         results = []
-        for item in body.items:
+        for item, model in zip(body.items, models, strict=True):
             minio_key = None
             if item.frame_image_b64:
                 minio_key = _store_frame_image(item.frame_image_b64)
 
             fb = DemoFeedback(
-                model_id=item.model_id,
+                workspace_id=principal.workspace_id,
+                model_id=model.id if model else None,
                 class_name=item.class_name,
                 bbox=item.bbox,
                 polygon=item.polygon,
@@ -137,12 +157,14 @@ def list_feedback(
     model_id: str | None = Query(None),
     feedback_type: str | None = Query(None),
     limit: int = Query(100, ge=1, le=500),
+    principal: WorkspacePrincipal = Depends(get_workspace_principal),
 ):
     session = SessionLocal()
     try:
-        query = session.query(DemoFeedback)
+        query = scope_resources(session.query(DemoFeedback), DemoFeedback, principal)
         if model_id:
-            query = query.filter_by(model_id=model_id)
+            model = require_resource(session, principal, ModelRegistry, model_id)
+            query = query.filter_by(model_id=model.id)
         if feedback_type:
             query = query.filter_by(feedback_type=feedback_type)
         query = query.order_by(DemoFeedback.created_at.desc()).limit(limit)

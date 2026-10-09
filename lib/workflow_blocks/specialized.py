@@ -165,13 +165,13 @@ class LicensePlateBlock(BlockBase):
     ]
 
     def execute(self, inputs: dict[str, Any]) -> BlockResult:
-        from lib.inference_engine import get_engine
+        from lib.workflow_blocks.platform import get_workspace_model_engine
 
         image = inputs["image"]
         conf = self.config.get("confidence", 0.3)
 
         # Step 1: Detect objects (license plates should be a trained class)
-        engine = get_engine()
+        engine = get_workspace_model_engine(self)
         detections = engine.predict_image(image, conf=conf)
 
         # Step 2: For each detection, crop and attempt OCR

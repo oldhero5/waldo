@@ -5,6 +5,12 @@ from pydantic import BaseModel
 from sqlalchemy import func
 
 from lib.auth import get_current_user
+from lib.authorization import (
+    WorkspacePrincipal,
+    get_workspace_principal,
+    require_resource,
+    scope_resources,
+)
 from lib.db import Annotation, LabelingJob, SessionLocal
 from lib.storage import get_download_url
 
@@ -24,6 +30,7 @@ class JobStatus(BaseModel):
     name: str | None = None
     video_id: str
     text_prompt: str
+    task_type: str
     status: str
     progress: float
     total_frames: int
@@ -35,6 +42,9 @@ class JobStatus(BaseModel):
     class_count: int | None = None
     version: int = 1
     parent_id: str | None = None
+    processing_summary: dict | None = None
+    score_threshold: float | None = None
+    sample_fps: float | None = None
 
 
 def _job_to_response(
@@ -43,14 +53,18 @@ def _job_to_response(
     class_count: int | None = None,
 ) -> JobStatus:
     result_url = None
-    if job.status == "completed" and job.result_minio_key:
+    if job.status in ("completed", "partial") and job.result_minio_key:
         result_url = get_download_url(job.result_minio_key)
 
     return JobStatus(
         job_id=str(job.id),
+        processing_summary=job.processing_summary,
+        score_threshold=job.score_threshold,
+        sample_fps=job.sample_fps,
         name=job.name,
         video_id=str(job.video_id),
         text_prompt=job.text_prompt,
+        task_type=job.task_type,
         status=job.status,
         progress=job.progress or 0.0,
         total_frames=job.total_frames or 0,
@@ -66,11 +80,14 @@ def _job_to_response(
 
 
 @router.get("/status/{job_id}", response_model=JobStatus)
-def get_job_status(job_id: str):
+def get_job_status(
+    job_id: str,
+    principal: WorkspacePrincipal = Depends(get_workspace_principal),
+):
     _validate_uuid(job_id, "job_id")
     session = SessionLocal()
     try:
-        job = session.query(LabelingJob).filter_by(id=job_id).first()
+        job = require_resource(session, principal, LabelingJob, job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
         return _job_to_response(job)
@@ -82,12 +99,16 @@ def get_job_status(job_id: str):
 def list_jobs(
     video_id: str | None = Query(None),
     limit: int = Query(500, ge=1, le=2000),
+    principal: WorkspacePrincipal = Depends(get_workspace_principal),
 ):
     session = SessionLocal()
     try:
-        query = session.query(LabelingJob)
+        query = scope_resources(session.query(LabelingJob), LabelingJob, principal)
         if video_id:
-            query = query.filter_by(video_id=video_id)
+            from lib.db import Video
+
+            video = require_resource(session, principal, Video, video_id)
+            query = query.filter_by(video_id=video.id)
         jobs = query.order_by(LabelingJob.created_at.desc()).limit(limit).all()
 
         # Batch-query annotation counts and class counts per job

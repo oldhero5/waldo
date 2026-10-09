@@ -2,6 +2,7 @@
 
 import logging
 import os
+import uuid
 from datetime import UTC, datetime, timedelta
 
 import bcrypt
@@ -78,10 +79,14 @@ async def get_current_user(
 
         # API key auth (starts with wld_)
         if token.startswith("wld_"):
-            return _auth_api_key(session, token)
+            return _auth_api_key(session, token, request=request)
 
         # JWT auth
-        return _auth_jwt(session, token)
+        user = _auth_jwt(session, token)
+        from lib.authorization import Principal  # noqa: PLC0415
+
+        request.state.principal = Principal(user_id=user.id)
+        return user
     finally:
         session.close()
 
@@ -113,7 +118,7 @@ def bootstrap_admin_if_empty() -> None:
       2. Otherwise, the dev default 'waldopass' so the first login Just Works
     Email resolution: ADMIN_BOOTSTRAP_EMAIL env var, default 'admin@waldo.ai'.
     """
-    from lib.db import Project, Workspace
+    from lib.db import Workspace
 
     session = SessionLocal()
     try:
@@ -139,14 +144,12 @@ def bootstrap_admin_if_empty() -> None:
             email=email,
             password_hash=hash_password(password),
             display_name="Admin",
+            is_platform_admin=True,
         )
         session.add(user)
         session.flush()
 
         session.add(WorkspaceMember(workspace_id=workspace.id, user_id=user.id, role="admin"))
-
-        for project in session.query(Project).filter(Project.workspace_id.is_(None)).all():
-            project.workspace_id = workspace.id
 
         session.commit()
 
@@ -170,41 +173,64 @@ def _auth_jwt(session, token: str) -> User:
     user_id = payload.get("sub")
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+    try:
+        user_id = uuid.UUID(user_id)
+    except (ValueError, TypeError, AttributeError) as e:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token") from e
     user = session.query(User).filter_by(id=user_id).first()
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
     return user
 
 
-def _auth_api_key(session, key: str) -> User:
+def _auth_api_key(session, key: str, *, request: Request) -> User:
+    from lib.authorization import Principal, require_scope, resolve_workspace  # noqa: PLC0415
+
     prefix = key[:8]
     candidates = session.query(ApiKey).filter_by(key_prefix=prefix).all()
     for api_key in candidates:
         if verify_password(key, api_key.key_hash):
-            if api_key.expires_at and api_key.expires_at < datetime.now(UTC):
-                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="API key expired")
-            # Update last_used
-            api_key.last_used = datetime.now(UTC)
-            session.commit()
+            if api_key.expires_at:
+                # Persisted timestamps are UTC; naive PostgreSQL/SQLite values
+                # need that timezone restored before comparison.
+                expiry = api_key.expires_at
+                if expiry.tzinfo is None:
+                    expiry = expiry.replace(tzinfo=UTC)
+                if expiry <= datetime.now(UTC):
+                    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="API key expired")
             user = session.query(User).filter_by(id=api_key.user_id).first()
             if user:
+                principal = Principal(
+                    user_id=user.id,
+                    auth_kind="api_key",
+                    api_key_id=api_key.id,
+                    workspace_id=api_key.workspace_id,
+                    scopes=frozenset(api_key.scopes or []),
+                )
+                principal = resolve_workspace(session, principal).identity
+                required_scope = "read" if request.method in {"GET", "HEAD", "OPTIONS"} else "write"
+                require_scope(principal, required_scope)
+                request.state.principal = principal
+                api_key.last_used = datetime.now(UTC)
+                session.commit()
                 return user
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
 
 
-async def require_admin(user: User = Depends(get_current_user)) -> User:
-    """FastAPI dependency — only admins pass.
+async def require_admin(request: Request, user: User = Depends(get_current_user)) -> User:
+    """Only an explicit installation admin authenticated with a user JWT passes."""
+    from lib.authorization import get_principal  # noqa: PLC0415
 
-    Admin = a WorkspaceMember row with role="admin" in any workspace.
-    Raises 403 otherwise.
-    """
+    principal = get_principal(request, user)
+    if principal.auth_kind != "jwt":
+        raise HTTPException(status_code=403, detail="Installation admin requires a user session")
     session = SessionLocal()
     try:
-        is_admin = session.query(WorkspaceMember).filter_by(user_id=user.id, role="admin").first() is not None
+        is_admin = session.query(User).filter_by(id=user.id, is_platform_admin=True).first() is not None
         if not is_admin:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Admin role required",
+                detail="Installation admin role required",
             )
         return user
     finally:

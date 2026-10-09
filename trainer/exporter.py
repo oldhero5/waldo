@@ -12,7 +12,7 @@ SUPPORTED_FORMATS = ["onnx", "torchscript", "coreml", "tflite", "openvino"]
 
 
 def _validate_export(original_model, export_path: str, fmt: str) -> bool:
-    """Load exported model, run on test image, compare detection count to original."""
+    """Smoke-test loading and inference; this does not establish accuracy parity."""
     from ultralytics import YOLO
 
     test_img = np.random.randint(0, 255, (640, 640, 3), dtype=np.uint8)
@@ -24,16 +24,17 @@ def _validate_export(original_model, export_path: str, fmt: str) -> bool:
     exported_results = exported_model(test_img, verbose=False)
     exported_count = len(exported_results[0].boxes) if exported_results else 0
 
-    # Both should produce similar results (same count on random noise, usually 0)
+    # Noise usually produces zero detections. Held-out real-image comparisons
+    # are still required before claiming exported-model accuracy parity.
     return abs(original_count - exported_count) <= max(1, original_count // 2)
 
 
 def export_model(model_id: str, fmt: str) -> str:
     """Export a registered model to the given format. Returns the MinIO key."""
-    from ultralytics import YOLO
-
     if fmt not in SUPPORTED_FORMATS:
         raise ValueError(f"Unsupported format: {fmt}. Use one of: {SUPPORTED_FORMATS}")
+
+    from ultralytics import YOLO
 
     session = SessionLocal()
     try:
