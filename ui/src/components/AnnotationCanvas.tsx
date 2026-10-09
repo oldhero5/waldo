@@ -5,6 +5,8 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AnnotationOut } from "../api";
+import { useRenewableFrame } from "../hooks/useRenewableFrame";
+import { useAuth } from "../contexts/authState";
 import { segmentPoints, createAnnotation } from "../api";
 import { X, ZoomIn, ZoomOut, RotateCcw, Check, XCircle, Plus, Loader2, MousePointer, Pencil, GripVertical } from "lucide-react";
 
@@ -61,20 +63,42 @@ export default function AnnotationCanvas({
   const [saving, setSaving] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Load image
+  const { user, token } = useAuth();
+  const { url: mediaUrl, onLoad: mediaOnLoad, onError: mediaOnError, loading: mediaLoading, error: mediaError, retry: mediaRetry } = useRenewableFrame(frameId, imageUrl);
+
+  // A capability refresh does not reset unsaved annotation work.
   useEffect(() => {
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-    img.onload = () => { imgRef.current = img; setImgLoaded(true); };
-    img.onerror = () => { console.error("Failed to load image:", imageUrl); setImgLoaded(false); };
-    img.src = imageUrl;
-    setImgLoaded(false);
     setZoom(1);
     setPan({ x: 0, y: 0 });
     setSelectedId(null);
+    setHoveredId(null);
     setClickPoints([]);
     setPreviewPolygon(null);
-  }, [imageUrl]);
+  }, [frameId, token, user?.id, user?.workspace_id]);
+
+  useEffect(() => {
+    let active = true;
+    imgRef.current = null;
+    const canvas = canvasRef.current;
+    if (canvas) canvas.getContext("2d")?.clearRect(0, 0, canvas.width, canvas.height);
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      if (!active) return;
+      imgRef.current = img;
+      setImgLoaded(true);
+      mediaOnLoad();
+    };
+    img.onerror = () => {
+      if (!active) return;
+      imgRef.current = null;
+      setImgLoaded(false);
+      mediaOnError();
+    };
+    img.src = mediaUrl;
+    setImgLoaded(false);
+    return () => { active = false; img.onload = null; img.onerror = null; };
+  }, [mediaUrl, mediaOnLoad, mediaOnError]);
 
   // Memoize per-annotation polygon geometry (normalized coords, not screen space).
   // Keyed on annotation id + serialized polygon — recomputes only when annotations change,
@@ -520,6 +544,12 @@ export default function AnnotationCanvas({
           onContextMenu={handleContextMenu}
         />
 
+        {mediaLoading && <div role="status" className="absolute top-4 left-4 text-white">Reloading image…</div>}
+        {mediaError && <div role="alert" className="absolute top-4 left-4 bg-gray-900 text-white p-3 rounded-lg">
+          {mediaError} {" "}
+          <button type="button" aria-label="Retry image" onClick={mediaRetry} className="underline">Retry</button>
+        </div>}
+
         {/* Review mode: always-visible action panel */}
         {mode === "review" && activeAnn && (
           <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-gray-900/95 backdrop-blur border border-gray-700 rounded-xl px-4 py-2.5 flex items-center gap-3 shadow-xl">
@@ -643,6 +673,7 @@ export default function AnnotationCanvas({
             <div className="p-1.5 overflow-y-auto" style={{ maxHeight: "calc(100vh - 200px)" }}>
               {annotations.map((a) => (
                 <button key={a.id}
+                  aria-pressed={a.id === selectedId}
                   onClick={(e) => { e.stopPropagation(); setMode("review"); setSelectedId(a.id === selectedId ? null : a.id); }}
                   onMouseEnter={() => setHoveredId(a.id)}
                   onMouseLeave={() => setHoveredId(null)}

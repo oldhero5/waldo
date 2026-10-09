@@ -9,6 +9,8 @@ import {
   type AnnotationOut,
 } from "../api";
 import AnnotationCanvas from "../components/AnnotationCanvas";
+import RenewableFrameImage from "../components/RenewableFrameImage";
+import RenewableDownloadLink from "../components/RenewableDownloadLink";
 import JobCoverage from "../components/JobCoverage";
 import { hasTrainingArtifact, isTerminalJobStatus } from "../lib/jobStatus";
 import { classColor, hslToHex } from "../lib/annotationColors";
@@ -148,7 +150,7 @@ const LazyFrameCard = React.memo(function LazyFrameCard({
           </span>
         </div>
         {first.frame_url && (
-          <img src={first.frame_url} alt="Frame preview" className="block w-full" loading="lazy" />
+          <RenewableFrameImage frameId={frameId} initialUrl={first.frame_url} alt="Frame preview" className="block w-full" loading="lazy" />
         )}
         {inView && <FrameOverlay annotations={frameAnns} hoveredId={hoveredAnn} />}
       </div>
@@ -425,9 +427,9 @@ export default function ReviewPage() {
                 {job.result_url && (
                   <>
                     {" "}&middot;{" "}
-                    <a href={job.result_url} className="hover:underline" style={{ color: "var(--accent)" }}>
+                    <RenewableDownloadLink jobId={jobId!} url={job.result_url} className="hover:underline" style={{ color: "var(--accent)" }}>
                       Download
-                    </a>
+                    </RenewableDownloadLink>
                   </>
                 )}
               </p>

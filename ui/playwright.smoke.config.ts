@@ -3,7 +3,7 @@ import { defineConfig } from "@playwright/test";
 // Deterministic client smoke tests: no database, JWT secret, or inference service.
 export default defineConfig({
   testDir: "./e2e",
-  testMatch: ["ui-cleanup.spec.ts", "job-coverage.spec.ts", "video-overlay.spec.ts"],
+  testMatch: ["ui-cleanup.spec.ts", "job-coverage.spec.ts", "video-overlay.spec.ts", "media-renewal.spec.ts"],
   timeout: 30_000,
   reporter: process.env.CI ? [
     ["dot"], ["github"],
