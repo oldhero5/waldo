@@ -320,6 +320,8 @@ def own_model_video(monkeypatch):
 
     tracker = _load_subject("lib.video_tracker")
     monkeypatch.setitem(sys.modules, "lib.video_tracker", tracker)
+    # This fixture checks model authorization with fake media and decoding.
+    monkeypatch.setattr(tracker, "probe_frame_timing", lambda path: [])
     monkeypatch.setattr(tracker, "validate_video", lambda path: {"fps": 8, "width": 4, "height": 4, "frame_count": 1})
     monkeypatch.setattr(tracker.cv2, "VideoCapture", lambda path: _Capture(1))
     monkeypatch.setattr(tracker, "get_engine", lambda: pytest.fail("requested model fell through to global default"))
