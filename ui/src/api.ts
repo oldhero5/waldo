@@ -545,8 +545,8 @@ export async function listProjects(): Promise<ProjectOut[]> {
   return res.json();
 }
 
-export async function listProjectVideos(projectId: string): Promise<VideoOut[]> {
-  const res = await authFetch(`${BASE}/projects/${projectId}/videos`);
+export async function listProjectVideos(projectId: string, signal?: AbortSignal): Promise<VideoOut[]> {
+  const res = await authFetch(`${BASE}/projects/${projectId}/videos`, { signal });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }

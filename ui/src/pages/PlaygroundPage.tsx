@@ -34,8 +34,8 @@ type PromptDraft = { id: number; value: string };
 type PreviewFrame = PreviewResponse["frames"][number];
 type PreviewDetection = PreviewFrame["detections"][number];
 type PreviewConfig = Readonly<{
+  projectId: string;
   videoId: string;
-  videoUrl: string | null;
   videoName: string;
   prompts: readonly string[];
   threshold: number;
@@ -209,21 +209,29 @@ function extractTracks(frames: PreviewFrame[]): TrackEntry[] {
 // toggle, and zoom-to-detection.
 function PreviewPlayer({
   result,
-  videoUrl,
+  projectId,
+  videoId,
   startSec,
   durationSec,
 }: {
   result: PreviewResponse;
-  videoUrl: string;
+  projectId: string;
+  videoId: string;
   startSec: number;
   durationSec: number;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [sourceAttempt, setSourceAttempt] = useState(0);
+  const [loadingSource, setLoadingSource] = useState(true);
+  const [playbackError, setPlaybackError] = useState<string | null>(null);
+  const retriedSource = useRef(false);
+  const resumeTime = useRef(startSec);
   const [currentTime, setCurrentTime] = useState(startSec);
   const [requestedTime, setRequestedTime] = useState<number | null>(null);
   const [playing, setPlaying] = useState(false);
-  const [seeking, setSeeking] = useState(false);
+  const [seeking, setSeeking] = useState(true);
   const [decodedSize, setDecodedSize] = useState<{ width: number; height: number } | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const [selectedTrackId, setSelectedTrackId] = useState<number | null>(null);
@@ -240,13 +248,59 @@ function PreviewPlayer({
   const tracks = useMemo(() => extractTracks(result.frames), [result.frames]);
   const windowEnd = startSec + durationSec;
 
+  useEffect(() => {
+    const controller = new AbortController();
+    // Reissue an authorized capability when this completed run needs playback.
+    // The immutable run identity must survive edits to the preview draft.
+    void listProjectVideos(projectId, controller.signal).then((videos) => {
+      if (controller.signal.aborted) return;
+      const url = videos.find((video) => video.id === videoId)?.url;
+      if (!url) throw new Error("Source video URL is unavailable");
+      setVideoUrl(url);
+    }).catch((error: unknown) => {
+      if (!controller.signal.aborted) setPlaybackError(error instanceof Error ? error.message : String(error));
+    }).finally(() => {
+      if (!controller.signal.aborted) setLoadingSource(false);
+    });
+    return () => controller.abort();
+  }, [projectId, videoId, sourceAttempt]);
+
+  const renewSource = () => {
+    setLoadingSource(true);
+    setPlaybackError(null);
+    setVideoUrl(null);
+    setDecodedSize(null);
+    setSeeking(true);
+    setPlaying(false);
+    setSourceAttempt((attempt) => attempt + 1);
+  };
+
+  const retryPlayback = () => {
+    retriedSource.current = false;
+    renewSource();
+  };
+
+  const onSourceError = () => {
+    resumeTime.current = currentTime;
+    setSeeking(true);
+    setPlaying(false);
+    if (retriedSource.current) {
+      setPlaybackError("Source video could not be loaded. Retry source playback.");
+      return;
+    }
+    // An expired capability can fail a later range request. Recover once;
+    // a bad refreshed source must not start an unbounded request loop.
+    retriedSource.current = true;
+    renewSource();
+  };
+
   const activeFrame = useMemo(() => {
     const index = assessedFrameAt(result.frames, currentTime);
     const frame = index < 0 ? null : result.frames[index];
-    if (!frame || seeking) return null;
+    if (!frame || seeking || loadingSource || playbackError || !decodedSize) return null;
     if (decodedSize && Math.abs(frame.width / frame.height - decodedSize.width / decodedSize.height) > 0.005) return null;
     return frame;
-  }, [result.frames, currentTime, seeking, decodedSize]);
+  }, [result.frames, currentTime, seeking, decodedSize, loadingSource, playbackError]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -257,18 +311,6 @@ function PreviewPlayer({
       if (time >= windowEnd && !video.paused) video.currentTime = startSec;
     });
   }, [videoUrl, startSec, windowEnd]);
-
-  // Seek to window start when the source changes.
-  useEffect(() => {
-    const v = videoRef.current;
-    if (!v) return;
-    const onLoaded = () => {
-      v.currentTime = startSec;
-      setDecodedSize({ width: v.videoWidth, height: v.videoHeight });
-    };
-    v.addEventListener("loadedmetadata", onLoaded);
-    return () => v.removeEventListener("loadedmetadata", onLoaded);
-  }, [videoUrl, startSec]);
 
   // Clamp playback to [startSec, windowEnd] — loop back to start.
   const onTimeUpdate = () => {
@@ -409,6 +451,13 @@ function PreviewPlayer({
 
   return (
     <div className="space-y-3">
+      {loadingSource && <p role="status" className="text-sm" style={{ color: "var(--text-muted)" }}>Loading source video…</p>}
+      {playbackError && (
+        <div className="surface p-3 space-y-2">
+          <p role="alert" className="text-sm" style={{ color: "var(--danger)" }}>{playbackError}</p>
+          <button onClick={retryPlayback} className="btn-secondary px-3 py-2 text-sm">Retry source playback</button>
+        </div>
+      )}
       <div
         ref={containerRef}
         className="surface overflow-hidden"
@@ -445,11 +494,21 @@ function PreviewPlayer({
               willChange: "transform",
             }}
           >
-            <video
+            {videoUrl && <video
               ref={videoRef}
               src={videoUrl}
               onTimeUpdate={onTimeUpdate}
-              onLoadedData={(event) => setDecodedSize({ width: event.currentTarget.videoWidth, height: event.currentTarget.videoHeight })}
+              onLoadedMetadata={(event) => {
+                const video = event.currentTarget;
+                video.currentTime = Math.max(startSec, Math.min(windowEnd, resumeTime.current));
+                setDecodedSize({ width: video.videoWidth, height: video.videoHeight });
+              }}
+              onLoadedData={(event) => {
+                retriedSource.current = false;
+                setDecodedSize({ width: event.currentTarget.videoWidth, height: event.currentTarget.videoHeight });
+                setSeeking(event.currentTarget.seeking);
+              }}
+              onError={onSourceError}
               onSeeking={() => setSeeking(true)}
               onSeeked={() => setSeeking(false)}
               onPlay={() => setPlaying(true)}
@@ -465,7 +524,7 @@ function PreviewPlayer({
                 objectFit: "contain",
                 display: "block",
               }}
-            />
+            />}
             {activeFrame && (
               <DetectionOverlay
                 frame={activeFrame}
@@ -535,6 +594,7 @@ function PreviewPlayer({
             <button
               onClick={togglePlay}
               aria-label={playing ? "Pause preview" : "Play preview"}
+              disabled={loadingSource || !!playbackError || !decodedSize}
               className="flex items-center justify-center rounded-full"
               style={{
                 width: 32,
@@ -797,8 +857,8 @@ export default function PlaygroundPage() {
     if (!canRun || !currentVideo || activeRequest.current !== null || activePromotion.current !== null) return;
     const runId = ++requestSequence.current;
     const config: PreviewConfig = Object.freeze({
+      projectId: effectiveProject,
       videoId: currentVideo.id,
-      videoUrl: currentVideo.url || null,
       videoName: currentVideo.filename,
       prompts: Object.freeze([...validPrompts]),
       threshold,
@@ -1343,11 +1403,12 @@ export default function PlaygroundPage() {
                 )}
 
                 {/* Video player with timeline + zoom-to-detection */}
-                {result.frames.length > 0 && displayedConfig.videoUrl ? (
+                {result.frames.length > 0 ? (
                   <PreviewPlayer
                     key={completedPreview?.runId}
                     result={result}
-                    videoUrl={displayedConfig.videoUrl}
+                    projectId={displayedConfig.projectId}
+                    videoId={displayedConfig.videoId}
                     startSec={displayedConfig.startSec}
                     durationSec={displayedConfig.durationSec}
                   />
@@ -1359,9 +1420,7 @@ export default function PlaygroundPage() {
                       color: "var(--text-muted)",
                     }}
                   >
-                    {displayedConfig.videoUrl
-                      ? "No frames returned. Try a longer window or lower threshold."
-                      : "Video URL unavailable — reload and retry."}
+                    No frames returned. Try a longer window or lower threshold.
                   </div>
                 )}
               </div>
