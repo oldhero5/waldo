@@ -19,6 +19,7 @@ from PIL import Image
 from labeler.errors import RetryableLabelingError, is_retryable
 from labeler.pipeline import _update_job
 from lib.config import settings
+from lib.dataset_evidence import invalidate_current_export
 from lib.db import Annotation, Frame, LabelingJob, SessionLocal, Video
 from lib.storage import download_file, upload_file
 from lib.video_timing import frame_timing, probe_frame_timing
@@ -864,6 +865,7 @@ def run_video_labeling_pipeline(celery_task, job_id: str) -> dict:
                 try:
                     download_file(video.minio_key, video_path)
                     results = process_video_native(str(video_path), prompts, threshold=threshold, sample_fps=sample_fps)
+                    invalidate_current_export(session, job.id)
                     annotations = _replace_native_observations(
                         session,
                         job,

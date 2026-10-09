@@ -16,6 +16,8 @@ def run_exemplar_pipeline(celery_task, job_id: str) -> dict:
     session = SessionLocal()
     try:
         job = session.query(LabelingJob).filter_by(id=job_id).one()
+        if job.status == "completed":
+            return {"status": "completed", "result_minio_key": job.result_minio_key}
         video = job.video
         point_prompts = job.point_prompts  # {"frame_idx": int, "points": [[x,y],...], "labels": [1,0,...]}
 

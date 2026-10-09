@@ -17,6 +17,7 @@ from lib.authorization import (
     require_resource,
     require_workspace_editor,
 )
+from lib.dataset_evidence import invalidate_current_export
 from lib.db import Annotation, Frame, LabelingJob, Project, SessionLocal, Video
 from lib.preview import normalize_preview_result
 from lib.storage import download_file
@@ -437,6 +438,7 @@ def create_annotation(
         video = require_resource(session, principal, Video, frame.video_id)
         if (job.video_id and job.video_id != frame.video_id) or (job.project_id and job.project_id != video.project_id):
             raise HTTPException(status_code=400, detail="Frame does not belong to the requested dataset")
+        invalidate_current_export(session, job.id)
         ann = Annotation(
             frame_id=frame.id,
             job_id=job.id,
@@ -448,7 +450,6 @@ def create_annotation(
             status=req.status,
         )
         session.add(ann)
-        job.result_minio_key = None
         session.commit()
         session.refresh(ann)
 

@@ -1,4 +1,5 @@
 import json
+import logging
 import math
 import tempfile
 import uuid as _uuid
@@ -17,9 +18,9 @@ from lib.authorization import (
     require_workspace_editor,
     scope_resources,
 )
-from lib.dataset_evidence import assessed_frame_count
+from lib.dataset_evidence import assessed_frame_count, invalidate_current_export, publish_current_export
 from lib.db import Annotation, Frame, LabelingJob, SessionLocal
-from lib.storage import download_file, get_download_url, upload_file
+from lib.storage import delete_object, download_file, get_download_url, upload_file
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
@@ -190,12 +191,16 @@ def update_annotation(
         if not ann:
             raise HTTPException(status_code=404, detail="Annotation not found")
 
-        for field in ("status", "polygon", "bbox", "class_name", "class_index"):
-            val = getattr(update, field)
-            if val is not None:
-                setattr(ann, field, val)
-                # Existing runs retain their immutable dataset_minio_key snapshot.
-                require_resource(session, principal, LabelingJob, ann.job_id).result_minio_key = None
+        changes = {
+            field: getattr(update, field)
+            for field in ("status", "polygon", "bbox", "class_name", "class_index")
+            if getattr(update, field) is not None
+        }
+        if changes:
+            # Existing training runs retain their immutable dataset snapshot.
+            invalidate_current_export(session, ann.job_id)
+            for field, value in changes.items():
+                setattr(ann, field, value)
 
         session.commit()
 
@@ -325,8 +330,8 @@ def add_class_to_dataset(
             score_threshold=job.score_threshold,
             sample_fps=job.sample_fps,
         )
+        invalidate_current_export(session, job.id)
         session.add(child)
-        job.result_minio_key = None
         session.commit()
 
         # Trigger labeling with merge_into so results merge back into the parent
@@ -359,13 +364,12 @@ def merge_classes(
     session = SessionLocal()
     try:
         job = require_resource(session, principal, LabelingJob, req.job_id)
+        invalidate_current_export(session, job.id)
         updated = (
             scope_resources(session.query(Annotation), Annotation, principal)
             .filter_by(job_id=job.id, class_name=req.source_class)
             .update({Annotation.class_name: req.target_class}, synchronize_session=False)
         )
-        if updated:
-            job.result_minio_key = None
         session.commit()
         return {"status": "merged", "source": req.source_class, "target": req.target_class, "updated": updated}
     finally:
@@ -382,6 +386,9 @@ def duplicate_dataset(
     session = SessionLocal()
     try:
         original = require_resource(session, principal, LabelingJob, job_id)
+        # Copy the current artifact pointer and annotations from one revision.
+        # Evidence writers take the same short job-row lock before changing rows.
+        session.refresh(original, with_for_update=True)
         job_id = original.id
         if not original:
             raise HTTPException(status_code=404, detail="Job not found")
@@ -476,13 +483,12 @@ def delete_class(
     session = SessionLocal()
     try:
         job = require_resource(session, principal, LabelingJob, job_id)
+        invalidate_current_export(session, job.id)
         deleted = (
             scope_resources(session.query(Annotation), Annotation, principal)
             .filter_by(job_id=job.id, class_name=class_name)
             .delete()
         )
-        if deleted:
-            job.result_minio_key = None
         session.commit()
         return {"status": "deleted", "class_name": class_name, "deleted_count": deleted}
     finally:
@@ -933,15 +939,13 @@ def _write_reviewed_region_export(dataset_dir, source_dir, frames_map, frame_ann
     import cv2
 
     from labeler.converters.common import write_yolo_label_dataset
-    from labeler.converters.to_classify import write_yolo_dataset
+    from labeler.converters.to_classify import validate_class_names, write_yolo_dataset
 
-    if fmt == "classify" and any(
-        not name or name in (".", "..") or any(value in name for value in ("/", "\\", "\x00")) for name in class_names
-    ):
-        raise HTTPException(
-            status_code=400,
-            detail="Classification class name must be one safe directory component; rename it before export",
-        )
+    if fmt == "classify":
+        try:
+            validate_class_names(class_names)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
     # Validate all reviewed regions before downloading any frame.
     regions = []
     for fid in sorted(frame_anns):
@@ -1032,6 +1036,7 @@ def export_dataset(
         job_id = job.id
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
+        evidence_revision = job.evidence_revision
 
         annotations = (
             scope_resources(session.query(Annotation), Annotation, principal)
@@ -1073,7 +1078,15 @@ def export_dataset(
             result_key = f"results/{job_id}/exports/{_uuid.uuid4()}/dataset-{fmt}.zip"
             upload_file(result_key, zip_path)
             if fmt == (job.task_type or "segment"):
-                job.result_minio_key = result_key
+                if not publish_current_export(session, job_id, evidence_revision, result_key):
+                    session.rollback()
+                    try:
+                        delete_object(result_key)
+                    except Exception:
+                        logging.getLogger(__name__).warning(
+                            "Could not remove superseded export %s", result_key, exc_info=True
+                        )
+                    raise HTTPException(status_code=409, detail="Annotations changed during export; retry the export")
                 session.commit()
 
         return {"status": "exported", "format": fmt, "download_url": get_download_url(result_key)}

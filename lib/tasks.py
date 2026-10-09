@@ -136,13 +136,25 @@ def _record_labeling_retry(task, job_id, error):
 
 def _merge_completed_labeling_job(session, child_id, master_id):
     """Transfer evidence atomically while retaining its originating run metadata."""
+    from lib.dataset_evidence import invalidate_current_export
     from lib.db import Annotation, Frame, LabelingJob
 
-    child = session.query(LabelingJob).filter_by(id=UUID(str(child_id))).one()
-    # Serialize concurrent add-class merges so track IDs and run metadata cannot
-    # be allocated from the same stale parent snapshot.
-    master = session.query(LabelingJob).filter_by(id=UUID(str(master_id))).with_for_update().one()
-    if child.id == master.id or child.status != "completed":
+    child_id, master_id = UUID(str(child_id)), UUID(str(master_id))
+    if child_id == master_id:
+        raise ValueError("Only a distinct completed labeling run can be merged")
+    # Lock both jobs in stable order; every annotation writer locks its job
+    # before changing rows, so concurrent edits cannot publish stale exports.
+    locked = (
+        session.query(LabelingJob)
+        .filter(LabelingJob.id.in_((child_id, master_id)))
+        .order_by(LabelingJob.id)
+        .populate_existing()
+        .with_for_update()
+        .all()
+    )
+    jobs = {job.id: job for job in locked}
+    child, master = jobs[child_id], jobs[master_id]
+    if child.status != "completed":
         raise ValueError("Only a distinct completed labeling run can be merged")
     child_project = child.project_id or (child.video.project_id if child.video else None)
     master_project = master.project_id or (master.video.project_id if master.video else None)
@@ -154,8 +166,11 @@ def _merge_completed_labeling_job(session, child_id, master_id):
     if already_merged:
         # A redelivery can rerun the child; its evidence is already in the
         # parent. Discard only these duplicate child-run observations.
+        invalidate_current_export(session, child.id)
         session.query(Annotation).filter_by(job_id=child.id).delete(synchronize_session=False)
     else:
+        invalidate_current_export(session, child.id)
+        invalidate_current_export(session, master.id)
         parents = session.query(Annotation, Frame.video_id).join(Frame).filter(Annotation.job_id == master.id).all()
         children = session.query(Annotation, Frame.video_id).join(Frame).filter(Annotation.job_id == child.id).all()
         next_tracks = {}
@@ -189,7 +204,6 @@ def _merge_completed_labeling_job(session, child_id, master_id):
                 ],
             }
         )
-        master.result_minio_key = None
     master.processing_summary = metadata
     child.processing_summary = {**(child.processing_summary or {}), "merged_into": str(master.id)}
 
