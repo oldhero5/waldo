@@ -10,14 +10,18 @@ Route: `/agent` — Source: [`ui/src/pages/AgentPage.tsx`](https://github.com/ol
 Waldo ships a **LangGraph ReAct agent** wired up to the platform's own data
 and actions. You ask questions in plain English; the agent calls real Waldo
 tools (read-only and side-effecting), shows you which tools it ran, then
-gives you the answer. The LLM runs **locally via Ollama** — nothing is sent
-to a third-party API.
+gives you the answer. Text models can run through Ollama, OpenAI, Anthropic, vLLM or OpenRouter.
+Ollama remains the default. Hosted text transfer requires an explicit configuration
+choice; there is no automatic local-to-cloud fallback.
 
 ![Agent page](/img/screenshots/agent.png)
 
 ## What it can do
 
-The agent has these tools available, all auth-scoped to your workspace:
+The agent requires a workspace membership. Project-backed tools use exact
+workspace ownership; legacy projects without an assigned workspace are excluded.
+JWT requests may select a membership with `X-Workspace-ID`; otherwise the oldest
+membership is selected. API keys remain pinned to their own workspace.
 
 | Tool | Type | What it does |
 | --- | --- | --- |
@@ -32,9 +36,10 @@ The agent has these tools available, all auth-scoped to your workspace:
 | `start_training` | **action** | Queue a YOLO training run on a labeled dataset |
 | `activate_model` | **action** | Mark a trained model active for `/predict/*` |
 
-The full-page agent (`/agent`) defaults to **action mode** — if you ask it
-to "label cars on my latest video and start training," it will. Tick the
-**Read-only** toggle in the footer to constrain it to inspection tools.
+The full-page agent (`/agent`) requests **action mode** by default. The server
+grants action tools only to workspace **admin** or **editor** members; other
+roles receive read tools. Tick the **Read-only** toggle in the footer to
+constrain an authorized action session to inspection tools.
 
 The floating **AgentPanel** (the spark icon in the lower-right of every
 page) is **read-only by design** — open the full page to take actions.
@@ -48,7 +53,7 @@ page) is **read-only by design** — open the full page to take actions.
                        LangGraph ReAct loop
                        (lib/agent/graph.py)
                               │
-                              ├──▶ ChatOllama ── http://ollama:11434
+                              ├──▶ Shared provider adapter ── local or hosted text model
                               │
                               └──▶ ToolNode ──▶ list_models, start_training, …
                                        (auth-scoped to your workspace)
@@ -58,6 +63,11 @@ Each `/agent/stream` request runs the loop inside an `AgentContext` that
 pins every tool call to your user + workspace. The LLM sees the system
 prompt, your message history, and the tool descriptions; it decides whether
 to answer or to call a tool; the loop iterates until it has a final answer.
+The system prompt is server-owned. Client history accepts only user and
+assistant messages (up to 100 messages, each at most 32,000 characters);
+client system and tool messages are rejected. Page context is supplied as user
+content. Tool access uses the same persisted ownership policy as REST/workflows,
+with membership and key grants rechecked while a conversation is running.
 
 The endpoint streams Server-Sent Events:
 
@@ -83,91 +93,56 @@ Suggestion chips on first load (and a few you can paste yourself):
 
 ## Configuration
 
-| Var | Default | Purpose |
-| --- | --- | --- |
-| `OLLAMA_URL` | `http://ollama:11434` (in compose) | Where the local LLM lives |
-| `AGENT_MODEL` | `gemma4:e4b` | Ollama tag the agent loads |
-| `AGENT_TEMPERATURE` | `0.2` | Lower = more stable tool-call JSON |
+In **Settings → Agent provider**, a workspace administrator can select a provider,
+enter a model and a write-only API key, explicitly permit hosted text transfer,
+and test/apply the configuration. The test sends a short text request and can
+incur provider charges. Keys are not returned, logged by application error handlers,
+or saved in browser storage. Browser input cannot choose an arbitrary provider
+endpoint. OpenAI uses Responses; vLLM/OpenRouter use the compatible chat interface;
+Anthropic uses Messages. Tool results stay associated with their tool calls.
 
-The `ollama` service in `docker-compose.yml` runs on the same network and
-the `ollama-init` one-shot pulls `${WALDO_AGENT_MODEL:-gemma4:e4b}` so the
-first chat works the moment the app reports healthy. To swap models:
+**Temporary settings apply only to the current API process and clear on restart.**
+They do not synchronize across API workers or Celery processes. Use deployment
+secrets/environment configuration for durable operation until encrypted shared
+credential storage is implemented. Never put keys in workflow graph JSON.
 
-```bash
-# Edit .env
-AGENT_MODEL=qwen3:4b
-WALDO_AGENT_MODEL=qwen3:4b
+| Variable | Purpose |
+| --- | --- |
+| `AGENT_PROVIDER` | `ollama` (default), `openai`, `anthropic`, `vllm`, `openrouter` |
+| `AGENT_MODEL` | Default model ID; choose an ID supported by the selected provider |
+| `AGENT_ALLOWED_MODELS` | Optional comma-separated permitted model overrides |
+| `AGENT_ALLOW_CLOUD_TEXT` | Explicitly enable text transfer to hosted providers (default false) |
+| `AGENT_TIMEOUT_SECONDS` | Per-model-call timeout; default 60 seconds |
+| `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY` | Server-side credential for the selected hosted service |
+| `OLLAMA_URL` | Operator-configured Ollama endpoint |
+| `VLLM_URL`, `VLLM_API_KEY` | Operator-configured compatible endpoint/credential |
+| `AGENT_TEMPERATURE` | Sampling setting; default 0.2 |
 
-# Pull and restart
-docker compose run --rm ollama-init
-docker compose restart waldo-app
-```
+An external vLLM/Ollama endpoint can also receive your text; choose those endpoints
+according to your deployment's data policy. Each conversation and workflow captures
+one provider configuration so a settings change cannot silently switch its model
+mid-run. Workflow LLM blocks use the same factory and allowed model policy.
 
-## Health check
+For local chat in Compose, enable the `local-chat` profile and use `AGENT_MODEL`
+for both the application and model download. `make up` enables it by default;
+`make up CHAT_PROFILE=` starts without it. The API can start without Ollama.
 
-```bash
-TOKEN=$(curl -s -X POST http://localhost:8000/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"admin@waldo.ai","password":"waldopass"}' \
-  | jq -r .access_token)
+## Configuration status
 
-curl -s http://localhost:8000/api/v1/agent/health \
-  -H "Authorization: Bearer $TOKEN" | jq
-```
+`GET /api/v1/agent/health` reports provider configuration validity, selected model,
+configuration source and `connection_verified: false`. It does not claim the
+provider is reachable or that the selected model supports tools. The explicit
+Settings connection test checks a text call, not tool/image capabilities.
 
-Returns whether Ollama is reachable, whether the configured model is pulled,
-and lists the other models the local Ollama can serve.
+`GET /api/v1/agent/models` lists the configured/default and explicitly allowed
+models. Missing keys, disabled cloud transfer, unavailable local servers, provider
+errors and timeouts are surfaced without a silent fallback. Check server-side
+configuration for details; provider response bodies are not echoed to clients.
 
-## Troubleshooting
+## Current limits
 
-**`/agent/chat` returns 401 even though I'm logged in.**
-
-You're loading a stale UI bundle from before the agent was wired up — the
-old bundle hits `/api/v1/agent/chat` with the wrong content-type and the
-backend rejects it. Hard-refresh the browser:
-
-- Chrome / Edge: `Ctrl+Shift+R` (Windows / Linux) or `Cmd+Shift+R` (macOS)
-- Or DevTools → right-click reload → **Empty Cache and Hard Reload**
-
-If you upgraded Waldo with `git pull` after PR #3, also rebuild the app
-image so the new SPA is baked in:
-
-```bash
-( cd ui && npm run build ) && \
-  docker compose --profile nvidia up -d --build waldo-app
-```
-
-(`./install.sh` does both of these for you on every run.)
-
-**`/agent/chat` hangs for ~30s then errors.**
-
-The model isn't loaded yet. On first boot, `ollama-init` pulls `gemma4:e4b`
-(~9.6 GB) — that takes 5–10 minutes on a typical home connection. Watch:
-
-```bash
-docker logs -f waldo-ollama-init-1
-```
-
-When the pull finishes, `docker exec waldo-ollama-1 ollama list` will show
-the model. Subsequent chats are sub-second after the first prompt warms
-the model into memory.
-
-**Ollama container is `unhealthy` and `waldo-app` won't start.**
-
-The healthcheck uses `ollama list` (the CLI bundled in the image — `curl`
-isn't). If you see this on a host with limited GPU memory, check
-`docker logs waldo-ollama-1` for OOM or device errors. Free up VRAM by
-setting a smaller model:
-
-```bash
-# .env
-AGENT_MODEL=gemma4:e2b           # ~7.2 GB instead of 9.6
-WALDO_AGENT_MODEL=gemma4:e2b
-```
-
-…then `docker compose run --rm ollama-init && docker compose restart waldo-app`.
-
-## Privacy
-
-Everything stays on your machine. The model is local. Tool calls touch your
-own database. No telemetry, no third-party LLM API calls.
+Provider adapters currently support text conversations and tool orchestration.
+No video, crop or image submission is wired through this layer. Model-specific
+tool capability, routing behavior, service rate limits and live account access
+still need qualification. The map/evidence-search tools described in the roadmap
+are not implemented by selecting a new chat provider.

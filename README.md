@@ -425,6 +425,7 @@ The full docs live in [`docs-site/`](docs-site/) (Docusaurus). Highlights:
 - **[Quickstart](docs-site/docs/getting-started/quickstart.md)** — upload a clip, auto-label, train, deploy in ~15 minutes
 - **[UI Tour](docs-site/docs/ui/overview.md)** — every page screenshotted, with short walkthrough videos
 - **[Architecture](docs-site/docs/architecture/overview.md)** — services, data model, security
+- **[Video evidence roadmap](docs-site/docs/architecture/roadmap.md)** — quality audit, SAM 3.1, model providers, geotemporal search, design, and desktop recommendation
 - **[API Reference](docs-site/docs/api/overview.md)** — every REST endpoint grouped by resource
 - **[Workflow Blocks](docs-site/docs/workflows/overview.md)** — composable blocks for the visual editor
 - **[Deployment](docs-site/docs/deployment/docker.md)** — Docker, Linux, Windows, and edge devices

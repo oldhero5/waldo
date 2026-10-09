@@ -30,7 +30,7 @@ uv run alembic upgrade head
 uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 # In a second terminal, the labeler worker (uses MLX natively, must be on host)
-uv run celery -A lib.tasks worker -Q labeler -l info
+uv run celery -A lib.tasks worker -Q celery --pool=solo --concurrency=1 -l info
 
 # In a third terminal, the UI
 cd ui
@@ -47,7 +47,9 @@ docker compose up -d postgres redis minio
 uv sync
 uv run alembic upgrade head
 uv run uvicorn app.main:app --reload
-docker compose up -d labeler trainer  # workers in containers
+docker compose --profile nvidia up -d waldo-labeler-nvidia waldo-trainer-nvidia
+# For CPU workers instead:
+# docker compose --profile cpu up -d waldo-labeler waldo-trainer
 cd ui && npm install && npm run dev
 ```
 
