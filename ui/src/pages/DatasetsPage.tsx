@@ -558,6 +558,8 @@ function DatasetCard({ job, onDeleted, selected, onToggleSelect }: {
                         { fmt: "segment", label: "YOLO Segment", desc: "Polygon labels" },
                         { fmt: "detect", label: "YOLO Detect", desc: "Bounding box labels" },
                         { fmt: "obb", label: "YOLO OBB", desc: "Oriented bounding boxes" },
+                        { fmt: "classify", label: "YOLO Classify", desc: "Padded crops of saved objects, grouped by source video" },
+                        { fmt: "pose", label: "YOLO Pose", desc: "One centroid keypoint per saved object" },
                       ].map(({ fmt, label, desc }) => (
                         <button
                           key={fmt}
@@ -1156,8 +1158,10 @@ export default function DatasetsPage() {
               setBulkBusy(true);
               try {
                 for (const id of selected) {
-                  const result = await exportDataset(id, "segment");
-                  const name = allDatasets.find((item) => item.job_id === id)?.name || id;
+                  const job = allDatasets.find((item) => item.job_id === id);
+                  const format = job?.task_type === "detect_transformer" ? "detect" : job?.task_type || "segment";
+                  const result = await exportDataset(id, format);
+                  const name = job?.name || id;
                   setBulkDownloads((previous) => [...previous.filter((item) => item.jobId !== id), { jobId: id, name, url: result.download_url }]);
                 }
               } catch (e: unknown) {

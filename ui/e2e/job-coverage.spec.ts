@@ -178,6 +178,43 @@ test("exported artifact offers an actionable download when popups are blocked an
   expect(exportRequests).toBe(1);
 });
 
+test("classification and centroid pose exports request their own formats and offer downloads", async ({ page }) => {
+  await mock(page, "completed", null);
+  const formats: string[] = [];
+  await page.route("**/api/v1/jobs/coverage-job/export**", (route) => {
+    const format = route.request().postDataJSON().format;
+    formats.push(format);
+    return json(route, { download_url: `/ready-${format}.zip` });
+  });
+  await page.route("**/ready-*.zip", (route) => route.fulfill({ contentType: "application/zip", body: "fixture archive" }));
+  await page.goto("/datasets");
+  await page.getByText("Road footage", { exact: true }).click();
+  for (const { format, label, description } of [
+    { format: "classify", label: "YOLO Classify", description: "Padded crops of saved objects, grouped by source video" },
+    { format: "pose", label: "YOLO Pose", description: "One centroid keypoint per saved object" },
+  ]) {
+    await page.getByRole("button", { name: "Export", exact: true }).click();
+    await expect(page.getByText(description, { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: new RegExp(label) }).click();
+    const link = page.getByRole("link", { name: `Download ${label} export`, exact: true });
+    await expect(link).toHaveAttribute("href", `/ready-${format}.zip`);
+    const downloading = page.waitForEvent("download");
+    await link.click();
+    expect((await downloading).suggestedFilename()).toBe(`ready-${format}.zip`);
+  }
+  expect(formats).toEqual(["classify", "pose"]);
+});
+
+test("task descriptions describe object crops and one centroid rather than whole frames or skeletons", async ({ page }) => {
+  await mock(page, "completed");
+  await page.goto("/label/clip-a");
+  const task = page.getByText("Output format", { exact: true }).locator("..").locator("select");
+  await task.selectOption("classify");
+  await expect(page.getByText("Padded object crops labeled by class", { exact: true })).toBeVisible();
+  await task.selectOption("pose");
+  await expect(page.getByText("One centroid keypoint per detected object", { exact: true })).toBeVisible();
+});
+
 
 test("training uses the exported detection format and current patience setting", async ({ page }) => {
   await mock(page, "completed", null);
@@ -241,25 +278,36 @@ test("dataset counts refer to frames and Newest preserves server creation order"
   await expect(page.locator("h3")).toHaveText(["Newer ten-frame dataset", "Older twenty-frame dataset"]);
 });
 
-test("bulk exports retain individual download links without opening blocked popups", async ({ page }) => {
+test("bulk exports use each dataset format and retain individual download links", async ({ page }) => {
   await mock(page, "completed", null);
   await page.addInitScript(() => { window.open = () => null; });
   await page.route("**/api/v1/status", (route) => json(route, [
-    { ...job("completed", null), job_id: "newer", name: "Newer dataset", total_frames: 10 },
-    { ...job("completed", null), job_id: "older", name: "Older dataset", total_frames: 20 },
+    { ...job("completed", null), job_id: "newer", name: "Newer dataset", total_frames: 10, task_type: "classify" },
+    { ...job("completed", null), job_id: "older", name: "Older dataset", total_frames: 20, task_type: "pose" },
+    { ...job("completed", null), job_id: "legacy", name: "Legacy dataset", total_frames: 15 },
+    { ...job("completed", null), job_id: "transformer", name: "Transformer dataset", total_frames: 12, task_type: "detect_transformer" },
   ]));
-  const exports: string[] = [];
+  const exports: { id: string; format: string }[] = [];
   await page.route("**/api/v1/jobs/*/export**", (route) => {
     const id = new URL(route.request().url()).pathname.split("/").at(-2)!;
-    exports.push(id);
+    exports.push({ id, format: route.request().postDataJSON().format });
     return json(route, { download_url: `/ready-${id}.zip` });
   });
   await page.goto("/datasets");
   await page.getByRole("button", { name: "Select", exact: true }).click();
   await page.getByRole("checkbox", { name: "Select Newer dataset", exact: true }).check();
   await page.getByRole("checkbox", { name: "Select Older dataset", exact: true }).check();
+  await page.getByRole("checkbox", { name: "Select Legacy dataset", exact: true }).check();
+  await page.getByRole("checkbox", { name: "Select Transformer dataset", exact: true }).check();
   await page.getByRole("button", { name: "Export All", exact: true }).click();
   await expect(page.getByRole("link", { name: "Download Newer dataset export", exact: true })).toHaveAttribute("href", "/ready-newer.zip");
   await expect(page.getByRole("link", { name: "Download Older dataset export", exact: true })).toHaveAttribute("href", "/ready-older.zip");
-  expect(exports).toEqual(["newer", "older"]);
+  await expect(page.getByRole("link", { name: "Download Legacy dataset export", exact: true })).toHaveAttribute("href", "/ready-legacy.zip");
+  await expect(page.getByRole("link", { name: "Download Transformer dataset export", exact: true })).toHaveAttribute("href", "/ready-transformer.zip");
+  expect(exports).toEqual([
+    { id: "newer", format: "classify" },
+    { id: "older", format: "pose" },
+    { id: "legacy", format: "segment" },
+    { id: "transformer", format: "detect" },
+  ]);
 });
