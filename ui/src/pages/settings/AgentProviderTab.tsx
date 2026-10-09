@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { authFetch } from "../../api";
 
 interface ProviderStatus { provider: string; model: string; ok: boolean; error?: string | null; source: "environment" | "runtime"; cloud_text_enabled: boolean; connection_verified: boolean }
@@ -11,12 +11,16 @@ export function AgentProviderTab({ isAdmin }: { isAdmin: boolean }) {
   const [consent, setConsent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const draftEdited = useRef(false);
   const cloud = ["openai", "anthropic", "openrouter"].includes(provider);
   const apply = (data: ProviderStatus) => { setStatus(data); setProvider(data.provider); setModel(data.model); setConsent(data.cloud_text_enabled); };
   useEffect(() => {
     const controller = new AbortController();
     authFetch("/api/v1/agent/health", { signal: controller.signal }).then(async (r) => { if (!r.ok) throw new Error("Provider configuration is unavailable"); return r.json(); })
-      .then(apply).catch((e) => { if (!controller.signal.aborted) setError(e.message); });
+      .then((data: ProviderStatus) => {
+        setStatus(data);
+        if (!draftEdited.current) { setProvider(data.provider); setModel(data.model); setConsent(data.cloud_text_enabled); }
+      }).catch((e) => { if (!controller.signal.aborted) setError(e.message); });
     return () => controller.abort();
   }, []);
   const submit = async (reset = false) => {
@@ -38,11 +42,11 @@ export function AgentProviderTab({ isAdmin }: { isAdmin: boolean }) {
     <p className="text-xs text-[var(--text-muted)]">Environment variables provide durable configuration. Runtime overrides stay in this server process’s memory and clear on restart; deployments with multiple workers should use environment configuration. Keys are write-only and never saved in your browser.</p>
     {status?.error && <p className="text-sm text-[var(--warning)]">{status.error}</p>}
     {!isAdmin ? <p className="text-sm text-[var(--text-secondary)]">A workspace administrator can configure the provider.</p> : <>
-      <label className="block text-sm space-y-1"><span>Provider</span><select aria-label="Provider" className={field} value={provider} disabled={busy} onChange={(e) => { setProvider(e.target.value); setKey(""); setModel(""); setConsent(false); }}><option value="ollama">Ollama</option><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option><option value="vllm">vLLM</option><option value="openrouter">OpenRouter</option></select></label>
-      <label className="block text-sm space-y-1"><span>Model identifier</span><input aria-label="Model identifier" className={field} value={model} onChange={(e) => setModel(e.target.value)} maxLength={200} disabled={busy} /></label>
-      {provider !== "ollama" && <label className="block text-sm space-y-1"><span>API key</span><input aria-label="API key" className={field} type="password" autoComplete="off" value={key} onChange={(e) => setKey(e.target.value)} disabled={busy} placeholder="Blank uses this provider’s server environment key" /></label>}
+      <label className="block text-sm space-y-1"><span>Provider</span><select aria-label="Provider" className={field} value={provider} disabled={busy} onChange={(e) => { draftEdited.current = true; setProvider(e.target.value); setKey(""); setModel(""); setConsent(false); }}><option value="ollama">Ollama</option><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option><option value="vllm">vLLM</option><option value="openrouter">OpenRouter</option></select></label>
+      <label className="block text-sm space-y-1"><span>Model identifier</span><input aria-label="Model identifier" className={field} value={model} onChange={(e) => { draftEdited.current = true; setModel(e.target.value); }} maxLength={200} disabled={busy} /></label>
+      {provider !== "ollama" && <label className="block text-sm space-y-1"><span>API key</span><input aria-label="API key" className={field} type="password" autoComplete="off" value={key} onChange={(e) => { draftEdited.current = true; setKey(e.target.value); }} disabled={busy} placeholder="Blank uses this provider’s server environment key" /></label>}
       <p className="text-xs text-[var(--text-muted)]">Endpoints come from server configuration; this form cannot change local server addresses.</p>
-      {cloud && <label className="flex items-start gap-2 text-sm"><input className="mt-1" type="checkbox" checked={consent} disabled={busy} onChange={(e) => setConsent(e.target.checked)} /><span>I allow workspace chat, workflow text, and tool results to be sent to {provider}.</span></label>}
+      {cloud && <label className="flex items-start gap-2 text-sm"><input className="mt-1" type="checkbox" checked={consent} disabled={busy} onChange={(e) => { draftEdited.current = true; setConsent(e.target.checked); }} /><span>I allow workspace chat, workflow text, and tool results to be sent to {provider}.</span></label>}
       <p className="text-xs text-[var(--text-muted)]">Testing sends “Reply with OK” to the chosen model and may incur charges. The override is applied only after the test succeeds.</p>
       <div className="flex gap-3 flex-wrap"><button className="px-4 py-2 rounded-lg bg-accent text-on-accent hover:bg-accent-hover text-sm disabled:opacity-50" disabled={busy || !model.trim() || (cloud && !consent)} onClick={() => submit()}>{busy ? "Working…" : "Test and apply temporary configuration"}</button><button className="px-3 py-2 text-sm border border-[var(--border-default)] rounded-lg disabled:opacity-50" disabled={busy} onClick={() => submit(true)}>Use deployment configuration</button></div>
     </>}
