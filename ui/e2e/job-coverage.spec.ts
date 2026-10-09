@@ -36,6 +36,36 @@ async function mock(page: Page, status: string, processingSummary: unknown = sum
   return () => statusRequests;
 }
 
+for (const status of ["pending", "retrying", "extracting", "labeling", "converting"]) {
+  test(`${status} datasets cannot be duplicated while their evidence is changing`, async ({ page }) => {
+    await mock(page, status);
+    await page.goto("/datasets");
+    await page.getByText("Road footage", { exact: true }).click();
+    await page.getByRole("button", { name: /Manage Classes/ }).click();
+    const duplicate = page.getByRole("button", { name: "Duplicate Dataset", exact: true });
+    await expect(duplicate).toBeDisabled();
+    await expect(duplicate).toHaveAttribute("title", "Wait for labeling to finish before duplicating this dataset.");
+  });
+}
+
+test("terminal datasets can be duplicated and a server conflict is visible", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await mock(page, "partial");
+  await page.route("**/api/v1/jobs/coverage-job/duplicate", (route) => route.fulfill({
+    status: 409, contentType: "application/json",
+    body: JSON.stringify({ detail: "Wait for labeling to finish before duplicating this dataset." }),
+  }));
+  await page.goto("/datasets");
+  await page.getByText("Road footage", { exact: true }).click();
+  await page.getByRole("button", { name: /Manage Classes/ }).click();
+  const duplicate = page.getByRole("button", { name: "Duplicate Dataset", exact: true });
+  await expect(duplicate).toBeEnabled();
+  await duplicate.click();
+  await expect(page.getByText(/Error:.*Wait for labeling to finish/)).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
 test("partial labeling stops polling, explains sample coverage, and allows evidence review", async ({ page }) => {
   const requests = await mock(page, "partial");
   await page.goto("/label/clip-a");

@@ -392,6 +392,12 @@ def duplicate_dataset(
         job_id = original.id
         if not original:
             raise HTTPException(status_code=404, detail="Job not found")
+        # Duplicates retain evidence but never start a worker of their own.
+        if original.status not in ("completed", "partial", "failed"):
+            raise HTTPException(
+                status_code=409,
+                detail="Wait for labeling to finish before duplicating this dataset",
+            )
 
         # Compute next version in the lineage
         root_id = original.parent_id or original.id

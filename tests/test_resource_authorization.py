@@ -492,14 +492,63 @@ def test_training_missing_artifact_denied_before_enqueue(resources, monkeypatch)
     assert response.status_code == 400
 
 
-def test_duplicate_preserves_track_provenance(resources):
+@pytest.mark.parametrize(
+    "job_status", ["pending", "retrying", "extracting", "labeling", "converting", "queued", "unknown", None]
+)
+def test_duplicate_rejects_nonterminal_source_without_copying_evidence(resources, job_status):
     session, client, _, rows = resources
+    original = rows["own"]["job"]
+    original.status = job_status
+    original.processing_summary = {"videos": [{"status": "retrying", "sampled_frames": 1}]}
+    session.commit()
+    job_count = session.query(LabelingJob).count()
+    annotation_count = session.query(Annotation).count()
+
+    response = client.post(f"/api/v1/jobs/{original.id}/duplicate")
+
+    assert response.status_code == 409, response.text
+    session.expire_all()
+    assert session.query(LabelingJob).count() == job_count
+    assert session.query(Annotation).count() == annotation_count
+    assert original.status == job_status
+    assert original.processing_summary == {"videos": [{"status": "retrying", "sampled_frames": 1}]}
+
+
+@pytest.mark.parametrize("job_status", ["completed", "partial", "failed"])
+def test_duplicate_preserves_terminal_evidence_and_can_be_deleted(resources, job_status):
+    session, client, _, rows = resources
+    original = rows["own"]["job"]
+    original.status = job_status
+    original.processing_summary = {"videos": [{"status": job_status, "sampled_frames": 2, "error": "inference failed"}]}
+    original.total_frames = 2
+    original.processed_frames = 1
+    original.result_minio_key = "results/source.zip"
     rows["own"]["annotation"].track_id = 33
     session.commit()
-    response = client.post(f"/api/v1/jobs/{rows['own']['job'].id}/duplicate")
+    response = client.post(f"/api/v1/jobs/{original.id}/duplicate")
     assert response.status_code == 200
-    copied = client.get(f"/api/v1/jobs/{response.json()['new_id']}/annotations").json()
+    new_id = response.json()["new_id"]
+    duplicate = session.get(LabelingJob, uuid.UUID(new_id))
+    assert duplicate.status == job_status
+    assert duplicate.processing_summary == {
+        "videos": [{"status": job_status, "sampled_frames": 2, "error": "inference failed"}]
+    }
+    assert duplicate.total_frames == 2
+    assert duplicate.processed_frames == 1
+    assert duplicate.result_minio_key == "results/source.zip"
+    assert duplicate.celery_task_id is None
+    copied = client.get(f"/api/v1/jobs/{new_id}/annotations").json()
+    assert len(copied) == 1
     assert copied[0]["track_id"] == 33
+    assert copied[0]["source_video_id"] == str(rows["own"]["video"].id)
+
+    deleted = client.delete(f"/api/v1/jobs/{new_id}")
+    assert deleted.status_code == 200, deleted.text
+    session.expire_all()
+    assert session.query(LabelingJob).filter_by(id=uuid.UUID(new_id)).count() == 0
+    assert session.query(Annotation).filter_by(job_id=uuid.UUID(new_id)).count() == 0
+    assert session.get(LabelingJob, original.id).status == job_status
+    assert session.query(Annotation).filter_by(job_id=original.id).count() == 1
 
 
 def test_partial_child_is_terminal_and_partial_artifact_is_visible(resources):
