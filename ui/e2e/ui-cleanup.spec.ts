@@ -386,6 +386,40 @@ const workflowBlock = {
 };
 const savedGraph = (text: string) => ({ nodes: [{ id: "saved-node", type: "test", config: { prompt: text }, position: { x: 120, y: 80 } }], edges: [] });
 
+test("workflow palette adds distinct nodes when randomUUID is unavailable", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("waldo_token", "A");
+    // Match non-loopback HTTP origins, where getRandomValues exists but randomUUID does not.
+    Object.defineProperty(crypto, "randomUUID", { value: undefined });
+  });
+  await mockApi(page);
+  let graph = savedGraph("saved prompt");
+  await page.route("**/api/v1/workflows/**", (route) => {
+    if (new URL(route.request().url()).pathname.endsWith("/blocks")) return json(route, { blocks: [workflowBlock] });
+    if (new URL(route.request().url()).pathname.endsWith("/deploy")) return json(route, { endpoint: "/api/v1/workflows/serve/owned", curl: "curl fixture" });
+    if (route.request().method() === "PUT") graph = route.request().postDataJSON().graph;
+    return json(route, { id: "owned-id", slug: "owned", name: "Owned workflow", description: "", graph, block_count: graph.nodes.length, is_deployed: false });
+  });
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto("/workflows/owned");
+  const nodes = page.locator(".react-flow__node");
+  await expect(nodes).toHaveCount(1);
+  await page.getByRole("button", { name: /Test block/ }).click();
+  await page.getByRole("button", { name: /Test block/ }).click();
+  await expect(nodes).toHaveCount(3);
+  const ids = await nodes.evaluateAll((elements) => elements.map((element) => element.getAttribute("data-id")));
+  expect(ids).toContain("saved-node");
+  expect(new Set(ids).size).toBe(3);
+  await page.getByRole("button", { name: "Save & Deploy", exact: true }).click();
+  await expect(page.getByText("Workflow Deployed", { exact: true })).toBeVisible();
+  expect(graph.nodes.map((node) => node.id)).toEqual(ids);
+  await page.reload();
+  await expect(nodes).toHaveCount(3);
+  expect(await nodes.evaluateAll((elements) => elements.map((element) => element.getAttribute("data-id")))).toEqual(ids);
+  expect(errors).toEqual([]);
+});
+
 test("saved workflow reopens, edits, and updates the same record", async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem("waldo_token", "A"));
   await mockApi(page);
