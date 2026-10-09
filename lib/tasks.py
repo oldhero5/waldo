@@ -16,6 +16,12 @@ from lib.config import settings
 app = Celery("waldo", broker=settings.redis_url, backend=settings.redis_url)
 app.Task.resultrepr_maxsize = 0
 
+# Redis defaults to redelivery after one hour, before long jobs finish. This
+# window exceeds configured limits, but solo workers do not enforce those limits.
+# Every worker sharing this broker must use the same value; crash recovery can
+# wait this long when the worker cannot requeue its unacknowledged messages.
+_VISIBILITY_TIMEOUT = 25 * 3600
+
 app.conf.update(
     worker_prefetch_multiplier=1,
     task_acks_late=True,
@@ -27,12 +33,15 @@ app.conf.update(
     task_reject_on_worker_lost=True,
     # Per-task defaults — decorators below opt individual tasks into retries and bound runtimes.
     broker_connection_retry_on_startup=True,
+    broker_transport_options={"visibility_timeout": _VISIBILITY_TIMEOUT},
+    result_backend_transport_options={"visibility_timeout": _VISIBILITY_TIMEOUT},
+    visibility_timeout=_VISIBILITY_TIMEOUT,
     result_expires=24 * 3600,
 )
 
 # Shared retry config applied to long-running jobs that must survive transient failures
-# (Redis hiccup, DB blip, MinIO timeout). Hard time limits prevent stuck workers from
-# wedging the queue indefinitely.
+# (Redis hiccup, DB blip, MinIO timeout). Configured time limits require a supporting
+# worker pool; the current solo workers do not enforce them.
 _RETRY_OPTS = {
     "autoretry_for": (Exception,),
     "retry_backoff": True,
