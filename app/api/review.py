@@ -1077,7 +1077,8 @@ def export_dataset(
             # Each export is an immutable snapshot; existing training runs retain their input.
             result_key = f"results/{job_id}/exports/{_uuid.uuid4()}/dataset-{fmt}.zip"
             upload_file(result_key, zip_path)
-            if fmt == (job.task_type or "segment"):
+            training_format = "detect" if job.task_type == "detect_transformer" else (job.task_type or "segment")
+            if fmt == training_format:
                 if not publish_current_export(session, job_id, evidence_revision, result_key):
                     session.rollback()
                     try:

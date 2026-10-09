@@ -3,6 +3,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.api import review
@@ -10,7 +11,8 @@ from app.main import app
 from lib.db import Annotation, Frame, LabelingJob, Project, Video
 
 
-def test_postgres_edit_during_export_cannot_republish_stale_snapshot(service_client, monkeypatch):
+@pytest.mark.parametrize("task_type", ["detect", "detect_transformer"])
+def test_postgres_edit_during_export_cannot_republish_stale_snapshot(service_client, monkeypatch, task_type):
     client = service_client
     workspace_id = client.get("/api/v1/auth/me").json()["workspace_id"]
     with review.SessionLocal() as session:
@@ -21,7 +23,7 @@ def test_postgres_edit_during_export_cannot_republish_stale_snapshot(service_cli
         session.add(video)
         session.flush()
         frame = Frame(video_id=video.id, frame_number=0, timestamp_s=0, minio_key="frames/race.jpg")
-        job = LabelingJob(project_id=project.id, video_id=video.id, status="completed", task_type="detect")
+        job = LabelingJob(project_id=project.id, video_id=video.id, status="completed", task_type=task_type)
         session.add_all([frame, job])
         session.flush()
         annotation = Annotation(
@@ -77,7 +79,8 @@ def test_postgres_edit_during_export_cannot_republish_stale_snapshot(service_cli
         assert changed.bbox == [0.5, 0.5, 0.3, 0.3]
 
 
-def test_postgres_edit_waits_for_published_export_then_invalidates_it(service_client, monkeypatch):
+@pytest.mark.parametrize("task_type", ["detect", "detect_transformer"])
+def test_postgres_edit_waits_for_published_export_then_invalidates_it(service_client, monkeypatch, task_type):
     client = service_client
     workspace_id = client.get("/api/v1/auth/me").json()["workspace_id"]
     with review.SessionLocal() as session:
@@ -88,7 +91,7 @@ def test_postgres_edit_waits_for_published_export_then_invalidates_it(service_cl
         session.add(video)
         session.flush()
         frame = Frame(video_id=video.id, frame_number=0, timestamp_s=0, minio_key="frames/publish.jpg")
-        job = LabelingJob(project_id=project.id, video_id=video.id, status="completed", task_type="detect")
+        job = LabelingJob(project_id=project.id, video_id=video.id, status="completed", task_type=task_type)
         session.add_all([frame, job])
         session.flush()
         annotation = Annotation(
