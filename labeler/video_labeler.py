@@ -192,7 +192,8 @@ def process_video_native(
     try:
         if not cap.isOpened():
             raise RuntimeError(f"Cannot open video: {video_path}")
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        # OpenCV can estimate frame count from duration * FPS for VFR sources.
+        total_frames = len(timings) if timings else int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         fps = cap.get(cv2.CAP_PROP_FPS)
         width, height = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         if total_frames <= 0 or not math.isfinite(fps) or fps <= 0 or width <= 0 or height <= 0:
@@ -203,7 +204,10 @@ def process_video_native(
             for frame_index in range(total_frames):
                 decoded, image = cap.read()
                 if not decoded:
-                    raise RuntimeError(f"Decode stopped at source frame {frame_index} of {total_frames}: {video_path}")
+                    raise RuntimeError(
+                        f"Decode stopped at source frame {frame_index} of {total_frames}; "
+                        f"cannot verify complete source coverage: {video_path}"
+                    )
                 if frame_index % stride:
                     continue
                 height, width = image.shape[:2]
@@ -228,6 +232,11 @@ def process_video_native(
                         "sampling_stride": stride,
                         "detections": _result_to_detections(result, width, height, prompts),
                     }
+                )
+            if cap.read()[0]:
+                raise RuntimeError(
+                    f"Decoded frames exceed the expected source frame count of {total_frames}; "
+                    f"cannot verify complete source coverage: {video_path}"
                 )
     finally:
         cap.release()
@@ -278,10 +287,10 @@ def _run_playground_pytorch(
         video_path = str(Path(tmp) / "video.mp4")
         download_file(minio_key, video_path)
 
+        timings = probe_frame_timing(video_path)
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
             raise RuntimeError(f"Cannot open video {minio_key}")
-        timings = probe_frame_timing(video_path)
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         fps = cap.get(cv2.CAP_PROP_FPS) or 24.0
         W = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -559,10 +568,10 @@ def run_playground(
         video_path = str(Path(tmp) / "video.mp4")
         download_file(minio_key, video_path)
 
+        timings = probe_frame_timing(video_path)
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
             raise RuntimeError(f"Cannot open video {minio_key}")
-        timings = probe_frame_timing(video_path)
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         fps = cap.get(cv2.CAP_PROP_FPS) or 24.0
         W = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))

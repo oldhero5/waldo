@@ -21,6 +21,7 @@ def probe_frame_timing(path: str) -> list[FrameTiming]:
 
     FFprobe and OpenCV both enumerate decoded frames in presentation order.
     Missing/invalid timing stays an explicitly marked FPS approximation.
+    Decoder error diagnostics fail the probe; partial frames are not timing evidence.
     """
     if not Path(path).is_file():
         return []
@@ -44,6 +45,8 @@ def probe_frame_timing(path: str) -> list[FrameTiming]:
             text=True,
             check=True,
         )
+        if result.stderr.strip():
+            raise RuntimeError(f"Video decoding reported errors while probing source frames: {path}")
         probe = json.loads(result.stdout)
         frames = probe["frames"]
         times = [float(frame["best_effort_timestamp_time"]) for frame in frames]
@@ -63,7 +66,12 @@ def probe_frame_timing(path: str) -> list[FrameTiming]:
             )
             timings.append(FrameTiming(time - origin, duration if math.isfinite(duration) and duration > 0 else None))
         return timings
-    except (OSError, subprocess.CalledProcessError, ValueError, KeyError, TypeError) as error:
+    except subprocess.CalledProcessError as error:
+        if error.stderr and error.stderr.strip():
+            raise RuntimeError(f"Video decoding reported errors while probing source frames: {path}") from error
+        logger.warning("Source PTS unavailable for %s; using FPS approximation: %s", path, error)
+        return []
+    except (OSError, ValueError, KeyError, TypeError) as error:
         logger.warning("Source PTS unavailable for %s; using FPS approximation: %s", path, error)
         return []
 
