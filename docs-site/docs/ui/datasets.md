@@ -35,6 +35,18 @@ The Datasets page is the home for everything dataset-related: browse, drill into
 - The import panel is hidden by default — toggling it sets a `?showImport=1` query param so URLs are shareable.
 - TanStack Query caches results with a 5-minute `staleTime`; pull-to-refresh forces a refetch.
 
+## Export after review
+
+Open a labeling job's export menu and select its task format. Classification
+exports padded object crops; pose exports one centroid keypoint per saved
+polygon. Pending labels are included unless rejected. Review the shapes and
+classes before export. The returned download link points to an immutable ZIP.
+Bulk export uses each job's task format.
+
+Native and text-prompt labeling retain observations for this explicit export
+step. They do not automatically replace a reviewed dataset on retry. If review
+changes invalidate the training artifact, export again before starting training.
+
 ## Related
 
 - [Upload API](../api/upload) — endpoints behind the upload panel

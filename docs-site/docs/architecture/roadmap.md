@@ -50,8 +50,8 @@ of model accuracy.
 | Interface | Neutral charcoal/gray/white styling; honest workspace identity; account cache isolation; immutable preview provenance; visible sampled/partial coverage and export-before-training behavior | The map/search/evidence workspace below is still a future feature. |
 | Deployment and schema | Loopback service ports, consistent credentials, optional Ollama profile and one model setting; append-only migrations for authority, ownership, evidence configuration and the missing deployment slug | Local OrbStack API/PostgreSQL/Redis/MinIO with native MLX/MPS workers and Ollama were exercised. Live SAM image/video handoff, comparison completion/failure, repeated terminal polling and input cleanup passed. This does not qualify outage recovery, production, all providers, CUDA, or physical-camera accuracy. Migrations were checked against disposable PostgreSQL and applied to the new local test installation, not an existing populated user database. |
 
-Training exports now carry a manifest and are immutable snapshots. Native labeling
-requires review/export before training. Annotation changes invalidate the job’s
+Training exports now carry a manifest and are immutable snapshots. Native and
+text-prompt labeling require review/export before training. Annotation changes invalidate the job’s
 current export; an already-created training run retains its immutable snapshot. A download in another dataset format does
 not silently replace the job's training artifact. Existing datasets should be
 re-exported or regenerated before trusting evaluation numbers affected by prior
