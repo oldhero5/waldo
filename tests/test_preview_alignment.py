@@ -1,6 +1,7 @@
 """The Playground worker and direct response retain decoded-frame timing."""
 
 import base64
+import platform
 import shutil
 import sys
 from contextlib import nullcontext
@@ -102,6 +103,8 @@ def test_native_playground_window_is_selected_by_source_pts_and_thumbnail_matche
     session.query.return_value.filter_by.return_value.one.return_value = SimpleNamespace(minio_key="source.mp4")
     monkeypatch.setattr(subject, "SessionLocal", lambda: session)
     monkeypatch.setattr(subject, "download_file", lambda key, destination: shutil.copyfile(video, destination))
+    # This test exercises the MLX branch on every CI host, including Linux.
+    monkeypatch.setattr(platform, "system", lambda: "Darwin")
     result = subject.run_playground("video", ["moving"], start_sec=0.1, duration_sec=0.05, sample_fps=100)
     assert len(result["frames"]) == 1
     frame = result["frames"][0]
