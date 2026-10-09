@@ -252,6 +252,33 @@ test("provider settings require cloud consent and never persist entered credenti
   if (process.env.WALDO_SCREENSHOT_DIR) await page.screenshot({ path: `${process.env.WALDO_SCREENSHOT_DIR}/waldo-agent-provider-settings.png`, fullPage: true });
 });
 
+test("late provider health does not replace a configuration draft", async ({ page }) => {
+  await mockApi(page);
+  const status = { provider: "ollama", model: "local-model", ok: true, source: "environment", cloud_text_enabled: false, connection_verified: false };
+  let releaseHealth!: () => void;
+  let healthStarted!: () => void;
+  const pendingHealth = new Promise<void>((resolve) => { releaseHealth = resolve; });
+  const requestedHealth = new Promise<void>((resolve) => { healthStarted = resolve; });
+  await page.route("**/api/v1/agent/health", async (route) => {
+    healthStarted();
+    await pendingHealth;
+    await json(route, status);
+  });
+  await page.goto("/login"); await signIn(page, "A");
+  await page.getByRole("link", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: "AI provider", exact: true }).click();
+  await requestedHealth;
+  await page.getByLabel("Provider", { exact: true }).selectOption("openai");
+  await page.getByLabel("Model identifier", { exact: true }).fill("chosen-model");
+  const healthResponse = page.waitForResponse("**/api/v1/agent/health");
+  releaseHealth();
+  await (await healthResponse).finished();
+  await expect(page.getByText(/Current: ollama/)).toBeVisible();
+  await expect(page.getByLabel("Provider", { exact: true })).toHaveValue("openai");
+  await expect(page.getByLabel("Model identifier", { exact: true })).toHaveValue("chosen-model");
+  await expect(page.getByLabel("API key", { exact: true })).toBeVisible();
+});
+
 test("training charts recover from unavailable values and keep hidden series restorable", async ({ page }) => {
   await page.clock.install();
   await page.addInitScript(() => localStorage.setItem("waldo_token", "A"));
