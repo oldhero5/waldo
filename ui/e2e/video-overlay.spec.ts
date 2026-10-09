@@ -516,3 +516,156 @@ test("playground SVG masks match the presented decoded video frame", async ({ pa
   const recorded = await page.evaluate(() => (window as Window & { svgSamples?: { objectX: number; maskX: number }[] }).svgSamples || []);
   expect(Math.max(...recorded.map((sample) => Math.abs(sample.maskX - sample.objectX)))).toBeLessThanOrEqual(2);
 });
+
+async function openMediaPreview(page: Page) {
+  const media = {
+    now: Date.parse("2026-10-09T12:00:00Z"),
+    lists: 0,
+    denied: 0,
+    unavailable: false,
+    rejectMedia: false,
+    holdList: 0,
+  };
+  let releaseList!: () => void;
+  let startedList!: () => void;
+  const heldList = new Promise<void>((resolve) => { releaseList = resolve; });
+  const requestedList = new Promise<void>((resolve) => { startedList = resolve; });
+  await page.clock.setFixedTime(media.now);
+  await page.addInitScript(() => localStorage.setItem("waldo_token", "fixture"));
+  await page.route("**/api/v1/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith("/auth/me")) return json(route, {
+      id: "fixture", email: "test@example.local", display_name: "Test", avatar_url: null,
+      workspace_id: "workspace", workspace_name: "Test workspace", role: "admin",
+    });
+    if (path === "/api/v1/projects") return json(route, [{
+      id: "collection", name: "Synthetic footage", video_count: 2, created_at: "2026-10-09T12:00:00Z",
+    }]);
+    if (path === "/api/v1/projects/collection/videos") {
+      const generation = ++media.lists;
+      if (media.holdList === generation) { startedList(); await heldList; }
+      if (media.unavailable) return route.fulfill({ status: 503, body: "Playback renewal unavailable" });
+      return json(route, ["video-a", "video-b"].map((id) => ({
+        id, filename: `${id}.webm`, duration_s: 2, width: 320, height: 180, fps: 30,
+        frame_count: 60, created_at: "2026-10-09T12:00:00Z",
+        url: `/fixture-preview/${id}.webm?generation=${generation}&expires=${media.now + 15 * 60 * 1000}`,
+      })));
+    }
+    if (path === "/api/v1/label/preview") return json(route, {
+      frames: frames().map((frame) => ({
+        ...frame, frame_idx: frame.frame_index, width: 320, height: 180, image_b64: "",
+        detections: frame.detections.map((detection) => ({
+          bbox: detection.bbox, score: detection.confidence, label: detection.class_name,
+          track_id: detection.track_id, polygon: detection.mask.flatMap(([x, y]) => [x / 320, y / 180]),
+        })),
+      })),
+      total_detections: 7, unique_track_count: 1, fps: 30, video_duration_s: 2, mode: "window",
+    });
+    return json(route, []);
+  });
+  await page.route("**/fixture-preview/**", (route) => {
+    const expires = Number(new URL(route.request().url()).searchParams.get("expires"));
+    if (media.rejectMedia || expires <= media.now) {
+      media.denied++;
+      return route.fulfill({ status: 401, body: "Download capability expired" });
+    }
+    const bytes = readFileSync(clip);
+    const range = /^bytes=(\d+)-(\d*)$/.exec(route.request().headers().range || "");
+    if (!range) return route.fulfill({ contentType: "video/webm", headers: { "Accept-Ranges": "bytes" }, body: bytes });
+    const start = Number(range[1]);
+    const end = Math.min(bytes.length - 1, range[2] ? Number(range[2]) : bytes.length - 1);
+    return route.fulfill({
+      status: 206, contentType: "video/webm",
+      headers: { "Accept-Ranges": "bytes", "Content-Range": `bytes ${start}-${end}/${bytes.length}` },
+      body: bytes.subarray(start, end + 1),
+    });
+  });
+  await page.goto("/playground");
+  await expect(page.getByLabel("Video", { exact: true })).toHaveValue("video-a");
+  await page.getByPlaceholder("pothole", { exact: true }).fill("object");
+  await page.getByRole("slider", { name: "Window duration", exact: true }).fill("2");
+  return { media, requestedList, releaseList };
+}
+
+test("playground renews cached capabilities after an idle page and on repeated previews", async ({ page }) => {
+  const { media } = await openMediaPreview(page);
+  for (const generation of [2, 3]) {
+    media.now += 16 * 60 * 1000;
+    await page.clock.setFixedTime(media.now);
+    await page.getByRole("button", { name: "Run preview", exact: true }).click();
+    await expect(page.locator("video")).toHaveAttribute("src", new RegExp(`video-a.webm\\?generation=${generation}&`));
+    await expect(page.locator("video")).toHaveJSProperty("videoWidth", 320);
+    await expect(page.locator("svg polygon")).toHaveCount(1);
+    await page.getByRole("button", { name: "Play preview", exact: true }).click();
+    await expect.poll(() => page.locator("video").evaluate((video: HTMLVideoElement) => video.currentTime)).toBeGreaterThan(0.1);
+    await page.getByRole("button", { name: "Pause preview", exact: true }).click();
+  }
+  expect(media.denied).toBe(0);
+});
+
+test("playground recovers expired playback for the displayed source and preserves its position", async ({ page }) => {
+  const { media } = await openMediaPreview(page);
+  await page.getByRole("button", { name: "Run preview", exact: true }).click();
+  await expect(page.locator("video")).toHaveJSProperty("videoWidth", 320);
+  await page.locator("video").evaluate((video: HTMLVideoElement) => { video.currentTime = 0.9; });
+  await expect.poll(() => page.locator("video").evaluate((video: HTMLVideoElement) => video.seeking)).toBe(false);
+  await expect(page.getByRole("slider", { name: "Preview playback time" })).toHaveValue("0.9");
+  await expect(page.locator("svg polygon")).toHaveCount(1);
+  await page.getByLabel("Video", { exact: true }).selectOption("video-b");
+  media.now += 16 * 60 * 1000;
+  await page.clock.setFixedTime(media.now);
+  await page.locator("video").evaluate((video: HTMLVideoElement) => video.load());
+  await expect(page.locator("video")).toHaveAttribute("src", /video-a.webm\?generation=3&/);
+  await expect(page.locator("video")).toHaveJSProperty("videoWidth", 320);
+  await expect.poll(() => page.locator("video").evaluate((video: HTMLVideoElement) => video.currentTime)).toBeCloseTo(0.9, 1);
+  await expect(page.locator("svg polygon")).toHaveCount(1);
+  expect(media.denied).toBeGreaterThan(0);
+});
+
+test("playground keeps inference evidence when capability renewal fails and allows retry", async ({ page }) => {
+  const { media } = await openMediaPreview(page);
+  media.unavailable = true;
+  await page.getByRole("button", { name: "Run preview", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("Playback renewal unavailable");
+  await expect(page.getByRole("button", { name: "Start full job", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Retry source playback", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Retry source playback", exact: true }).click();
+  await expect.poll(() => media.lists).toBe(3);
+  await expect(page.getByRole("alert")).toContainText("Playback renewal unavailable");
+  await page.waitForTimeout(500);
+  expect(media.lists).toBe(3);
+  media.unavailable = false;
+  await page.getByRole("button", { name: "Retry source playback", exact: true }).click();
+  await expect(page.locator("video")).toHaveJSProperty("videoWidth", 320);
+  await expect(page.getByRole("alert")).toHaveCount(0);
+});
+
+test("playground stops automatic renewal when refreshed media also fails", async ({ page }) => {
+  const { media } = await openMediaPreview(page);
+  media.rejectMedia = true;
+  await page.getByRole("button", { name: "Run preview", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("Source video could not be loaded");
+  expect(media.lists).toBe(3);
+  await page.waitForTimeout(500);
+  expect(media.lists).toBe(3);
+  await expect(page.getByRole("button", { name: "Start full job", exact: true })).toBeVisible();
+  media.rejectMedia = false;
+  await page.getByRole("button", { name: "Retry source playback", exact: true }).click();
+  await expect(page.locator("video")).toHaveJSProperty("videoWidth", 320);
+});
+
+test("a late playground capability lookup cannot replace a newer preview source", async ({ page }) => {
+  const { media, requestedList, releaseList } = await openMediaPreview(page);
+  media.holdList = 2;
+  await page.getByRole("button", { name: "Run preview", exact: true }).click();
+  await expect.poll(() => media.lists).toBe(2);
+  await requestedList;
+  await expect(page.locator("svg polygon")).toHaveCount(0);
+  await page.getByLabel("Video", { exact: true }).selectOption("video-b");
+  await page.getByRole("button", { name: "Run preview", exact: true }).click();
+  await expect(page.locator("video")).toHaveAttribute("src", /video-b.webm\?generation=3&/);
+  await expect(page.locator("video")).toHaveJSProperty("videoWidth", 320);
+  releaseList();
+  await page.waitForTimeout(100);
+  await expect(page.locator("video")).toHaveAttribute("src", /video-b.webm\?generation=3&/);
+});
