@@ -259,6 +259,49 @@ def test_activation_does_not_clear_other_workspace_active_model(resources, monke
     assert rows["foreign"]["model"].is_active is True
 
 
+@pytest.mark.parametrize("action", ["activate", "promote?alias=champion"])
+@pytest.mark.parametrize("initially_active", [False, True])
+def test_repeated_model_selection_persists_active_model_in_own_workspace(
+    resources, monkeypatch, action, initially_active
+):
+    session, client, member, rows = resources
+    selected = rows["own"]["model"]
+    selected.is_active = initially_active
+    selected.alias = "staging"
+    prior = ModelRegistry(
+        project_id=selected.project_id,
+        training_run_id=selected.training_run_id,
+        name="Prior active model",
+        task_type="detect",
+        model_variant="yolo26n",
+        weights_minio_key="models/prior.pt",
+        is_active=True,
+        alias="champion",
+    )
+    session.add(prior)
+    for prefix in ("foreign", "legacy"):
+        rows[prefix]["model"].is_active = True
+        rows[prefix]["model"].alias = "champion"
+    session.commit()
+    principal = authorization.WorkspacePrincipal(authorization.Principal(member.user_id), member.workspace_id, "admin")
+    monkeypatch.setattr(serve, "get_pool", lambda: SimpleNamespace(reload_model=lambda model_id: None))
+
+    for request_number in range(1, 3):
+        response = client.post(f"/api/v1/models/{selected.id}/{action}")
+        assert response.status_code == 200
+        with serve.SessionLocal() as persisted:
+            assert persisted.get(ModelRegistry, selected.id).is_active is True, f"{action} request {request_number}"
+            assert persisted.get(ModelRegistry, prior.id).is_active is False
+            if action == "promote?alias=champion":
+                assert persisted.get(ModelRegistry, selected.id).alias == "champion"
+                assert persisted.get(ModelRegistry, prior.id).alias is None
+            for prefix in ("foreign", "legacy"):
+                untouched = persisted.get(ModelRegistry, rows[prefix]["model"].id)
+                assert untouched.is_active is True
+                assert untouched.alias == "champion"
+        assert serve._resolve_model_id(principal) == str(selected.id)
+
+
 def test_serve_status_does_not_load_another_workspace_active_model(resources, monkeypatch):
     session, client, _, rows = resources
     rows["foreign"]["model"].is_active = True

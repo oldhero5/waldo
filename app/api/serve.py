@@ -653,9 +653,9 @@ def activate_model(
             raise HTTPException(status_code=404, detail="Model not found")
 
         # Deactivate all other models
-        scope_resources(session.query(ModelRegistry), ModelRegistry, principal).update(
-            {"is_active": False}, synchronize_session=False
-        )
+        scope_resources(session.query(ModelRegistry), ModelRegistry, principal).filter(
+            ModelRegistry.id != model.id
+        ).update({"is_active": False}, synchronize_session=False)
         model.is_active = True
         session.commit()
 
@@ -1168,9 +1168,9 @@ def promote_model(
 
         # Champion = active model (backward compat)
         if alias == "champion":
-            scope_resources(session.query(ModelRegistry), ModelRegistry, principal).update(
-                {"is_active": False}, synchronize_session=False
-            )
+            scope_resources(session.query(ModelRegistry), ModelRegistry, principal).filter(
+                ModelRegistry.id != model.id
+            ).update({"is_active": False}, synchronize_session=False)
             model.is_active = True
             # Hot-reload in pool
             pool = get_pool()
