@@ -1,4 +1,6 @@
+from collections.abc import Generator, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -250,6 +252,50 @@ class Sam3Engine:
 
         _cleanup(self.device, session, pixel_values)
         return results
+
+    def iter_segment_frame_paths(
+        self,
+        frame_paths: Sequence[Path],
+        text_prompt: str,
+        *,
+        threshold: float | None = None,
+        working_dir: Path,
+    ) -> Generator[SegmentationResult, None, None]:
+        """Yield every offline text result with path-loaded frames and history.
+
+        The caller owns the working directory through result persistence. One
+        session sees the full clip count and retains upstream tracking state.
+        """
+        from labeler.sam3_frame_storage import PathBackedSam3Session
+
+        if not frame_paths:
+            return
+        if threshold is None:
+            threshold = settings.sam3_score_threshold
+
+        session = None
+        try:
+            session = PathBackedSam3Session(
+                frame_paths,
+                self.processor,
+                working_dir=working_dir,
+                inference_device=self.device,
+                dtype=self.torch_dtype,
+            )
+            self.processor.add_text_prompt(session, text_prompt)
+            for frame_idx in range(len(frame_paths)):
+                output = self.model(inference_session=session, frame_idx=frame_idx)
+                result = _extract_masks_from_output(output, session.video_height, session.video_width, threshold)
+                del output
+                yield result
+                del result
+        finally:
+            try:
+                if session is not None:
+                    session.close()
+            finally:
+                del session
+                _cleanup(self.device)
 
     def segment_frames_with_points(
         self,
