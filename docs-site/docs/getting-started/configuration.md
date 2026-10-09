@@ -44,7 +44,21 @@ All configuration is environment variables, loaded by [pydantic-settings](https:
 | `HF_TOKEN` | _(empty)_ |
 | `DEVICE` | `mps` |
 | `DTYPE` | `float32` |
-| `AGENT_MODEL_ID` | `google/gemma-4-e4b-it` |
+| `AGENT_PROVIDER` | `ollama` |
+| `AGENT_MODEL` | `gemma4:e4b` (set for selected provider) |
+| `AGENT_ALLOWED_MODELS` | _(empty; configured model only)_ |
+| `AGENT_ALLOW_CLOUD_TEXT` | `false` |
+| `AGENT_TIMEOUT_SECONDS` | `60` |
+| `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `OPENROUTER_API_KEY` | _(empty)_ |
+| `VLLM_URL` | `http://localhost:8001/v1` |
+| `VLLM_API_KEY` | _(empty)_ |
+| `OLLAMA_URL` | `http://localhost:11434` |
+| `AGENT_TEMPERATURE` | `0.2` |
+
+Compose uses `OLLAMA_COMPOSE_URL` when supplied, otherwise its optional `ollama`
+service. Both application and local model download use `AGENT_MODEL`. The
+`local-chat` profile controls whether Ollama starts. Settings also offers temporary
+workspace overrides; see [Agent configuration](../ui/agent#configuration).
 
 ## Notifications (optional)
 
@@ -67,5 +81,5 @@ Comma-separated list of allowed origins. The middleware only honors this list â€
 
 | Variable | Purpose |
 | --- | --- |
-| `ADMIN_BOOTSTRAP_EMAIL` | Email used when seeding the first admin (default `admin@localhost`) |
-| `ADMIN_BOOTSTRAP_PASSWORD` | Password for the seed admin (required in production; auto-generated in dev) |
+| `ADMIN_BOOTSTRAP_EMAIL` | Email used when seeding the first admin (default `admin@waldo.ai`) |
+| `ADMIN_BOOTSTRAP_PASSWORD` | Password for the seed admin (required in production when there are no users; defaults to `waldopass` in development) |

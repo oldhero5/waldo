@@ -5,54 +5,40 @@ sidebar_position: 4
 
 # Edge Deployment
 
-Waldo can push trained models to remote inference endpoints — small Linux boxes running close to the cameras. Two reference targets are documented here.
+Waldo exposes device registration, model-assignment metadata, heartbeats, and inference-log ingestion in [`app/api/serve.py`](https://github.com/oldhero5/waldo/blob/main/app/api/serve.py). The repository does not supply an edge inference runtime, a Jetson compose directory, or a Pi/Coral image.
 
-## NVIDIA Jetson (Orin Nano / NX / AGX)
+## Register a device
 
-Jetson devices run Ubuntu (L4T) and have a CUDA-capable GPU. The Waldo edge image is a slimmed compose stack: just `app` (in lightweight mode) + a single inference worker.
-
-```bash
-# On the Jetson
-git clone https://github.com/oldhero5/waldo.git --depth 1
-cd waldo/edge/jetson
-docker compose up -d
-```
-
-Register the device with the central API so it shows up on the **Deploy** page:
+These endpoints require bearer authentication. Registration creates a device record accessible through the API; the current Deploy page has no device-management view. The client must implement inference and communication separately.
 
 ```bash
 curl -X POST https://waldo.example.com/api/v1/devices \
   -H "Authorization: Bearer $WALDO_API_KEY" \
-  -d '{"name": "front-gate-jetson", "kind": "jetson-orin-nano", "ip": "192.168.1.42"}'
+  -H "Content-Type: application/json" \
+  -d '{"name": "front-gate-jetson", "device_type": "jetson_orin", "location_label": "Front gate"}'
 ```
 
-Heartbeats are sent every 30 seconds.
+Returns `{ "id": "...", "status": "registered" }`. Optional fields are `target_id`, `model_id`, and `hardware_info`; `device_type` is a string label, not hardware validation. `GET /api/v1/devices` lists registered devices.
 
-## Raspberry Pi 5 + Coral USB TPU
-
-For lower-power deployments, export the YOLO model to TFLite Edge TPU format:
+## Heartbeats and model assignments
 
 ```bash
-curl -X POST https://waldo.example.com/api/v1/models/$MODEL_ID/export \
-  -H "Authorization: Bearer $TOKEN" \
-  -d '{"format": "tflite_edgetpu"}'
+curl -X POST "https://waldo.example.com/api/v1/devices/$DEVICE_ID/heartbeat?ip=192.168.1.42" \
+  -H "Authorization: Bearer $WALDO_API_KEY"
 ```
 
-On the Pi:
+The endpoint updates status, heartbeat time, and optional IP. It returns `assigned_model` with `model_id`, `name`, `version`, and `weights_key` when the device has an assigned model. `weights_key` is a MinIO object key, not a signed download URL. Heartbeat scheduling, downloading weights, verifying compatibility, and applying updates are client responsibilities; no automated OTA flow is supplied.
+
+## Upload offline inference logs
 
 ```bash
-# Coral runtime
-sudo apt install -y libedgetpu1-std
-# Pull the edge runtime image (matches the central Waldo version)
-docker run -d --device /dev/bus/usb \
-  -e WALDO_API=https://waldo.example.com \
-  -e WALDO_API_KEY=... \
-  -e DEVICE_NAME=garage-pi \
-  ghcr.io/oldhero5/waldo-edge:pi5-coral
+curl -X POST "https://waldo.example.com/api/v1/devices/$DEVICE_ID/sync-logs" \
+  -H "Authorization: Bearer $WALDO_API_KEY" \
+  -F "file=@inference-logs.json"
 ```
 
-## OTA model updates
+The multipart `file` must contain a JSON array of entries with fields such as `timestamp`, `request_type`, `latency_ms`, `detection_count`, `avg_confidence`, `classes_detected`, `input_resolution`, and `error_code`. Returns `entries_imported` and updates the device's sync time.
 
-When you promote a new model in the central UI (or call `POST /models/{id}/promote`), every connected edge device picks up the new version on its next heartbeat and downloads the weights from MinIO via a presigned URL.
+## Export support
 
-Logs from each device are pushed back via `POST /devices/{id}/sync-logs` so you can audit edge predictions centrally.
+The exporter accepts `onnx`, `torchscript`, `coreml`, `tflite`, and `openvino`. `tflite_edgetpu` is unsupported. An accepted export format does not establish compatibility with a Jetson, Raspberry Pi, or Coral runtime; qualify the exported artifact on the intended hardware separately.

@@ -5,37 +5,61 @@ sidebar_position: 3
 
 # Security
 
-Waldo's security model assumes:
-
-- The API is reachable by trusted users behind your network perimeter, **or**
-- The API is exposed publicly over HTTPS with all production hardening enabled.
-
-If neither is true, do not use Waldo.
+Waldo separates authentication, workspace authorization and installation administration.
+The October 2026 cleanup adds shared ownership checks across API resources,
+workflows, agent tools, media capabilities and task streams. Focused regressions
+exercise these boundaries; this is not a claim of a completed external security audit.
 
 ## Authentication
 
 - **JWT bearer tokens** issued by `/api/v1/auth/login`. HS256 signed, 24h default TTL.
 - **API keys** (`wld_…` prefix) for programmatic access. Stored as bcrypt hashes.
-- **Bootstrap admin** is created on first start. The password is generated randomly and logged once unless `ADMIN_BOOTSTRAP_PASSWORD` is set.
+- **Bootstrap admin** is created on startup when no users exist. Development defaults are `admin@waldo.ai` / `waldopass`; they are fixed credentials, not a random password. Set `ADMIN_BOOTSTRAP_EMAIL` and `ADMIN_BOOTSTRAP_PASSWORD` to override them. Production requires an explicit bootstrap password when creating the first user.
 
 The `JWT_SECRET` MUST be overridden in production. The app refuses to start if it's still on the dev default when `APP_ENV=production`.
 
 ## Authorization
 
-Role-based via `WorkspaceMember.role`:
+`lib/authorization.py` resolves a typed principal and an active workspace. JWT
+sessions may supply `X-Workspace-ID`; otherwise the oldest membership is used.
+API keys are pinned to their recorded workspace, require explicit `read`/`write`
+scopes, and honor expiry and current membership. Unknown/unassigned ownership is
+excluded. Resource IDs from other workspaces return `404`.
 
-| Role | Capabilities |
-| --- | --- |
-| `viewer` | Read access to projects in their workspace |
-| `annotator` | Plus: edit annotations |
-| `editor` | Plus: create projects, start labeling/training jobs |
-| `admin` | Plus: manage workspace members, run admin endpoints |
+Workspace `admin`/`editor` membership gates operational mutations. Agent tools and
+privileged workflow blocks recheck membership and API-key grants during execution.
+The chat caller can narrow its authority to read-only; it cannot grant itself a
+stronger role. Installation operations require `User.is_platform_admin`, which
+registration never grants. The first bootstrap user receives it; existing users
+require an explicit operator grant when upgrading.
 
-The `require_admin` FastAPI dependency gates the entire `/admin/*` route tree.
+Browser media URLs carry an exact-object, expiring capability rather than relying
+on a guessable storage prefix. These URLs are bearer capabilities: protect them
+and expect access to remain possible until expiry. Workflow webhooks reject
+non-public destinations by default; only an operator environment setting can
+permit private endpoints.
+
+## Upgrading legacy ownership
+
+The new migrations preserve legacy data, but intentionally leave previously
+unowned resources unassigned. Do not restore visibility with a NULL-workspace
+fallback. After backing up and upgrading the database, an installation operator
+can explicitly recover administration with `scripts/reset_admin.py`, and review
+resource assignment with:
+
+```bash
+python -m scripts.assign_workspace --workspace-id WORKSPACE_UUID --resource project --id PROJECT_UUID
+# Add --apply only after checking this dry-run. Repeat --id for explicit IDs.
+```
+
+Supported kinds include project, workflow, target, device, comparison, feedback
+and inference-log. Already-owned resources cannot be reassigned by this utility;
+linked model/endpoint ownership must agree. Assign parents before dependents.
+These commands are operator actions, not actions a chat model may invoke.
 
 ## Hardening checklist
 
-Before exposing Waldo to the internet:
+Configure these deployment settings and validate the intended operating environment:
 
 - [ ] `APP_ENV=production`
 - [ ] `JWT_SECRET` set to a random 32+ byte value (`openssl rand -hex 32`)
@@ -45,7 +69,7 @@ Before exposing Waldo to the internet:
 - [ ] `CORS_ORIGINS` restricted to your real frontend origin
 - [ ] HTTPS terminated at a reverse proxy (Caddy, nginx, Cloudflare)
 - [ ] `MINIO_SECURE=true` if MinIO is reachable across an untrusted network
-- [ ] Redis bound to the internal Docker network only
+- [ ] Infrastructure port bindings limited to loopback/internal interfaces
 - [ ] Pre-commit hooks installed so secrets never enter git (see [development/precommit](../development/precommit))
 
 ## Headers
@@ -60,10 +84,12 @@ The API sends:
 
 ## Known gaps
 
-These are tracked in the audit report and not yet fixed:
+Remaining release considerations:
 
-- **Tokens stored in localStorage.** Vulnerable to XSS exfiltration. Migration to HttpOnly cookies + CSRF tokens is planned.
-- **No rate limiting on `/auth/login` or `/auth/register`.** Add `slowapi` and per-IP buckets if exposed publicly.
-- **IDOR risk on project/video routes.** Some routes verify auth but skip workspace membership checks. Audit before exposing multi-tenant deployments.
+- **Tokens stored in localStorage.** XSS can expose bearer credentials.
+- **No rate limiting on `/auth/login` or `/auth/register`.**
+- **Runtime provider settings are process-local.** Use deployment environment secrets for durable/multiworker configuration until encrypted shared credential storage is implemented.
+- **Streaming and capability lifecycle.** Validate token redaction, expiry and revocation behavior with the deployment proxy and real clients.
 
-If you're running a single-tenant deployment behind your VPN, the gaps above are lower priority. If you're running multi-tenant, fix them first.
+Use the focused authorization suite and service integration checks as release gates;
+also assess login abuse protection and browser credential storage before public deployment.

@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-05-16",
+  "generated_at": "2026-10-06",
   "repo": "oldhero5/waldo",
   "main_branch": "main",
   "services": [
@@ -9,9 +9,7 @@
       "kind": "infra",
       "description": "Primary database \u2014 workspaces, projects, jobs, models.",
       "image_or_dockerfile": "postgres:16-alpine",
-      "ports": [
-        "5432:5432"
-      ],
+      "ports": [],
       "depends_on": [],
       "profile": null
     },
@@ -21,9 +19,7 @@
       "kind": "infra",
       "description": "Celery broker + cache.",
       "image_or_dockerfile": "redis:7-alpine",
-      "ports": [
-        "6379:6379"
-      ],
+      "ports": [],
       "depends_on": [],
       "profile": null
     },
@@ -33,10 +29,7 @@
       "kind": "infra",
       "description": "S3-compatible object store for videos, frames, weights.",
       "image_or_dockerfile": "minio/minio:latest",
-      "ports": [
-        "9000:9000",
-        "9001:9001"
-      ],
+      "ports": [],
       "depends_on": [],
       "profile": null
     },
@@ -58,9 +51,7 @@
       "kind": "llm",
       "description": "Local LLM server for the agent (gemma4:e4b by default).",
       "image_or_dockerfile": "ollama/ollama:latest",
-      "ports": [
-        "11434:11434"
-      ],
+      "ports": [],
       "depends_on": [],
       "profile": null
     },
@@ -81,15 +72,14 @@
       "name": "waldo-app",
       "kind": "app",
       "description": "FastAPI app \u2014 REST API, WebSocket, SPA host.",
-      "image_or_dockerfile": "app/Dockerfile",
+      "image_or_dockerfile": "${WALDO_IMAGE:-oldhero5/waldo}:${WALDO_TAG:-latest}",
       "ports": [
         "8000:8000"
       ],
       "depends_on": [
         "postgres",
         "redis",
-        "minio-init",
-        "ollama"
+        "minio-init"
       ],
       "profile": null
     },
@@ -98,7 +88,7 @@
       "name": "waldo-labeler",
       "kind": "worker",
       "description": "SAM 3 auto-labeling worker (Apple/CPU).",
-      "image_or_dockerfile": "labeler/Dockerfile.apple",
+      "image_or_dockerfile": "${WALDO_IMAGE:-oldhero5/waldo}:${WALDO_TAG:-latest}",
       "ports": [],
       "depends_on": [
         "postgres",
@@ -112,7 +102,7 @@
       "name": "waldo-trainer",
       "kind": "worker",
       "description": "YOLO training worker (Apple/CPU).",
-      "image_or_dockerfile": "trainer/Dockerfile.apple",
+      "image_or_dockerfile": "${WALDO_IMAGE:-oldhero5/waldo}:${WALDO_TAG:-latest}",
       "ports": [],
       "depends_on": [
         "postgres",
@@ -126,7 +116,7 @@
       "name": "waldo-labeler-nvidia",
       "kind": "worker",
       "description": "SAM 3 auto-labeling worker (CUDA).",
-      "image_or_dockerfile": "labeler/Dockerfile.nvidia",
+      "image_or_dockerfile": "${WALDO_IMAGE:-oldhero5/waldo}:${WALDO_CUDA_TAG:-cuda}",
       "ports": [],
       "depends_on": [
         "postgres",
@@ -140,7 +130,7 @@
       "name": "waldo-trainer-nvidia",
       "kind": "worker",
       "description": "YOLO training worker (CUDA).",
-      "image_or_dockerfile": "trainer/Dockerfile.nvidia",
+      "image_or_dockerfile": "${WALDO_IMAGE:-oldhero5/waldo}:${WALDO_CUDA_TAG:-cuda}",
       "ports": [],
       "depends_on": [
         "postgres",
@@ -171,7 +161,7 @@
       "path": "app/api/admin.py",
       "package": "app.api.admin",
       "kind": "api",
-      "lines": 334,
+      "lines": 335,
       "summary": "Admin endpoints \u2014 queue and worker management.",
       "exports": [
         "WorkerInfo",
@@ -192,14 +182,18 @@
       "path": "app/api/agent.py",
       "package": "app.api.agent",
       "kind": "api",
-      "lines": 185,
+      "lines": 237,
       "summary": "HTTP surface for the Waldo agent.",
       "exports": [
+        "RedactedAgentRoute",
         "ChatMessage",
         "ChatRequest",
         "ChatResponse",
         "agent_health",
         "agent_models",
+        "ProviderRequest",
+        "configure_provider",
+        "reset_provider",
         "agent_chat",
         "agent_stream"
       ]
@@ -208,7 +202,7 @@
       "path": "app/api/auth.py",
       "package": "app.api.auth",
       "kind": "api",
-      "lines": 137,
+      "lines": 143,
       "summary": "Authentication endpoints \u2014 register, login, token refresh, user info.",
       "exports": [
         "RegisterRequest",
@@ -225,7 +219,7 @@
       "path": "app/api/download.py",
       "package": "app.api.download",
       "kind": "api",
-      "lines": 126,
+      "lines": 129,
       "summary": "Proxy downloads from MinIO with proper caching and content types.",
       "exports": [
         "download_object"
@@ -235,7 +229,7 @@
       "path": "app/api/feedback.py",
       "package": "app.api.feedback",
       "kind": "api",
-      "lines": 152,
+      "lines": 174,
       "summary": "",
       "exports": [
         "FeedbackIn",
@@ -250,7 +244,7 @@
       "path": "app/api/frames.py",
       "package": "app.api.frames",
       "kind": "api",
-      "lines": 95,
+      "lines": 107,
       "summary": "",
       "exports": [
         "FrameOut",
@@ -260,10 +254,21 @@
       ]
     },
     {
+      "path": "app/api/job.py",
+      "package": "app.api.job",
+      "kind": "api",
+      "lines": 114,
+      "summary": "Generic Celery job polling endpoint.",
+      "exports": [
+        "router",
+        "result_url_for"
+      ]
+    },
+    {
       "path": "app/api/label.py",
       "package": "app.api.label",
       "kind": "api",
-      "lines": 412,
+      "lines": 485,
       "summary": "",
       "exports": [
         "ClassPrompt",
@@ -284,7 +289,7 @@
       "path": "app/api/review.py",
       "package": "app.api.review",
       "kind": "api",
-      "lines": 785,
+      "lines": 865,
       "summary": "",
       "exports": [
         "AnnotationOut",
@@ -305,7 +310,7 @@
       "path": "app/api/serve.py",
       "package": "app.api.serve",
       "kind": "api",
-      "lines": 1688,
+      "lines": 1846,
       "summary": "Inference serving API \u2014 image prediction, video prediction, model activation, deployment targets.",
       "exports": [
         "DetectionOut",
@@ -326,7 +331,7 @@
       "path": "app/api/status.py",
       "package": "app.api.status",
       "kind": "api",
-      "lines": 117,
+      "lines": 138,
       "summary": "",
       "exports": [
         "JobStatus",
@@ -338,7 +343,7 @@
       "path": "app/api/train.py",
       "package": "app.api.train",
       "kind": "api",
-      "lines": 488,
+      "lines": 546,
       "summary": "",
       "exports": [
         "TrainRequest",
@@ -359,7 +364,7 @@
       "path": "app/api/upload.py",
       "package": "app.api.upload",
       "kind": "api",
-      "lines": 421,
+      "lines": 449,
       "summary": "",
       "exports": [
         "UploadResponse",
@@ -380,7 +385,7 @@
       "path": "app/api/workflows.py",
       "package": "app.api.workflows",
       "kind": "api",
-      "lines": 233,
+      "lines": 311,
       "summary": "Workflow API \u2014 create, save, run, and deploy visual ML pipelines.",
       "exports": [
         "WorkflowGraph",
@@ -392,16 +397,16 @@
         "save_workflow",
         "list_saved_workflows",
         "get_saved_workflow",
+        "update_saved_workflow",
         "delete_workflow",
-        "deploy_workflow",
-        "serve_workflow"
+        "deploy_workflow"
       ]
     },
     {
       "path": "app/api/workspaces.py",
       "package": "app.api.workspaces",
       "kind": "api",
-      "lines": 94,
+      "lines": 100,
       "summary": "Workspace management \u2014 create, list, switch workspaces.",
       "exports": [
         "CreateWorkspaceRequest",
@@ -414,7 +419,7 @@
       "path": "app/main.py",
       "package": "app.main",
       "kind": "app",
-      "lines": 154,
+      "lines": 156,
       "summary": "",
       "exports": [
         "SecurityHeadersMiddleware",
@@ -426,7 +431,7 @@
       "path": "app/ws.py",
       "package": "app.ws",
       "kind": "app",
-      "lines": 100,
+      "lines": 173,
       "summary": "WebSocket endpoints for streaming training metrics and prediction results.",
       "exports": [
         "training_metrics_ws",
@@ -460,8 +465,8 @@
       "path": "lib/agent/graph.py",
       "package": "lib.agent.graph",
       "kind": "agent",
-      "lines": 215,
-      "summary": "LangGraph ReAct agent \u2014 Ollama LLM + Waldo tools, with auth-scoped context.",
+      "lines": 217,
+      "summary": "LangGraph ReAct agent \u2014 configured text provider + Waldo tools, with auth-scoped context.",
       "exports": [
         "AgentState",
         "build_graph",
@@ -470,10 +475,30 @@
       ]
     },
     {
+      "path": "lib/agent/providers.py",
+      "package": "lib.agent.providers",
+      "kind": "agent",
+      "lines": 210,
+      "summary": "Server-owned text providers.",
+      "exports": [
+        "ProviderError",
+        "ProviderConfig",
+        "environment_config",
+        "get_config",
+        "validate_config",
+        "create_chat_model",
+        "public_status",
+        "candidate_config",
+        "test_connection",
+        "set_runtime_config",
+        "clear_runtime_config"
+      ]
+    },
+    {
       "path": "lib/agent/tools.py",
       "package": "lib.agent.tools",
       "kind": "agent",
-      "lines": 552,
+      "lines": 595,
       "summary": "LangChain tools the Waldo agent can call on a user's behalf.",
       "exports": [
         "AgentContext",
@@ -494,7 +519,7 @@
       "path": "lib/auth.py",
       "package": "lib.auth",
       "kind": "util",
-      "lines": 212,
+      "lines": 238,
       "summary": "Authentication utilities \u2014 JWT tokens, password hashing, FastAPI dependencies.",
       "exports": [
         "hash_password",
@@ -509,10 +534,31 @@
       ]
     },
     {
+      "path": "lib/authorization.py",
+      "package": "lib.authorization",
+      "kind": "util",
+      "lines": 229,
+      "summary": "Shared request identity, workspace membership, and exact ownership checks.",
+      "exports": [
+        "Principal",
+        "WorkspacePrincipal",
+        "get_principal",
+        "require_scope",
+        "resolve_workspace",
+        "get_workspace_principal",
+        "require_workspace_role",
+        "scope_projects",
+        "require_project",
+        "require_workspace_editor",
+        "scope_resources",
+        "require_resource"
+      ]
+    },
+    {
       "path": "lib/config.py",
       "package": "lib.config",
       "kind": "util",
-      "lines": 112,
+      "lines": 122,
       "summary": "",
       "exports": [
         "Settings",
@@ -520,10 +566,20 @@
       ]
     },
     {
+      "path": "lib/dataset_evidence.py",
+      "package": "lib.dataset_evidence",
+      "kind": "util",
+      "lines": 16,
+      "summary": "Frame counts derive from a labeling run, never all frames in its project.",
+      "exports": [
+        "assessed_frame_count"
+      ]
+    },
+    {
       "path": "lib/db.py",
       "package": "lib.db",
       "kind": "db",
-      "lines": 408,
+      "lines": 421,
       "summary": "",
       "exports": [
         "Base",
@@ -555,7 +611,7 @@
       "path": "lib/inference_engine.py",
       "package": "lib.inference_engine",
       "kind": "util",
-      "lines": 487,
+      "lines": 493,
       "summary": "Multi-model YOLO inference pool for serving predictions \u2014 optimized for speed.",
       "exports": [
         "Detection",
@@ -579,10 +635,31 @@
       ]
     },
     {
+      "path": "lib/redis_client.py",
+      "package": "lib.redis_client",
+      "kind": "util",
+      "lines": 27,
+      "summary": "Shared sync Redis client.",
+      "exports": [
+        "get_redis"
+      ]
+    },
+    {
+      "path": "lib/redis_serde.py",
+      "package": "lib.redis_serde",
+      "kind": "util",
+      "lines": 39,
+      "summary": "msgpack helpers for Redis pubsub hot paths.",
+      "exports": [
+        "pack",
+        "unpack"
+      ]
+    },
+    {
       "path": "lib/storage.py",
       "package": "lib.storage",
       "kind": "util",
-      "lines": 75,
+      "lines": 85,
       "summary": "",
       "exports": [
         "get_client",
@@ -599,7 +676,7 @@
       "path": "lib/tasks.py",
       "package": "lib.tasks",
       "kind": "task",
-      "lines": 370,
+      "lines": 473,
       "summary": "",
       "exports": [
         "label_video",
@@ -615,7 +692,7 @@
       "path": "lib/video_tracker.py",
       "package": "lib.video_tracker",
       "kind": "util",
-      "lines": 285,
+      "lines": 268,
       "summary": "Video object tracker \u2014 optimized with frame skipping and batched inference.",
       "exports": [
         "validate_video",
@@ -701,7 +778,7 @@
       "path": "lib/workflow_blocks/llm.py",
       "package": "lib.workflow_blocks.llm",
       "kind": "workflow-block",
-      "lines": 67,
+      "lines": 68,
       "summary": "LLM block \u2014 calls local Ollama for text generation/analysis.",
       "exports": [
         "LLMBlock"
@@ -722,9 +799,10 @@
       "path": "lib/workflow_blocks/platform.py",
       "package": "lib.workflow_blocks.platform",
       "kind": "workflow-block",
-      "lines": 214,
-      "summary": "Platform integration blocks \u2014 connect workflows to datasets, models, training, and deployment.",
+      "lines": 256,
+      "summary": "Workspace-authorized dataset, model, training, and webhook workflow blocks.",
       "exports": [
+        "get_workspace_model_engine",
         "DatasetInputBlock",
         "ModelSelectorBlock",
         "WebhookBlock",
@@ -760,12 +838,13 @@
       "path": "lib/workflow_engine.py",
       "package": "lib.workflow_engine",
       "kind": "util",
-      "lines": 189,
+      "lines": 251,
       "summary": "Workflow DAG executor \u2014 topologically sorts nodes and runs blocks.",
       "exports": [
         "register_block",
         "get_block_schemas",
         "get_block",
+        "validate_workflow",
         "execute_workflow"
       ]
     },
@@ -789,11 +868,13 @@
       "path": "labeler/converters/common.py",
       "package": "labeler.converters.common",
       "kind": "labeler",
-      "lines": 61,
+      "lines": 113,
       "summary": "Shared dataset-writing utilities for all YOLO converters.",
       "exports": [
         "generate_data_yaml",
         "split_indices",
+        "export_stem",
+        "write_manifest",
         "write_yolo_label_dataset"
       ]
     },
@@ -801,7 +882,7 @@
       "path": "labeler/converters/to_classify.py",
       "package": "labeler.converters.to_classify",
       "kind": "labeler",
-      "lines": 86,
+      "lines": 102,
       "summary": "Mask \u2192 YOLO classification format (cropped images in class directories).",
       "exports": [
         "masks_to_crops",
@@ -812,7 +893,7 @@
       "path": "labeler/converters/to_detect.py",
       "package": "labeler.converters.to_detect",
       "kind": "labeler",
-      "lines": 48,
+      "lines": 52,
       "summary": "Mask \u2192 YOLO detection bounding box format.",
       "exports": [
         "masks_to_yolo_bboxes",
@@ -823,7 +904,7 @@
       "path": "labeler/converters/to_obb.py",
       "package": "labeler.converters.to_obb",
       "kind": "labeler",
-      "lines": 50,
+      "lines": 54,
       "summary": "Mask \u2192 YOLO oriented bounding box (OBB) format.",
       "exports": [
         "masks_to_yolo_obb",
@@ -834,7 +915,7 @@
       "path": "labeler/converters/to_pose.py",
       "package": "labeler.converters.to_pose",
       "kind": "labeler",
-      "lines": 61,
+      "lines": 65,
       "summary": "Mask \u2192 YOLO pose format with centroid keypoint.",
       "exports": [
         "masks_to_yolo_pose",
@@ -845,11 +926,22 @@
       "path": "labeler/converters/to_segment.py",
       "package": "labeler.converters.to_segment",
       "kind": "labeler",
-      "lines": 54,
+      "lines": 58,
       "summary": "Mask \u2192 YOLO segmentation polygon format.",
       "exports": [
         "masks_to_yolo_polygons",
         "write_yolo_dataset"
+      ]
+    },
+    {
+      "path": "labeler/errors.py",
+      "package": "labeler.errors",
+      "kind": "labeler",
+      "lines": 38,
+      "summary": "Operational labeling failures eligible for the bounded Celery retry policy.",
+      "exports": [
+        "RetryableLabelingError",
+        "is_retryable"
       ]
     },
     {
@@ -866,7 +958,7 @@
       "path": "labeler/frame_extractor.py",
       "package": "labeler.frame_extractor",
       "kind": "labeler",
-      "lines": 147,
+      "lines": 157,
       "summary": "",
       "exports": [
         "VideoMeta",
@@ -879,11 +971,12 @@
       "path": "labeler/pipeline.py",
       "package": "labeler.pipeline",
       "kind": "labeler",
-      "lines": 210,
+      "lines": 196,
       "summary": "Shared labeling pipeline utilities \u2014 frame extraction, conversion, dataset packaging.",
       "exports": [
         "get_converter",
-        "convert_and_store"
+        "convert_and_store",
+        "replace_raw_observations"
       ]
     },
     {
@@ -912,7 +1005,7 @@
       "path": "labeler/text_labeler.py",
       "package": "labeler.text_labeler",
       "kind": "labeler",
-      "lines": 269,
+      "lines": 330,
       "summary": "Text-prompt labeling pipeline \u2014 uses Sam3VideoModel for detect-and-track.",
       "exports": [
         "merge_multiclass_results",
@@ -923,7 +1016,7 @@
       "path": "labeler/video_labeler.py",
       "package": "labeler.video_labeler",
       "kind": "labeler",
-      "lines": 889,
+      "lines": 879,
       "summary": "Video-native labeling pipeline using SAM3.1 MLX.",
       "exports": [
         "process_video_native",
@@ -943,7 +1036,7 @@
       "path": "trainer/dataset_builder.py",
       "package": "trainer.dataset_builder",
       "kind": "trainer",
-      "lines": 415,
+      "lines": 271,
       "summary": "Build a YOLO-ready dataset from a completed labeling job's annotations.",
       "exports": [
         "build_dataset_from_job",
@@ -954,7 +1047,7 @@
       "path": "trainer/exporter.py",
       "package": "trainer.exporter",
       "kind": "trainer",
-      "lines": 72,
+      "lines": 73,
       "summary": "Export trained YOLO models to various formats with validation.",
       "exports": [
         "export_model"
@@ -964,7 +1057,7 @@
       "path": "trainer/metrics_streamer.py",
       "package": "trainer.metrics_streamer",
       "kind": "trainer",
-      "lines": 415,
+      "lines": 431,
       "summary": "Stream training metrics to Redis for real-time WebSocket consumption.",
       "exports": [
         "get_redis_client",
@@ -989,7 +1082,7 @@
       "path": "trainer/train_manager.py",
       "package": "trainer.train_manager",
       "kind": "trainer",
-      "lines": 369,
+      "lines": 390,
       "summary": "YOLO26 training orchestrator \u2014 wraps Ultralytics training API.",
       "exports": [
         "run_training"
@@ -1007,10 +1100,12 @@
       "path": "tests/conftest.py",
       "package": "tests.conftest",
       "kind": "test",
-      "lines": 58,
+      "lines": 79,
       "summary": "",
       "exports": [
         "test_clip",
+        "register_test_client",
+        "service_client",
         "pytest_configure"
       ]
     },
@@ -1018,7 +1113,7 @@
       "path": "tests/test_agent.py",
       "package": "tests.test_agent",
       "kind": "test",
-      "lines": 511,
+      "lines": 565,
       "summary": "Tests for the LangGraph agent \u2014 tools, graph, and HTTP endpoint.",
       "exports": [
         "db_session",
@@ -1031,10 +1126,43 @@
       ]
     },
     {
+      "path": "tests/test_agent_live_authority.py",
+      "package": "tests.test_agent_live_authority",
+      "kind": "test",
+      "lines": 47,
+      "summary": "",
+      "exports": [
+        "conversation",
+        "test_removed_member_cannot_read_during_existing_conversation",
+        "test_stale_admin_context_cannot_act_after_downgrade"
+      ]
+    },
+    {
+      "path": "tests/test_agent_safety.py",
+      "package": "tests.test_agent_safety",
+      "kind": "test",
+      "lines": 418,
+      "summary": "Agent boundaries tested offline with real workspace membership and project rows.",
+      "exports": [
+        "scoped_db",
+        "client_for",
+        "principal_for",
+        "test_auth_me_and_agent_select_oldest_membership",
+        "test_projects_exclude_foreign_and_legacy_rows",
+        "test_missing_workspace_refused_before_database_access",
+        "test_removed_membership_denied_before_model_call",
+        "test_membership_role_controls_action_authority",
+        "test_client_read_only_can_only_narrow_membership_grant",
+        "test_action_boolean_without_membership_role_does_not_grant_authority",
+        "test_viewer_action_tools_refused_before_database_access",
+        "test_action_tools_reject_foreign_and_unassigned_resources"
+      ]
+    },
+    {
       "path": "tests/test_api.py",
       "package": "tests.test_api",
       "kind": "test",
-      "lines": 35,
+      "lines": 31,
       "summary": "",
       "exports": [
         "client",
@@ -1045,7 +1173,7 @@
       "path": "tests/test_api_extended.py",
       "package": "tests.test_api_extended",
       "kind": "test",
-      "lines": 207,
+      "lines": 211,
       "summary": "Extended API tests for review, frames, and training endpoints.",
       "exports": [
         "client",
@@ -1060,7 +1188,7 @@
       "path": "tests/test_auth.py",
       "package": "tests.test_auth",
       "kind": "test",
-      "lines": 433,
+      "lines": 420,
       "summary": "Auth unit tests \u2014 deterministic, offline, no external infra required.",
       "exports": [
         "make_in_memory_engine",
@@ -1075,6 +1203,39 @@
         "test_decode_expired_token",
         "test_get_current_user_valid_token",
         "test_get_current_user_no_credentials"
+      ]
+    },
+    {
+      "path": "tests/test_authorization.py",
+      "package": "tests.test_authorization",
+      "kind": "test",
+      "lines": 412,
+      "summary": "Installation and workspace authorization regressions without external services.",
+      "exports": [
+        "database",
+        "client",
+        "add_user",
+        "test_registration_cannot_grant_installation_admin",
+        "test_workspace_admin_cannot_access_installation_admin",
+        "test_explicit_installation_admin_can_access_admin",
+        "test_bootstrap_only_grants_installation_admin_to_first_user",
+        "test_operator_reset_explicitly_grants_installation_admin",
+        "key_for",
+        "test_api_key_cannot_write_without_write_scope",
+        "test_naive_expired_api_key_returns_401",
+        "test_api_key_auth_preserves_workspace_and_scope_context"
+      ]
+    },
+    {
+      "path": "tests/test_concurrent_label.py",
+      "package": "tests.test_concurrent_label",
+      "kind": "test",
+      "lines": 170,
+      "summary": "Concurrency regression test for #9.",
+      "exports": [
+        "patched_label",
+        "test_job_endpoint_maps_celery_states",
+        "test_label_storm_does_not_starve_health"
       ]
     },
     {
@@ -1093,6 +1254,52 @@
       ]
     },
     {
+      "path": "tests/test_dataset_integrity.py",
+      "package": "tests.test_dataset_integrity",
+      "kind": "test",
+      "lines": 250,
+      "summary": "Source ancestry, label geometry, and export integrity regressions.",
+      "exports": [
+        "test_unanchored_demo_feedback_does_not_modify_dataset",
+        "test_same_basename_exports_keep_pixels_and_corresponding_labels",
+        "test_writers_reject_frame_annotation_length_mismatch",
+        "test_source_groups_have_deterministic_disjoint_splits",
+        "test_classification_crops_inherit_frame_split",
+        "test_export_rejects_existing_destination_without_overwriting_pixels",
+        "test_detection_crop_clips_large_neighbor_instead_of_erasing_it",
+        "test_detection_crop_uses_actual_pixel_bounds_and_all_visible_labels",
+        "test_segment_crop_retains_neighbor_labels_without_cutting_them",
+        "test_segment_crop_skips_partially_visible_neighbor_instead_of_omitting_label",
+        "test_missing_labels_are_not_fabricated_as_reviewed_background",
+        "test_unsupported_crop_tasks_leave_labels_and_pixels_intact"
+      ]
+    },
+    {
+      "path": "tests/test_deployment_config.py",
+      "package": "tests.test_deployment_config",
+      "kind": "test",
+      "lines": 31,
+      "summary": "Compose should isolate infrastructure and allow hosted-only chat.",
+      "exports": [
+        "services",
+        "test_infrastructure_ports_default_to_loopback",
+        "test_local_chat_is_optional_and_has_no_application_startup_dependency",
+        "test_services_use_the_application_credential_variables"
+      ]
+    },
+    {
+      "path": "tests/test_download_authorization.py",
+      "package": "tests.test_download_authorization",
+      "kind": "test",
+      "lines": 52,
+      "summary": "",
+      "exports": [
+        "test_unsigned_object_denied_before_storage",
+        "test_signed_download_is_exact_object_only",
+        "test_expired_and_access_token_cannot_download"
+      ]
+    },
+    {
       "path": "tests/test_e2e.py",
       "package": "tests.test_e2e",
       "kind": "test",
@@ -1106,7 +1313,7 @@
       "path": "tests/test_e2e_full.py",
       "package": "tests.test_e2e_full",
       "kind": "test",
-      "lines": 152,
+      "lines": 156,
       "summary": "Full-loop E2E test: Upload -> Label -> Train (1 epoch) -> Activate -> Predict image -> Export ONNX -> Predict video.",
       "exports": [
         "TestFullLoopE2E"
@@ -1141,16 +1348,122 @@
       ]
     },
     {
+      "path": "tests/test_label_config.py",
+      "package": "tests.test_label_config",
+      "kind": "test",
+      "lines": 58,
+      "summary": "A promoted preview must retain its effective sampling configuration.",
+      "exports": [
+        "test_invalid_label_configuration_rejected",
+        "test_label_job_retains_promoted_threshold_and_sampling"
+      ]
+    },
+    {
+      "path": "tests/test_labeling_processing_integrity.py",
+      "package": "tests.test_labeling_processing_integrity",
+      "kind": "test",
+      "lines": 769,
+      "summary": "Processing contracts verified with synthetic frames and model boundaries.",
+      "exports": [
+        "test_evidence_extraction_bypasses_stale_cache_and_keeps_distinct_sampling_rates",
+        "sam_stub",
+        "test_text_processing_consumes_job_sampling_and_threshold_without_evidence_dedup",
+        "test_conversion_rejects_misaligned_frame_lists_before_any_write",
+        "test_converter_keeps_mask_score_alignment_and_video_groups",
+        "test_dispatch_uses_available_backend_for_both_project_and_single_video",
+        "test_text_pipeline_reports_successful_subset_when_another_video_fails",
+        "native_run",
+        "test_native_pipeline_preserves_each_track_sighting_and_bbox_only_observation",
+        "test_native_clip_failures_cannot_report_complete_coverage",
+        "own_model_video",
+        "test_prediction_stream_uses_authorized_model_engine"
+      ]
+    },
+    {
+      "path": "tests/test_legacy_assignment.py",
+      "package": "tests.test_legacy_assignment",
+      "kind": "test",
+      "lines": 44,
+      "summary": "",
+      "exports": [
+        "test_assignment_is_explicit_atomic_and_cannot_move_owned_data",
+        "test_assignment_cannot_claim_a_foreign_endpoint_indirectly"
+      ]
+    },
+    {
       "path": "tests/test_migrations.py",
       "package": "tests.test_migrations",
       "kind": "test",
-      "lines": 132,
-      "summary": "Migration sanity tests \u2014 verify alembic can upgrade to head without error.",
+      "lines": 99,
+      "summary": "Migration checks against an explicitly selected disposable PostgreSQL database.",
       "exports": [
         "test_alembic_upgrade_head_succeeds",
         "test_expected_tables_exist_after_migration",
         "test_alembic_history_is_linear",
         "test_alembic_current_is_head_after_upgrade"
+      ]
+    },
+    {
+      "path": "tests/test_postgres_upgrade.py",
+      "package": "tests.test_postgres_upgrade",
+      "kind": "test",
+      "lines": 96,
+      "summary": "Opt-in checks against a migrated disposable PostgreSQL database.",
+      "exports": [
+        "postgres",
+        "test_migrated_postgres_has_all_mapped_columns",
+        "test_real_postgres_workspace_boundary_and_partial_provenance"
+      ]
+    },
+    {
+      "path": "tests/test_providers.py",
+      "package": "tests.test_providers",
+      "kind": "test",
+      "lines": 111,
+      "summary": "Provider selection and authority without network calls or paid generations.",
+      "exports": [
+        "reset_runtime",
+        "configured",
+        "test_factory_uses_maintained_adapter",
+        "test_bad_config_does_not_initialize_provider",
+        "test_model_override_is_bounded",
+        "test_status_and_repr_never_expose_credentials",
+        "test_connection_failure_redacts_sdk_error",
+        "test_real_adapter_initializes_offline"
+      ]
+    },
+    {
+      "path": "tests/test_resource_authorization.py",
+      "package": "tests.test_resource_authorization",
+      "kind": "test",
+      "lines": 623,
+      "summary": "Resource API ownership and mutation policy with isolated SQLite rows.",
+      "exports": [
+        "resources",
+        "test_foreign_or_unassigned_resource_reads_return_404",
+        "test_resource_lists_only_include_current_workspace",
+        "test_foreign_resource_mutation_returns_404",
+        "test_viewer_cannot_mutate_own_resources",
+        "test_labeling_video_persists_its_owned_project",
+        "test_deployment_lists_only_include_current_workspace",
+        "test_foreign_deployment_mutations_return_404",
+        "test_target_create_persists_selected_workspace",
+        "test_target_create_rejects_foreign_model",
+        "test_activation_does_not_clear_other_workspace_active_model",
+        "test_serve_status_does_not_load_another_workspace_active_model"
+      ]
+    },
+    {
+      "path": "tests/test_review_export_integrity.py",
+      "package": "tests.test_review_export_integrity",
+      "kind": "test",
+      "lines": 66,
+      "summary": "",
+      "exports": [
+        "annotation",
+        "test_review_export_groups_source_videos_and_leaves_db_indices_unchanged",
+        "test_review_export_does_not_turn_rejected_only_frame_into_negative",
+        "test_review_export_rejects_unrepresentable_annotation_instead_of_false_negative"
       ]
     },
     {
@@ -1169,7 +1482,7 @@
       "path": "tests/test_trainer.py",
       "package": "tests.test_trainer",
       "kind": "test",
-      "lines": 140,
+      "lines": 147,
       "summary": "Tests for trainer module: dataset_builder, notifiers, metrics_streamer, train_manager.",
       "exports": [
         "TestVariants",
@@ -1177,6 +1490,67 @@
         "TestMetricsStreamer",
         "TestNotifiers",
         "TestExporter"
+      ]
+    },
+    {
+      "path": "tests/test_training_checkpoint_regressions.py",
+      "package": "tests.test_training_checkpoint_regressions",
+      "kind": "test",
+      "lines": 151,
+      "summary": "Checkpoint orchestration regressions without training or external services.",
+      "exports": [
+        "training",
+        "test_explicit_resume_from_reaches_training_without_auto_resume",
+        "test_fallback_checkpoint_registered_key_resolves_to_uploaded_weights",
+        "test_explicit_resume_rejects_checkpoint_from_other_project",
+        "test_explicit_resume_rejects_invalid_registry_id_before_lookup",
+        "test_training_rejects_single_source_group_instead_of_leaking_validation"
+      ]
+    },
+    {
+      "path": "tests/test_video_evidence_regressions.py",
+      "package": "tests.test_video_evidence_regressions",
+      "kind": "test",
+      "lines": 133,
+      "summary": "Evidence regressions without model weights or a GPU.",
+      "exports": [
+        "test_native_detections_use_current_sampled_frame_features",
+        "test_tiled_tracking_preserves_one_frame_sighting_with_appended_negatives"
+      ]
+    },
+    {
+      "path": "tests/test_workflow_authority.py",
+      "package": "tests.test_workflow_authority",
+      "kind": "test",
+      "lines": 496,
+      "summary": "Offline workflow authority and execution regressions with real SQLite ownership.",
+      "exports": [
+        "db",
+        "Source",
+        "SideEffect",
+        "registry",
+        "test_missing_required_input_rejected_before_independent_side_effect",
+        "test_invalid_graph_cannot_execute_any_block",
+        "test_false_branch_skips_optional_trigger_and_descendants",
+        "api_client",
+        "test_workflow_crud_excludes_foreign_and_legacy_workspace",
+        "test_viewer_and_read_only_key_cannot_save_or_execute_workflow",
+        "test_model_selector_uses_owned_pool_entry_without_reloading_global_engine",
+        "test_train_trigger_rejects_foreign_dataset_and_missing_context_before_task"
+      ]
+    },
+    {
+      "path": "tests/test_workflow_llm.py",
+      "package": "tests.test_workflow_llm",
+      "kind": "test",
+      "lines": 89,
+      "summary": "Agent and workflow LLMs share a bounded provider factory, tested offline.",
+      "exports": [
+        "test_llm_block_uses_default_or_explicit_model",
+        "test_llm_palette_defers_to_workspace_model",
+        "test_provider_failure_marks_workflow_node_failed",
+        "test_workflow_cannot_override_endpoint_or_unapproved_model",
+        "test_workflow_keeps_provider_snapshot_across_nodes"
       ]
     },
     {
@@ -1218,6 +1592,50 @@
       "kind": "migration",
       "lines": 40,
       "summary": "Collections & multiclass support",
+      "exports": [
+        "upgrade",
+        "downgrade"
+      ]
+    },
+    {
+      "path": "alembic/versions/0a1b2c3d4e5f_installation_admin.py",
+      "package": "alembic.versions.0a1b2c3d4e5f_installation_admin",
+      "kind": "migration",
+      "lines": 24,
+      "summary": "Separate installation administration from workspace membership.",
+      "exports": [
+        "upgrade",
+        "downgrade"
+      ]
+    },
+    {
+      "path": "alembic/versions/1b2c3d4e5f6a_labeling_configuration.py",
+      "package": "alembic.versions.1b2c3d4e5f6a_labeling_configuration",
+      "kind": "migration",
+      "lines": 21,
+      "summary": "Retain the requested detector threshold and sampling rate on each job.",
+      "exports": [
+        "upgrade",
+        "downgrade"
+      ]
+    },
+    {
+      "path": "alembic/versions/2c3d4e5f6a7b_evidence_and_resource_scope.py",
+      "package": "alembic.versions.2c3d4e5f6a7b_evidence_and_resource_scope",
+      "kind": "migration",
+      "lines": 38,
+      "summary": "Retain observation identity/coverage and explicit resource ownership.",
+      "exports": [
+        "upgrade",
+        "downgrade"
+      ]
+    },
+    {
+      "path": "alembic/versions/3d4e5f6a7b8c_deployment_target_slug.py",
+      "package": "alembic.versions.3d4e5f6a7b8c_deployment_target_slug",
+      "kind": "migration",
+      "lines": 30,
+      "summary": "Add the deployment target slug already required by the serving model.",
       "exports": [
         "upgrade",
         "downgrade"
@@ -1337,7 +1755,7 @@
       "path": "install/lib/detect.sh",
       "package": "",
       "kind": "installer",
-      "lines": 91,
+      "lines": 93,
       "summary": "Platform + GPU detection.",
       "exports": []
     },
@@ -1361,9 +1779,35 @@
       "path": "install/lib/prereqs.sh",
       "package": "",
       "kind": "installer",
-      "lines": 314,
+      "lines": 316,
       "summary": "Install missing system dependencies (Docker, uv, Node, build basics).",
       "exports": []
+    },
+    {
+      "path": "scripts/assign_workspace.py",
+      "package": "scripts.assign_workspace",
+      "kind": "script",
+      "lines": 99,
+      "summary": "Explicitly recover legacy unowned resources after the authorization upgrade.",
+      "exports": [
+        "assign_resources",
+        "main"
+      ]
+    },
+    {
+      "path": "scripts/bench_redis_serde.py",
+      "package": "scripts.bench_redis_serde",
+      "kind": "script",
+      "lines": 139,
+      "summary": "Benchmark JSON vs msgpack serialization for the predict-frame hot path.",
+      "exports": [
+        "bench_json_serialize",
+        "bench_msgpack_serialize",
+        "bench_json_roundtrip",
+        "bench_msgpack_roundtrip",
+        "report",
+        "main"
+      ]
     },
     {
       "path": "scripts/dev.sh",
@@ -1382,19 +1826,19 @@
       "exports": []
     },
     {
-      "path": "scripts/entrypoint-app.sh",
-      "package": "",
-      "kind": "script",
-      "lines": 9,
-      "summary": "",
-      "exports": []
-    },
-    {
       "path": "scripts/entrypoint-worker.sh",
       "package": "",
       "kind": "script",
       "lines": 41,
       "summary": "Worker entrypoint \u2014 prints GPU status before starting Celery so that",
+      "exports": []
+    },
+    {
+      "path": "scripts/entrypoint.sh",
+      "package": "",
+      "kind": "script",
+      "lines": 40,
+      "summary": "Single entrypoint for the unified Waldo image.",
       "exports": []
     },
     {
@@ -1415,8 +1859,8 @@
       "path": "scripts/reset_admin.py",
       "package": "scripts.reset_admin",
       "kind": "script",
-      "lines": 91,
-      "summary": "Upsert the bootstrap admin user and ensure it has admin membership.",
+      "lines": 88,
+      "summary": "Operator recovery: upsert an installation admin with workspace membership.",
       "exports": [
         "main"
       ]
@@ -1433,8 +1877,8 @@
       "path": "install.sh",
       "package": "",
       "kind": "installer",
-      "lines": 405,
-      "summary": "Waldo one-shot installer for Linux, macOS, and WSL.",
+      "lines": 423,
+      "summary": "Waldo one-shot installer for Linux, macOS, and WSL2.",
       "exports": []
     },
     {
@@ -1449,7 +1893,7 @@
       "path": "ui/src/pages/AgentPage.tsx",
       "package": "",
       "kind": "frontend-page",
-      "lines": 424,
+      "lines": 426,
       "summary": "AI Agent \u2014 full-page chat.",
       "exports": []
     },
@@ -1465,15 +1909,15 @@
       "path": "ui/src/pages/DashboardPage.tsx",
       "package": "",
       "kind": "frontend-page",
-      "lines": 395,
-      "summary": "Dashboard \u2014 editorial home with data-driven typographic ASCII hero,",
+      "lines": 231,
+      "summary": "",
       "exports": []
     },
     {
       "path": "ui/src/pages/DatasetsPage.tsx",
       "package": "",
       "kind": "frontend-page",
-      "lines": 1146,
+      "lines": 1153,
       "summary": "",
       "exports": []
     },
@@ -1521,8 +1965,8 @@
       "path": "ui/src/pages/PlaygroundPage.tsx",
       "package": "",
       "kind": "frontend-page",
-      "lines": 1309,
-      "summary": "SAM 3.1 Prompt Playground.",
+      "lines": 1386,
+      "summary": "Video prompt preview with detections and local tracks over a sampled window.",
       "exports": []
     },
     {
@@ -1537,7 +1981,7 @@
       "path": "ui/src/pages/ReviewPage.tsx",
       "package": "",
       "kind": "frontend-page",
-      "lines": 643,
+      "lines": 658,
       "summary": "",
       "exports": []
     },
@@ -1545,7 +1989,7 @@
       "path": "ui/src/pages/SettingsPage.tsx",
       "package": "",
       "kind": "frontend-page",
-      "lines": 194,
+      "lines": 198,
       "summary": "Settings \u2014 workspace management, user profile, API keys, admin queue.",
       "exports": []
     },
@@ -1553,7 +1997,7 @@
       "path": "ui/src/pages/TrainPage.tsx",
       "package": "",
       "kind": "frontend-page",
-      "lines": 1087,
+      "lines": 1076,
       "summary": "",
       "exports": []
     },
@@ -1569,7 +2013,7 @@
       "path": "ui/src/pages/WorkflowEditorPage.tsx",
       "package": "",
       "kind": "frontend-page",
-      "lines": 549,
+      "lines": 590,
       "summary": "Visual workflow editor \u2014 Pretext-inspired editorial design.",
       "exports": []
     },
@@ -1577,7 +2021,7 @@
       "path": "ui/src/pages/WorkflowsPage.tsx",
       "package": "",
       "kind": "frontend-page",
-      "lines": 144,
+      "lines": 145,
       "summary": "Workflows list \u2014 browse templates (with real graphs) and saved workflows.",
       "exports": []
     },
@@ -1585,7 +2029,7 @@
       "path": "ui/src/components/AgentPanel.tsx",
       "package": "",
       "kind": "frontend-component",
-      "lines": 249,
+      "lines": 262,
       "summary": "Floating sidebar agent panel \u2014 read-only, /agent/stream backend.",
       "exports": []
     }
@@ -1652,14 +2096,28 @@
       "path": "/api/v1/agent/health",
       "module": "app/api/agent.py",
       "auth": "required",
-      "summary": "Quick reachability check \u2014 proves Ollama is up and the model is present."
+      "summary": "Configuration status only; this does not make a billable model request."
     },
     {
       "method": "GET",
       "path": "/api/v1/agent/models",
       "module": "app/api/agent.py",
       "auth": "required",
-      "summary": "List models the local Ollama can serve."
+      "summary": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/agent/provider",
+      "module": "app/api/agent.py",
+      "auth": "required",
+      "summary": "Admin-only, write-only runtime override."
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/agent/provider",
+      "module": "app/api/agent.py",
+      "auth": "required",
+      "summary": ""
     },
     {
       "method": "POST",
@@ -1746,6 +2204,13 @@
       "summary": ""
     },
     {
+      "method": "GET",
+      "path": "/api/v1/job/{job_id}",
+      "module": "app/api/job.py",
+      "auth": "required",
+      "summary": "Poll a Celery task by id."
+    },
+    {
       "method": "POST",
       "path": "/api/v1/label",
       "module": "app/api/label.py",
@@ -1764,7 +2229,7 @@
       "path": "/api/v1/label/preview",
       "module": "app/api/label.py",
       "auth": "required",
-      "summary": "Prompt playground \u2014 dispatches a small SAM3.1 run to the Celery worker"
+      "summary": "Prompt playground \u2014 dispatches a small SAM3.1 run to the Celery worker."
     },
     {
       "method": "POST",
@@ -2183,63 +2648,70 @@
       "method": "GET",
       "path": "/api/v1/workflows/blocks",
       "module": "app/api/workflows.py",
-      "auth": "required",
+      "auth": "none",
       "summary": "Return all available workflow block types with their schemas."
     },
     {
       "method": "POST",
       "path": "/api/v1/workflows",
       "module": "app/api/workflows.py",
-      "auth": "required",
+      "auth": "none",
       "summary": ""
     },
     {
       "method": "GET",
       "path": "/api/v1/workflows/saved",
       "module": "app/api/workflows.py",
-      "auth": "required",
+      "auth": "none",
       "summary": ""
     },
     {
       "method": "GET",
       "path": "/api/v1/workflows/saved/{slug}",
       "module": "app/api/workflows.py",
-      "auth": "required",
+      "auth": "none",
+      "summary": ""
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/workflows/saved/{slug}",
+      "module": "app/api/workflows.py",
+      "auth": "none",
       "summary": ""
     },
     {
       "method": "DELETE",
       "path": "/api/v1/workflows/saved/{slug}",
       "module": "app/api/workflows.py",
-      "auth": "required",
+      "auth": "none",
       "summary": ""
     },
     {
       "method": "POST",
       "path": "/api/v1/workflows/saved/{slug}/deploy",
       "module": "app/api/workflows.py",
-      "auth": "required",
+      "auth": "none",
       "summary": ""
     },
     {
       "method": "POST",
       "path": "/api/v1/workflows/serve/{slug}",
       "module": "app/api/workflows.py",
-      "auth": "required",
+      "auth": "none",
       "summary": "Run a deployed workflow with an uploaded image."
     },
     {
       "method": "POST",
       "path": "/api/v1/workflows/run",
       "module": "app/api/workflows.py",
-      "auth": "required",
+      "auth": "none",
       "summary": ""
     },
     {
       "method": "POST",
       "path": "/api/v1/workflows/run/image",
       "module": "app/api/workflows.py",
-      "auth": "required",
+      "auth": "none",
       "summary": ""
     },
     {
@@ -2292,7 +2764,7 @@
       "name": "waldo.predict_video",
       "module": "lib/tasks.py",
       "queue": "default",
-      "summary": ""
+      "summary": "Run a YOLO tracker over a video and stream per-frame detections to Redis."
     },
     {
       "name": "waldo.compare_models",
@@ -2324,6 +2796,7 @@
         "password_hash",
         "display_name",
         "avatar_url",
+        "is_platform_admin",
         "created_at",
         "last_login"
       ],
@@ -2433,6 +2906,9 @@
         "prompt_type",
         "point_prompts",
         "class_prompts",
+        "processing_summary",
+        "score_threshold",
+        "sample_fps",
         "task_type",
         "status",
         "progress",
@@ -2462,6 +2938,7 @@
         "class_index",
         "polygon",
         "bbox",
+        "track_id",
         "confidence",
         "status"
       ],
@@ -2558,6 +3035,7 @@
       "module": "lib/db.py",
       "summary": "An edge device running inference (Jetson, Pi, etc.).",
       "columns": [
+        "workspace_id",
         "id",
         "name",
         "device_type",
@@ -2573,6 +3051,7 @@
         "created_at"
       ],
       "fk_to": [
+        "workspaces.id",
         "deployment_targets.id",
         "model_registry.id"
       ]
@@ -2582,6 +3061,7 @@
       "module": "lib/db.py",
       "summary": "Saved model comparison result for benchmarking over time.",
       "columns": [
+        "workspace_id",
         "id",
         "name",
         "file_name",
@@ -2603,7 +3083,9 @@
         "notes",
         "created_at"
       ],
-      "fk_to": []
+      "fk_to": [
+        "workspaces.id"
+      ]
     },
     {
       "name": "saved_workflows",
@@ -2629,6 +3111,7 @@
       "module": "lib/db.py",
       "summary": "An inference endpoint that serves a specific model to external consumers.",
       "columns": [
+        "workspace_id",
         "id",
         "name",
         "slug",
@@ -2641,6 +3124,7 @@
         "updated_at"
       ],
       "fk_to": [
+        "workspaces.id",
         "model_registry.id"
       ]
     },
@@ -2649,6 +3133,7 @@
       "module": "lib/db.py",
       "summary": "Append-only log of every inference request for monitoring.",
       "columns": [
+        "workspace_id",
         "id",
         "model_id",
         "target_id",
@@ -2662,6 +3147,7 @@
         "created_at"
       ],
       "fk_to": [
+        "workspaces.id",
         "model_registry.id",
         "deployment_targets.id"
       ]
@@ -2671,6 +3157,7 @@
       "module": "lib/db.py",
       "summary": "Stores false-positive / correction feedback from the Demo page.",
       "columns": [
+        "workspace_id",
         "id",
         "model_id",
         "class_name",
@@ -2687,15 +3174,16 @@
         "created_at"
       ],
       "fk_to": [
+        "workspaces.id",
         "model_registry.id"
       ]
     }
   ],
   "frontend_pages": [
     {
-      "route": "/agent",
+      "route": "/agentpage",
       "file": "ui/src/pages/AgentPage.tsx",
-      "lazy": true,
+      "lazy": false,
       "summary": "AI Agent \u2014 full-page chat.",
       "calls_endpoints": [
         "/api/v1/agent/models",
@@ -2703,51 +3191,51 @@
       ]
     },
     {
-      "route": "/collections",
+      "route": "/collectionspage",
       "file": "ui/src/pages/CollectionsPage.tsx",
-      "lazy": true,
+      "lazy": false,
       "summary": "",
       "calls_endpoints": []
     },
     {
-      "route": "/",
+      "route": "/dashboardpage",
       "file": "ui/src/pages/DashboardPage.tsx",
       "lazy": false,
-      "summary": "Dashboard \u2014 editorial home with data-driven typographic ASCII hero,",
+      "summary": "Dashboard \u2014 workspace activity and the next useful action.",
       "calls_endpoints": []
     },
     {
-      "route": "/datasets",
+      "route": "/datasetspage",
       "file": "ui/src/pages/DatasetsPage.tsx",
-      "lazy": true,
+      "lazy": false,
       "summary": "",
       "calls_endpoints": []
     },
     {
-      "route": "/deploy/:tab",
+      "route": "/deploypage",
       "file": "ui/src/pages/DeployPage.tsx",
-      "lazy": true,
+      "lazy": false,
       "summary": "Deploy page \u2014 endpoints, testing, model registry, and monitoring.",
       "calls_endpoints": []
     },
     {
-      "route": "/experiments",
+      "route": "/experimentspage",
       "file": "ui/src/pages/ExperimentsPage.tsx",
-      "lazy": true,
+      "lazy": false,
       "summary": "",
       "calls_endpoints": []
     },
     {
-      "route": "/jobs",
+      "route": "/jobspage",
       "file": "ui/src/pages/JobsPage.tsx",
-      "lazy": true,
+      "lazy": false,
       "summary": "",
       "calls_endpoints": []
     },
     {
-      "route": "/label/:videoId",
+      "route": "/labelpage",
       "file": "ui/src/pages/LabelPage.tsx",
-      "lazy": true,
+      "lazy": false,
       "summary": "",
       "calls_endpoints": []
     },
@@ -2759,10 +3247,10 @@
       "calls_endpoints": []
     },
     {
-      "route": "/playground",
+      "route": "/playgroundpage",
       "file": "ui/src/pages/PlaygroundPage.tsx",
-      "lazy": true,
-      "summary": "SAM 3.1 Prompt Playground.",
+      "lazy": false,
+      "summary": "Video prompt preview with detections and local tracks over a sampled window.",
       "calls_endpoints": []
     },
     {
@@ -2773,46 +3261,46 @@
       "calls_endpoints": []
     },
     {
-      "route": "/review/:jobId",
+      "route": "/reviewpage",
       "file": "ui/src/pages/ReviewPage.tsx",
-      "lazy": true,
+      "lazy": false,
       "summary": "",
       "calls_endpoints": []
     },
     {
-      "route": "/settings",
+      "route": "/settingspage",
       "file": "ui/src/pages/SettingsPage.tsx",
-      "lazy": true,
+      "lazy": false,
       "summary": "Settings \u2014 workspace management, user profile, API keys, admin queue.",
       "calls_endpoints": [
         "/api/v1/predict/image"
       ]
     },
     {
-      "route": "/train/:jobId",
+      "route": "/trainpage",
       "file": "ui/src/pages/TrainPage.tsx",
-      "lazy": true,
+      "lazy": false,
       "summary": "",
       "calls_endpoints": []
     },
     {
-      "route": "/upload",
+      "route": "/uploadpage",
       "file": "ui/src/pages/UploadPage.tsx",
-      "lazy": true,
+      "lazy": false,
       "summary": "",
       "calls_endpoints": []
     },
     {
-      "route": "/workflows/:workflowId",
+      "route": "/workfloweditorpage",
       "file": "ui/src/pages/WorkflowEditorPage.tsx",
-      "lazy": true,
+      "lazy": false,
       "summary": "Visual workflow editor \u2014 Pretext-inspired editorial design.",
       "calls_endpoints": []
     },
     {
-      "route": "/workflows",
+      "route": "/workflowspage",
       "file": "ui/src/pages/WorkflowsPage.tsx",
-      "lazy": true,
+      "lazy": false,
       "summary": "Workflows list \u2014 browse templates (with real graphs) and saved workflows.",
       "calls_endpoints": []
     }
@@ -2904,11 +3392,6 @@
       {
         "from": "waldo-app",
         "to": "minio-init",
-        "label": "depends_on"
-      },
-      {
-        "from": "waldo-app",
-        "to": "ollama",
         "label": "depends_on"
       },
       {
