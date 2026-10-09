@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 
 interface Series {
   key: string;
@@ -37,6 +37,7 @@ export default function LineChart({
   const dragging = useRef(false);
   const dragStart = useRef({ x: 0, panX: 0 });
   const svgRef = useRef<SVGSVGElement>(null);
+  const clipId = useId();
 
   if (data.length < 2 || series.length === 0) return null;
 
@@ -50,10 +51,9 @@ export default function LineChart({
       if (v != null && isFinite(v)) allVals.push(v);
     }
   }
-  if (allVals.length === 0) return null;
-
-  const rawMin = Math.min(...allVals);
-  const rawMax = Math.max(...allVals);
+  // Keep the legend available even when every series is hidden.
+  const rawMin = allVals.length ? Math.min(...allVals) : 0;
+  const rawMax = allVals.length ? Math.max(...allVals) : 1;
   const padding = (rawMax - rawMin) * 0.1 || 0.01;
   const yMin = forcedMin ?? Math.max(logScale ? 0.0001 : 0, rawMin - padding);
   const yMax = forcedMax ?? rawMax + padding;
@@ -106,26 +106,26 @@ export default function LineChart({
   const activeIdx = pinnedIdx ?? hoveredIdx;
 
   // Mouse handlers for pan
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+  const handleMouseDown = (e: React.MouseEvent) => {
     if (zoom <= 1) return;
     dragging.current = true;
     dragStart.current = { x: e.clientX, panX };
-  }, [zoom, panX]);
+  };
 
-  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+  const handleMouseMove = (e: React.MouseEvent) => {
     if (dragging.current && svgRef.current) {
       const rect = svgRef.current.getBoundingClientRect();
       const dx = (e.clientX - dragStart.current.x) / rect.width;
       setPanX(Math.max(0, Math.min(1, dragStart.current.panX - dx)));
     }
-  }, []);
+  };
 
-  const handleMouseUp = useCallback(() => { dragging.current = false; }, []);
+  const handleMouseUp = () => { dragging.current = false; };
 
-  const handleWheel = useCallback((e: React.WheelEvent) => {
+  const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault();
     setZoom((z) => Math.max(1, Math.min(z * (e.deltaY < 0 ? 1.2 : 1 / 1.2), 10)));
-  }, []);
+  };
 
   const toggleSeries = (key: string) => {
     setHiddenKeys((prev) => {
@@ -151,7 +151,7 @@ export default function LineChart({
       >
         {/* Clip region for chart area */}
         <defs>
-          <clipPath id="plot-clip">
+          <clipPath id={clipId}>
             <rect x={padL} y={padT} width={plotW} height={plotH} />
           </clipPath>
         </defs>
@@ -178,7 +178,7 @@ export default function LineChart({
 
         {/* Best epoch marker */}
         {bestEpoch != null && bestEpoch >= 0 && bestEpoch < data.length && (
-          <g clipPath="url(#plot-clip)">
+          <g clipPath={`url(#${clipId})`}>
             <line
               x1={xScale(bestEpoch)} y1={padT}
               x2={xScale(bestEpoch)} y2={padT + plotH}
@@ -189,7 +189,7 @@ export default function LineChart({
         )}
 
         {/* Lines (clipped) */}
-        <g clipPath="url(#plot-clip)">
+        <g clipPath={`url(#${clipId})`}>
           {paths.map((p) => (
             <path
               key={p.key}
@@ -220,7 +220,7 @@ export default function LineChart({
 
         {/* Hover/pinned line + dots */}
         {activeIdx != null && (
-          <g clipPath="url(#plot-clip)">
+          <g clipPath={`url(#${clipId})`}>
             <line
               x1={xScale(activeIdx)} y1={padT}
               x2={xScale(activeIdx)} y2={padT + plotH}

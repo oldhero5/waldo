@@ -3,15 +3,14 @@
  * with nodes, edges, and positions for instant loading.
  */
 
+import type { WorkflowGraph } from "./workflowTypes";
+
 export interface WorkflowTemplate {
   name: string;
   desc: string;
   color: string;
   tags: string[];
-  graph: {
-    nodes: { id: string; type: string; config: Record<string, any>; position: { x: number; y: number } }[];
-    edges: { source: string; sourceHandle: string; target: string; targetHandle: string }[];
-  };
+  graph: WorkflowGraph;
 }
 
 export const TEMPLATES: WorkflowTemplate[] = [

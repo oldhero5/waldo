@@ -219,7 +219,7 @@ export function EndpointsTab() {
           <Link
             to="/datasets"
             className="px-4 py-2 text-white rounded-xl text-sm inline-block"
-            style={{ backgroundColor: "var(--accent)", textDecoration: "none" }}
+            style={{ backgroundColor: "var(--accent)", color: "var(--text-on-accent)", textDecoration: "none" }}
           >
             Go to Datasets
           </Link>

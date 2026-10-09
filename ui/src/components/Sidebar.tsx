@@ -1,6 +1,5 @@
 /**
- * Left sidebar navigation — Pretext-inspired warm light design.
- * Persistent on desktop, collapsible on mobile.
+ * Left sidebar navigation and authenticated workspace context.
  */
 import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
@@ -12,7 +11,6 @@ import {
   Rocket,
   Settings,
   Workflow,
-  ChevronDown,
   Loader2,
   MessageCircle,
   CheckCircle2,
@@ -20,6 +18,7 @@ import {
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { getComparisonResult, listTrainingRuns } from "../api";
+import { useAuth } from "../contexts/authState";
 
 const NAV_ITEMS = [
   { to: "/", label: "Home", icon: Home, exact: true },
@@ -36,133 +35,25 @@ const BOTTOM_ITEMS = [
   { to: "/settings", label: "Settings", icon: Settings },
 ];
 
-function WorkspaceSwitcher() {
-  const [open, setOpen] = useState(false);
-  const [workspaces, setWorkspaces] = useState<{ id: string; name: string; slug: string; role: string }[]>([]);
-  const [active, setActive] = useState("My Workspace");
-  const [creating, setCreating] = useState(false);
-  const [newName, setNewName] = useState("");
-
-  useEffect(() => {
-    const token = localStorage.getItem("waldo_token");
-    if (!token) return;
-    fetch("/api/v1/workspaces", { headers: { Authorization: `Bearer ${token}` } })
-      .then((r) => r.json())
-      .then((data) => {
-        if (Array.isArray(data) && data.length > 0) {
-          setWorkspaces(data);
-          setActive(data[0].name);
-        }
-      })
-      .catch(() => {});
-  }, []);
-
-  const handleCreate = async () => {
-    if (!newName.trim()) return;
-    const token = localStorage.getItem("waldo_token");
-    const res = await fetch("/api/v1/workspaces", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token || ""}` },
-      body: JSON.stringify({ name: newName }),
-    });
-    if (res.ok) {
-      const ws = await res.json();
-      setWorkspaces((prev) => [...prev, ws]);
-      setActive(ws.name);
-      setNewName("");
-      setCreating(false);
-    }
-  };
-
+function WorkspaceIdentity() {
+  const { user } = useAuth();
   return (
     <div className="px-4 pt-5 pb-3">
-      <Link to="/" className="flex items-center gap-2">
-        <span style={{ fontFamily: "var(--font-serif)", fontSize: 20, fontWeight: 700, color: "var(--text-primary)", letterSpacing: "-0.02em" }}>
-          Waldo
-        </span>
-      </Link>
-      <div className="relative mt-2">
-        <button
-          onClick={() => setOpen(!open)}
-          className="flex items-center gap-1 text-xs rounded-lg px-2.5 py-2 w-full"
-          style={{ color: "var(--text-secondary)", backgroundColor: "var(--bg-inset)", transition: "all 160ms ease" }}
-        >
-          <span className="truncate flex-1 text-left" style={{ fontWeight: 500 }}>{active}</span>
-          <ChevronDown size={12} style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform 160ms ease" }} />
-        </button>
-
-        {open && (
-          <div
-            className="absolute left-0 right-0 mt-1 rounded-xl overflow-hidden z-50"
-            style={{
-              backgroundColor: "var(--bg-surface)",
-              border: "1px solid var(--border-default)",
-              boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
-            }}
-          >
-            {workspaces.map((ws) => (
-              <button
-                key={ws.id}
-                onClick={() => { setActive(ws.name); setOpen(false); }}
-                className="w-full text-left px-3 py-2 text-xs"
-                style={{
-                  color: ws.name === active ? "var(--accent)" : "var(--text-primary)",
-                  backgroundColor: ws.name === active ? "var(--accent-soft)" : "transparent",
-                  fontWeight: ws.name === active ? 600 : 400,
-                  transition: "all 100ms ease",
-                }}
-                onMouseEnter={(e) => { if (ws.name !== active) e.currentTarget.style.backgroundColor = "var(--bg-inset)"; }}
-                onMouseLeave={(e) => { if (ws.name !== active) e.currentTarget.style.backgroundColor = "transparent"; }}
-              >
-                {ws.name}
-                <span style={{ fontSize: 9, color: "var(--text-muted)", marginLeft: 6 }}>{ws.role}</span>
-              </button>
-            ))}
-            <div style={{ borderTop: "1px solid var(--border-subtle)", padding: 6 }}>
-              {creating ? (
-                <div className="flex gap-1">
-                  <input
-                    autoFocus
-                    value={newName}
-                    onChange={(e) => setNewName(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter") handleCreate(); if (e.key === "Escape") setCreating(false); }}
-                    placeholder="Workspace name"
-                    className="flex-1 px-2 py-1 text-xs rounded border"
-                    style={{ borderColor: "var(--border-default)", backgroundColor: "var(--bg-inset)", color: "var(--text-primary)" }}
-                  />
-                  <button onClick={handleCreate} className="px-2 py-1 bg-blue-600 text-white text-xs rounded">Create</button>
-                </div>
-              ) : (
-                <button
-                  onClick={() => setCreating(true)}
-                  className="w-full text-left px-3 py-1.5 text-xs"
-                  style={{ color: "var(--accent)" }}
-                >
-                  + New Workspace
-                </button>
-              )}
-            </div>
-          </div>
-        )}
+      <Link to="/" className="text-xl font-semibold" style={{ color: "var(--text-primary)" }}>Waldo</Link>
+      <div className="mt-3 rounded-lg px-2.5 py-2" style={{ backgroundColor: "var(--bg-inset)" }}>
+        <p className="text-xs truncate font-medium" title={user?.workspace_name || undefined} style={{ color: "var(--text-secondary)" }}>
+          {user?.workspace_name || "No workspace assigned"}
+        </p>
+        {user?.role && <p className="text-xs capitalize mt-1" style={{ color: "var(--text-muted)" }}>{user.role}</p>}
       </div>
     </div>
   );
 }
 
-
 function ComparisonIndicator() {
   const navigate = useNavigate();
   const [sessionId, setSessionId] = useState<string | null>(() => sessionStorage.getItem("waldo_compare_session"));
-  const [_meta, setMeta] = useState<{ modelA: string; modelB: string; fileName: string } | null>(null);
   const [done, setDone] = useState(false);
-
-  // Read metadata from sessionStorage
-  useEffect(() => {
-    const raw = sessionStorage.getItem("waldo_compare_meta");
-    if (raw) {
-      try { setMeta(JSON.parse(raw)); } catch { /* ignore */ }
-    }
-  }, [sessionId]);
 
   // Listen for sessionStorage changes (from CompareDemo setting the session).
   // Same-tab `storage` events don't fire, so we use a BroadcastChannel
@@ -239,20 +130,21 @@ export default function Sidebar() {
         borderRight: "1px solid var(--border-subtle)",
       }}
     >
-      {/* Logo + Workspace Switcher */}
-      <WorkspaceSwitcher />
+      {/* Logo + Workspace identity */}
+      <WorkspaceIdentity />
 
       {/* Main nav */}
       <nav className="flex-1 px-2 mt-1">
         <div className="space-y-0.5">
           {NAV_ITEMS.map((item) => {
-            const active = isActive(item.to, (item as any).exact);
+            const active = isActive(item.to, ("exact" in item ? item.exact : false));
             const Icon = item.icon;
-            const badge = (item as any).badge as string | undefined;
+            const badge = ("badge" in item ? item.badge : undefined);
             return (
               <Link
                 key={item.to}
                 to={item.to}
+                aria-current={active ? "page" : undefined}
                 className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px]"
                 style={{
                   backgroundColor: active ? "color-mix(in srgb, var(--accent) 10%, transparent 90%)" : "transparent",
@@ -280,13 +172,10 @@ export default function Sidebar() {
                   <span
                     style={{
                       fontSize: 9,
-                      fontFamily: "var(--font-mono)",
-                      letterSpacing: "0.06em",
-                      textTransform: "uppercase",
                       padding: "1px 5px",
                       borderRadius: 4,
-                      backgroundColor: "var(--warning-soft)",
-                      color: "var(--warning)",
+                      backgroundColor: "var(--accent-soft)",
+                      color: "var(--text-secondary)",
                       marginLeft: "auto",
                     }}
                   >
@@ -324,6 +213,7 @@ export default function Sidebar() {
               <Link
                 key={item.to}
                 to={item.to}
+                aria-current={active ? "page" : undefined}
                 className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all duration-150"
                 style={{
                   color: active ? "var(--accent)" : "var(--text-muted)",

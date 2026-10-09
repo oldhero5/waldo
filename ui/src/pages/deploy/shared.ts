@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { BarChart3, Camera, Play, Rocket } from "lucide-react";
 import type { DetectionOut } from "../../api";
 
@@ -25,10 +25,10 @@ export function classColor(className: string, allClasses: string[]): string {
 
 export interface ZoomPan { zoom: number; panX: number; panY: number }
 
-export function useZoomPan(canvasRef: React.RefObject<HTMLCanvasElement | null>, redraw: () => void) {
+export function useZoomPan(canvasRef: React.RefObject<HTMLCanvasElement | null>, redraw: () => void, canvasAvailable = true) {
   const [zp, setZp] = useState<ZoomPan>({ zoom: 1, panX: 0, panY: 0 });
   const zpRef = useRef(zp);
-  zpRef.current = zp;
+  useLayoutEffect(() => { zpRef.current = zp; }, [zp]);
   const dragging = useRef(false);
   const dragStart = useRef({ x: 0, y: 0 });
   const panStart = useRef({ x: 0, y: 0 });
@@ -37,7 +37,7 @@ export function useZoomPan(canvasRef: React.RefObject<HTMLCanvasElement | null>,
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!canvas || !canvasAvailable) return;
 
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
@@ -96,7 +96,7 @@ export function useZoomPan(canvasRef: React.RefObject<HTMLCanvasElement | null>,
       window.removeEventListener("mouseup", onMouseUp);
       canvas.removeEventListener("dblclick", onDblClick);
     };
-  }, [canvasRef]);
+  }, [canvasRef, canvasAvailable]);
 
   useEffect(() => { redraw(); }, [zp, redraw]);
 
@@ -117,7 +117,7 @@ export function drawDetections(
   const scaleX = canvasW / srcW;
   const scaleY = canvasH / srcH;
   let filtered = detections.filter((d) => d.confidence >= confThreshold);
-  if (classFilter && classFilter.size > 0) {
+  if (classFilter) {
     filtered = filtered.filter((d) => classFilter.has(d.class_name));
   }
 
@@ -159,14 +159,4 @@ export function drawDetections(
 export function applyZoomPan(ctx: CanvasRenderingContext2D, zoom: number, panX: number, panY: number) {
   ctx.translate(panX, panY);
   ctx.scale(zoom, zoom);
-}
-
-export function ZoomIndicator({ zoom, onReset }: { zoom: number; onReset: () => void }) {
-  if (zoom <= 1.01) return null;
-  return (
-    <div className="absolute top-2 right-2 flex items-center gap-2 bg-black/60 text-white text-xs px-2 py-1 rounded">
-      <span>{zoom.toFixed(1)}x</span>
-      <button onClick={onReset} className="hover:text-gray-300">Reset</button>
-    </div>
-  );
 }

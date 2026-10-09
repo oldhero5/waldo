@@ -79,7 +79,7 @@ export default function Nav() {
           <Link
             to={`/train/${activeRun.run_id}`}
             className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
-            style={{ backgroundColor: "var(--accent)", color: "#fff" }}
+            style={{ backgroundColor: "var(--accent)", color: "var(--text-on-accent)" }}
           >
             <Loader2 size={14} className="animate-spin" />
             Training: {activeRun.epoch_current}/{activeRun.total_epochs}

@@ -3,10 +3,11 @@
  */
 import { useState } from "react";
 import { Settings, Key, Users, User, Shield, LogOut, ListChecks } from "lucide-react";
-import { useAuth } from "../contexts/AuthContext";
+import { useAuth } from "../contexts/authState";
+import { AgentProviderTab } from "./settings/AgentProviderTab";
 import { QueueAdminTab } from "./settings/QueueAdminTab";
 
-type Tab = "profile" | "team" | "api_keys" | "queue";
+type Tab = "profile" | "team" | "api_keys" | "queue" | "agent";
 
 export default function SettingsPage() {
   const [tab, setTab] = useState<Tab>("profile");
@@ -17,6 +18,7 @@ export default function SettingsPage() {
     { key: "profile", label: "Profile", icon: User },
     { key: "team", label: "Team", icon: Users },
     { key: "api_keys", label: "API Keys", icon: Key },
+    { key: "agent", label: "AI provider", icon: Settings },
     ...(isAdmin ? [{ key: "queue" as Tab, label: "Queue", icon: ListChecks }] : []),
   ];
 
@@ -77,7 +79,7 @@ export default function SettingsPage() {
                 />
               </div>
               <div className="flex justify-between items-center pt-2">
-                <button className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">
+                <button className="px-4 py-2 bg-accent text-on-accent rounded-lg text-sm hover:bg-accent-hover">
                   Save Changes
                 </button>
                 <button
@@ -108,7 +110,7 @@ export default function SettingsPage() {
         <div className="surface p-5">
           <div className="flex items-center justify-between mb-4">
             <h2 className="font-semibold text-sm" style={{ color: "var(--text-primary)" }}>Team Members</h2>
-            <button className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs hover:bg-blue-700">
+            <button className="px-3 py-1.5 bg-accent text-on-accent rounded-lg text-xs hover:bg-accent-hover">
               Invite Member
             </button>
           </div>
@@ -148,7 +150,7 @@ export default function SettingsPage() {
                   Use API keys for programmatic access to the Waldo API.
                 </p>
               </div>
-              <button className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs hover:bg-blue-700">
+              <button className="px-3 py-1.5 bg-accent text-on-accent rounded-lg text-xs hover:bg-accent-hover">
                 Create Key
               </button>
             </div>
@@ -185,6 +187,8 @@ print(r.json())`}
           </div>
         </div>
       )}
+
+      {tab === "agent" && <AgentProviderTab isAdmin={isAdmin} />}
 
       {/* Queue admin tab */}
       {tab === "queue" && isAdmin && <QueueAdminTab />}
