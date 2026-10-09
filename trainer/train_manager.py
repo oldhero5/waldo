@@ -189,19 +189,22 @@ def run_training(celery_task, run_id: str) -> dict:
                 classes_by_split = {}
                 for split, description in (("train", "training"), ("val", "validation")):
                     class_dirs = [path for path in (dataset_dir / split).glob("*") if path.is_dir()]
-                    images = [
-                        path
-                        for directory in class_dirs
-                        for path in directory.rglob("*")
-                        if path.is_file()
-                        and path.suffix.lower() in (".jpg", ".jpeg", ".png")
-                        and path.stat().st_size > 0
-                    ]
-                    if not images:
+                    if not class_dirs:
                         raise ValueError(
                             f"Classification dataset has no non-empty {description} images; "
                             "add sources and export the dataset again."
                         )
+                    for directory in class_dirs:
+                        if not any(
+                            path.is_file()
+                            and path.suffix.lower() in (".jpg", ".jpeg", ".png")
+                            and path.stat().st_size > 0
+                            for path in directory.rglob("*")
+                        ):
+                            raise ValueError(
+                                f"Classification class '{directory.name}' has no non-empty "
+                                f"{description} images in {split}; add sources and export the dataset again."
+                            )
                     classes_by_split[split] = {directory.name for directory in class_dirs}
                 if classes_by_split["train"] != classes_by_split["val"]:
                     raise ValueError(

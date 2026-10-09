@@ -4,6 +4,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     Column,
     DateTime,
@@ -156,6 +157,8 @@ class LabelingJob(Base):
     total_frames = Column(Integer, default=0)
     processed_frames = Column(Integer, default=0)
     result_minio_key = Column(String(1024))
+    # Export publication compares this revision with the reviewed snapshot.
+    evidence_revision = Column(BigInteger, nullable=False, default=0, server_default="0")
     error_message = Column(Text)
     celery_task_id = Column(String(255))
     created_at = Column(DateTime, default=datetime.utcnow)

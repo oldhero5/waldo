@@ -8,6 +8,7 @@ silently skipping it. The revision-graph check runs without a database.
 from __future__ import annotations
 
 import os
+import uuid
 
 import pytest
 import sqlalchemy
@@ -75,6 +76,114 @@ def test_alembic_history_is_linear():
         f"Expected exactly one alembic head revision, found {len(heads)}: {heads}. "
         "This usually means two migrations were created without one revising the other."
     )
+
+
+def test_evidence_revision_schema_uses_nonnull_bigint_and_database_default():
+    from lib.db import LabelingJob
+
+    column = LabelingJob.__table__.c.evidence_revision
+    assert isinstance(column.type, sqlalchemy.BigInteger)
+    assert column.nullable is False
+    assert str(column.server_default.arg) == "0"
+    assert not column.index
+
+
+@requires_postgres
+def test_evidence_revision_upgrade_preserves_populated_artifacts_and_database_defaults():
+    """Migrate only a newly created private schema; leave other schemas at head."""
+    schema = f"waldo_migration_{uuid.uuid4().hex}"
+    engine = sqlalchemy.create_engine(_postgres_dsn())
+    url = sqlalchemy.engine.make_url(_postgres_dsn()).update_query_dict({"options": f"-csearch_path={schema}"})
+    scoped = sqlalchemy.create_engine(url)
+    cfg = Config("alembic.ini")
+    # ConfigParser requires literal percent escapes in SQLAlchemy URLs.
+    cfg.attributes["database_url"] = url.render_as_string(hide_password=False).replace("%", "%%")
+    old_job, new_job, project, training = [str(uuid.uuid4()) for _ in range(4)]
+    try:
+        with engine.begin() as connection:
+            connection.exec_driver_sql(f'CREATE SCHEMA "{schema}"')
+        command.upgrade(cfg, "3d4e5f6a7b8c")
+        with scoped.begin() as connection:
+            connection.execute(
+                sqlalchemy.text(
+                    "INSERT INTO labeling_jobs(id, text_prompt, result_minio_key) VALUES (:id, 'camera', :key)"
+                ),
+                {"id": old_job, "key": "datasets/immutable/reviewed.zip"},
+            )
+            connection.execute(
+                sqlalchemy.text("INSERT INTO projects(id, name) VALUES (:id, 'migration fixture')"), {"id": project}
+            )
+            connection.execute(
+                sqlalchemy.text(
+                    "INSERT INTO training_runs(id, project_id, name, task_type, model_variant, dataset_minio_key) "
+                    "VALUES (:id, :project, 'migration fixture', 'detect', 'yolo26n', :key)"
+                ),
+                {"id": training, "project": project, "key": "datasets/immutable/training-snapshot.zip"},
+            )
+        command.upgrade(cfg, "head")
+        with scoped.begin() as connection:
+            revision = next(
+                c for c in inspect(connection).get_columns("labeling_jobs") if c["name"] == "evidence_revision"
+            )
+            assert isinstance(revision["type"], sqlalchemy.BigInteger) and revision["nullable"] is False
+            assert revision["default"] is not None
+            assert (
+                connection.scalar(
+                    sqlalchemy.text("SELECT evidence_revision FROM labeling_jobs WHERE id = :id"), {"id": old_job}
+                )
+                == 0
+            )
+            connection.execute(
+                sqlalchemy.text("INSERT INTO labeling_jobs(id, text_prompt) VALUES (:id, 'camera')"), {"id": new_job}
+            )
+            assert (
+                connection.scalar(
+                    sqlalchemy.text("SELECT evidence_revision FROM labeling_jobs WHERE id = :id"), {"id": new_job}
+                )
+                == 0
+            )
+            connection.execute(
+                sqlalchemy.text("UPDATE labeling_jobs SET evidence_revision = 2147483648 WHERE id = :id"),
+                {"id": old_job},
+            )
+            assert (
+                connection.scalar(
+                    sqlalchemy.text(
+                        "UPDATE labeling_jobs SET evidence_revision = evidence_revision + 1 "
+                        "WHERE id = :id RETURNING evidence_revision"
+                    ),
+                    {"id": old_job},
+                )
+                == 2147483649
+            )
+            with pytest.raises(sqlalchemy.exc.IntegrityError):
+                with connection.begin_nested():
+                    connection.execute(
+                        sqlalchemy.text("UPDATE labeling_jobs SET evidence_revision = NULL WHERE id = :id"),
+                        {"id": old_job},
+                    )
+        command.downgrade(cfg, "3d4e5f6a7b8c")
+        with scoped.connect() as connection:
+            assert "evidence_revision" not in {c["name"] for c in inspect(connection).get_columns("labeling_jobs")}
+        command.upgrade(cfg, "head")
+        with scoped.connect() as connection:
+            assert (
+                connection.scalar(
+                    sqlalchemy.text("SELECT result_minio_key FROM labeling_jobs WHERE id = :id"), {"id": old_job}
+                )
+                == "datasets/immutable/reviewed.zip"
+            )
+            assert (
+                connection.scalar(
+                    sqlalchemy.text("SELECT dataset_minio_key FROM training_runs WHERE id = :id"), {"id": training}
+                )
+                == "datasets/immutable/training-snapshot.zip"
+            )
+    finally:
+        scoped.dispose()
+        with engine.begin() as connection:
+            connection.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+        engine.dispose()
 
 
 @requires_postgres

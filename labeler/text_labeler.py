@@ -15,6 +15,7 @@ from labeler.frame_extractor import extract_frames
 from labeler.pipeline import _update_job, replace_raw_observations
 from labeler.sam3_engine import SegmentationResult, get_engine
 from lib.config import settings
+from lib.dataset_evidence import invalidate_current_export
 from lib.db import Annotation, Frame, LabelingJob, SessionLocal, Video
 from lib.storage import download_file, upload_file
 
@@ -275,6 +276,7 @@ def run_labeling_pipeline(celery_task, job_id: str) -> dict:
                     )
                     if not (len(results) == len(frames) == len(infos)):
                         raise ValueError("Segmentation, database-frame and source-frame list lengths must match")
+                    invalidate_current_export(session, job.id)
                     replace_raw_observations(session, job, results, frames, class_names)
                     entry.update(
                         status="completed",

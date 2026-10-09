@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 import cv2
 
 from labeler.converters import to_classify, to_detect, to_obb, to_pose, to_segment
+from lib.dataset_evidence import invalidate_current_export
 from lib.db import Annotation, Frame, LabelingJob
 from lib.storage import upload_file
 
@@ -60,6 +61,9 @@ def convert_and_store(
     task_type = job.task_type or "segment"
     if task_type not in ("classify", "detect", "segment", "obb", "pose"):
         raise ValueError(f"Unsupported task type: {task_type}")
+    # Serialize this auto-generated artifact with edits and reviewed exports.
+    # The caller commits this revision with the new observations and object key.
+    invalidate_current_export(session, job.id)
     # Replace only this run's annotations, atomically with the caller's final
     # commit. A failed conversion/upload rolls back to the prior attempt.
     video_ids = {frame.video_id for frame in db_frames}

@@ -287,6 +287,9 @@ def start_training(
         job = require_resource(session, principal, LabelingJob, req.job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Labeling job not found")
+        # Serialize snapshot selection with evidence invalidation. The lock is
+        # held only through the TrainingRun insert, never model processing.
+        session.refresh(job, with_for_update=True)
         if job.status != "completed":
             raise HTTPException(status_code=400, detail=f"Job not completed (status: {job.status})")
 

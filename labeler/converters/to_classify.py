@@ -1,11 +1,32 @@
 """Mask → YOLO classification format (cropped images in class directories)."""
 
+import unicodedata
 from pathlib import Path
 
 import cv2
 import numpy as np
 
 from labeler.converters.common import export_stem, generate_data_yaml, split_indices, write_manifest
+
+
+def validate_class_names(class_names: list[str]) -> None:
+    """Require distinct portable class directories without renaming labels."""
+    seen = {}
+    for name in class_names:
+        if (
+            not isinstance(name, str)
+            or not name
+            or name in (".", "..")
+            or any(value in name for value in ("/", "\\", "\x00"))
+        ):
+            raise ValueError("Classification class name must be one safe directory component; rename it before export")
+        canonical = unicodedata.normalize("NFC", unicodedata.normalize("NFC", name).casefold())
+        if canonical in seen:
+            raise ValueError(
+                f"Classification class names {seen[canonical]!r} and {name!r} collide after Unicode normalization "
+                "and case folding; rename one before export"
+            )
+        seen[canonical] = name
 
 
 def masks_to_crops(
@@ -56,6 +77,7 @@ def write_yolo_dataset(
     group_ids: list[str] | None = None,
 ) -> Path:
     """Write YOLO classification dataset: class_name/image.jpg directory structure."""
+    validate_class_names(class_names)
     output_dir = Path(output_dir)
     if len(frame_paths) != len(crops_per_frame):
         raise ValueError("frame_paths and crops_per_frame length must match")

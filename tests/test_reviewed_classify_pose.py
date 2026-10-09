@@ -13,6 +13,7 @@ from fastapi import HTTPException
 from PIL import Image
 
 from app.api import review, train
+from labeler.converters import to_classify
 from lib.db import TrainingRun
 from tests.test_resource_authorization import resources as resource_rows
 
@@ -188,6 +189,47 @@ def test_classification_rejects_unsafe_directory_name_before_source_io(tmp_path,
     assert error.value.status_code == 400
     assert "class name" in error.value.detail.lower()
     assert not pixels
+
+
+@pytest.mark.parametrize("names", [["Camera", "camera"], ["Café", "Cafe\u0301"], ["Straße", "STRASSE"]])
+def test_classification_rejects_canonical_case_collisions_before_download_or_writes(tmp_path, pixels, names):
+    with pytest.raises(HTTPException, match="collide") as error:
+        review._write_review_export(
+            tmp_path / "dataset",
+            tmp_path / "sources",
+            {"a": SimpleNamespace(video_id="source", minio_key="a.png")},
+            {"a": [observation(name) for name in names]},
+            names,
+            "classify",
+        )
+    assert error.value.status_code == 400
+    assert not pixels
+    assert not (tmp_path / "dataset").exists()
+    assert not (tmp_path / "sources").exists()
+
+
+@pytest.mark.parametrize("names", [["Camera", "camera"], ["Café", "Cafe\u0301"], ["Straße", "STRASSE"]])
+def test_classification_writer_itself_rejects_collisions_before_writes(tmp_path, names):
+    with pytest.raises(ValueError, match="collide"):
+        to_classify.write_yolo_dataset(
+            tmp_path / "dataset",
+            [tmp_path / "source.png"],
+            [[(np.zeros((8, 8, 3), dtype=np.uint8), name) for name in names]],
+            names,
+        )
+    assert not (tmp_path / "dataset").exists()
+
+
+@pytest.mark.parametrize("name", ["../escape", "a/b", "a\\b", ".", "..", "bad\x00name", ""])
+def test_classification_writer_itself_rejects_unsafe_component_before_writes(tmp_path, name):
+    with pytest.raises(ValueError, match="class name"):
+        to_classify.write_yolo_dataset(
+            tmp_path / "dataset",
+            [tmp_path / "source.png"],
+            [[(np.zeros((8, 8, 3), dtype=np.uint8), name)]],
+            [name],
+        )
+    assert not (tmp_path / "dataset").exists()
 
 
 @pytest.mark.parametrize("fmt", ["classify", "pose"])

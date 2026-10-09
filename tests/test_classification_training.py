@@ -87,10 +87,10 @@ def training(monkeypatch, tmp_path):
             write_yolo_label_dataset(export, sources, [[line]] * 2, ["pole", "camera"], task=task, group_ids=groups)
         archive = root / "dataset.zip"
 
-        def pack():
+        def pack(preserve_directories=False):
             with zipfile.ZipFile(archive, "w") as output:
                 for path in export.rglob("*"):
-                    if path.is_file():
+                    if path.is_file() or preserve_directories:
                         output.write(path, path.relative_to(export))
 
         pack()
@@ -203,6 +203,25 @@ def test_classification_rejects_unusable_splits_before_model_loading(training, c
         expected = "validation images.*add sources.*export"
     run.pack()
     with pytest.raises(ValueError, match=expected):
+        train_manager.run_training(MagicMock(), run.run_id)
+    assert not run.loads and not run.calls
+    with run.sessions() as session:
+        assert session.get(TrainingRun, run.run_id).status == "failed"
+
+
+@pytest.mark.parametrize("split", ["train", "val"])
+@pytest.mark.parametrize("contents", ["empty", "zero_byte", "unsupported"])
+def test_archive_with_empty_class_directory_fails_before_model_loading(training, split, contents):
+    run = training()
+    class_dir = run.export / split / "camera"
+    for path in class_dir.iterdir():
+        path.unlink()
+    if contents == "zero_byte":
+        (class_dir / "empty.jpg").write_bytes(b"")
+    elif contents == "unsupported":
+        (class_dir / "readme.txt").write_text("Not an image")
+    run.pack(preserve_directories=True)
+    with pytest.raises(ValueError, match=rf"class 'camera'.*{split}"):
         train_manager.run_training(MagicMock(), run.run_id)
     assert not run.loads and not run.calls
     with run.sessions() as session:
