@@ -268,11 +268,11 @@ test("changing an inspector's supplied URL does not replenish its consumed autom
   await page.route("**/api/v1/jobs/coverage-job/annotations?*", (route) => { annotations = route; });
   await page.getByAltText("Frame 0", { exact: true }).locator("..").click();
   await expect.poll(() => Boolean(annotations)).toBe(true);
-  await expect(page.getByRole("button", { name: "Retry image" }).last()).toBeVisible();
+  await expect(editorCanvas(page).locator("..").getByRole("button", { name: "Retry image" })).toBeVisible();
   const attempts = state.frameRequests.filter((id) => id === "frame-0").length;
   await json(annotations!, [annotation(0, "/media/another/frame-0")]);
   await page.clock.runFor(1000);
-  await expect(page.getByRole("button", { name: "Retry image" }).last()).toBeVisible();
+  await expect(editorCanvas(page).locator("..").getByRole("button", { name: "Retry image" })).toBeVisible();
   expect(state.frameRequests.filter((id) => id === "frame-0")).toHaveLength(attempts);
 });
 
@@ -304,22 +304,26 @@ test("a download without a token fails locally and stays on the review page", as
   await expect(page).toHaveURL(/\/review\/coverage-job$/);
 });
 
-test("a new supplied URL during renewal ignores the late result and still offers retry", async ({ page, downloads }) => {
-  const state = await fixture(page, downloads); await imageEvents(page); await datasets(page);
+test("a second expired supplied URL keeps the pending renewal for the same frame", async ({ page, downloads }) => {
+  const state = await fixture(page, downloads); await datasets(page);
   await expect(page.getByAltText("Frame 0", { exact: true })).toHaveJSProperty("naturalWidth", 8);
   let annotations: Route | undefined; let renewal: Route | undefined;
   await page.route("**/api/v1/jobs/coverage-job/annotations?*", (route) => { annotations = route; });
   await page.route("**/api/v1/frames/frame-0", (route) => { state.frameRequests.push("frame-0"); renewal = route; });
+  await page.clock.fastForward(16 * 60 * 1000);
+  state.expired = true;
+  const oldFailure = page.waitForResponse((response) => response.url().endsWith("/media/old/frame-0") && response.status() === 401);
   await page.getByAltText("Frame 0", { exact: true }).locator("..").click();
+  await oldFailure;
+  await expect.poll(() => Boolean(renewal) && Boolean(annotations)).toBe(true);
+  const secondFailure = page.waitForResponse((response) => response.url().includes("/media/old/frame-0?token=cached-annotation") && response.status() === 401);
+  await json(annotations!, [annotation(0, "/media/old/frame-0?token=cached-annotation")]);
+  await secondFailure;
+  expect(state.frameRequests).toEqual(["frame-0"]);
+  await json(renewal!, { image_url: "/media/new/frame-0?renewed=one" });
   await expect.poll(() => canvasColor(page)).toEqual([40, 120, 200]);
-  await failCurrentImage(page); await expect.poll(() => Boolean(renewal)).toBe(true);
-  state.permanent = true;
-  await json(annotations!, [annotation(0, "/media/replaced/frame-0")]);
-  await expect(page.getByRole("button", { name: "Retry image" }).last()).toBeVisible();
-  const obsolete: string[] = []; page.on("request", (request) => { if (request.url().includes("/media/obsolete/")) obsolete.push(request.url()); });
-  await json(renewal!, { image_url: "/media/obsolete/frame-0" });
-  await page.clock.runFor(200);
-  expect(obsolete).toEqual([]);
+  await expect(page.getByRole("button", { name: "Retry image" })).toHaveCount(0);
+  await expect(page.getByRole("alert")).toHaveCount(0);
   expect(state.frameRequests).toEqual(["frame-0"]);
 });
 
