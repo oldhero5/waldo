@@ -77,3 +77,6 @@ the geometry method.
 Only an export matching the job's task updates its current training artifact.
 Later annotation edits invalidate that pointer. Existing training runs keep
 their immutable input snapshot. Export again after review changes.
+If evidence changes while a matching export is being built, publication returns
+HTTP 409 instead of marking the older ZIP as current. Export again after the
+edit completes.

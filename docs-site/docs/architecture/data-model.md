@@ -48,6 +48,12 @@ coverage, time approximation method and per-video outcomes. Terminal states incl
 `completed`, `partial` and `failed`; partial results are reviewable but not silently
 eligible as completed training datasets.
 
+`evidence_revision` is a non-null integer counter, initially zero. Annotation
+changes and committed coverage changes increment it while clearing the current
+export. A task-matching export can publish only against its observed revision;
+an edit during ZIP creation therefore cannot leave a stale dataset trainable.
+Training runs retain their own immutable dataset keys.
+
 ### `annotations`
 The output of labeling jobs and human edits. Each row references a frame and job:
 
