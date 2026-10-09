@@ -59,15 +59,18 @@ def text_run(monkeypatch):
         return [SimpleNamespace(file_path=path, frame_number=0, timestamp_s=0, phash="", width=8, height=8)]
 
     model = SimpleNamespace(
-        segment_frames=lambda *a, **kw: [
-            SimpleNamespace(
-                frame_index=0,
-                masks=np.ones((3, 8, 8), dtype=bool),
-                boxes=np.array([[1, 1, 7, 7]] * 3),
-                scores=np.array([0.9] * 3),
-                class_indices=np.array([0] * 3),
-            )
-        ]
+        iter_segment_frame_paths=lambda *a, **kw: (
+            item
+            for item in [
+                SimpleNamespace(
+                    frame_index=0,
+                    masks=np.ones((3, 8, 8), dtype=bool),
+                    boxes=np.array([[1, 1, 7, 7]] * 3),
+                    scores=np.array([0.9] * 3),
+                    class_indices=np.array([0] * 3),
+                )
+            ]
+        )
     )
     monkeypatch.setattr(subject, "SessionLocal", sessions)
     monkeypatch.setattr(subject, "get_engine", lambda: model)

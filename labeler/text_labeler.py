@@ -4,15 +4,14 @@ import copy
 import logging
 import math
 import tempfile
-from contextlib import ExitStack
 from pathlib import Path
 
 import numpy as np
-from PIL import Image
 
 from labeler.errors import RetryableLabelingError, is_retryable
 from labeler.frame_extractor import extract_frames
 from labeler.pipeline import _update_job, replace_raw_observations
+from labeler.result_store import DiskResultSequence
 from labeler.sam3_engine import SegmentationResult, get_engine
 from lib.config import settings
 from lib.dataset_evidence import invalidate_current_export
@@ -157,7 +156,7 @@ def _process_single_video(
 
     # SAM3 segmentation — once per prompt alias, then merge.
     # Use config-backed threshold; per-call override capability preserved via
-    # engine.segment_frames(threshold=...) when needed.
+    # engine.iter_segment_frame_paths(threshold=...) when needed.
     score_threshold = getattr(job, "score_threshold", None)
     if score_threshold is None:
         score_threshold = settings.sam3_score_threshold
@@ -174,23 +173,40 @@ def _process_single_video(
         for alias in aliases:
             prompt_runs.append((alias, cls_idx))
 
-    with ExitStack() as stack:
-        images = [stack.enter_context(Image.open(fi.file_path)) for fi in frame_infos]
-        per_prompt_results = []
-        for prompt_str, cls_idx in prompt_runs:
-            cls_results = engine.segment_frames(images, prompt_str, threshold=score_threshold)
-            if len(cls_results) != len(images):
-                raise ValueError("Segmentation and sampled-frame list lengths must match")
-            for sr in cls_results:
-                sr.class_indices = np.full(sr.masks.shape[0], cls_idx, dtype=int)
-            per_prompt_results.append(cls_results)
-        if not per_prompt_results:
-            raise ValueError("At least one labeling prompt is required")
-        seg_results = (
-            per_prompt_results[0]
-            if len(per_prompt_results) == 1
-            else merge_multiclass_results(per_prompt_results, len(images))
+    if not prompt_runs:
+        raise ValueError("At least one labeling prompt is required")
+    paths = [info.file_path for info in frame_infos]
+    stores = []
+    for alias_index, (prompt_str, cls_idx) in enumerate(prompt_runs):
+        store = DiskResultSequence(tmpdir / f"results_{video.id}_{alias_index}")
+        iterator = engine.iter_segment_frame_paths(
+            paths,
+            prompt_str,
+            threshold=score_threshold,
+            working_dir=tmpdir / f"session_{video.id}_{alias_index}",
         )
+        try:
+            for ordinal, result in enumerate(iterator):
+                if ordinal >= len(paths) or result.frame_index != ordinal:
+                    raise ValueError("Segmentation and sampled-frame order must match")
+                result.class_indices = np.full(len(result.masks), cls_idx, dtype=int)
+                store.append(result)
+                del result
+            if len(store) != len(paths):
+                raise ValueError("Segmentation and sampled-frame list lengths must match")
+        finally:
+            iterator.close()
+        stores.append(store)
+
+    if len(stores) == 1:
+        seg_results = stores[0]
+    else:
+        seg_results = DiskResultSequence(tmpdir / f"results_{video.id}_merged")
+        for ordinal in range(len(paths)):
+            result = merge_multiclass_results([[store[ordinal]] for store in stores], 1)[0]
+            result.frame_index = ordinal
+            seg_results.append(result)
+            del result
 
     return seg_results, db_frames, frame_infos
 

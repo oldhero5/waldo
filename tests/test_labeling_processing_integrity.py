@@ -69,7 +69,18 @@ def test_text_processing_consumes_job_sampling_and_threshold_without_evidence_de
     monkeypatch.setattr(subject, "download_file", lambda *a: None)
     monkeypatch.setattr(subject, "upload_file", lambda *a: None)
     engine = MagicMock()
-    engine.segment_frames.return_value = [SimpleNamespace(masks=np.ones((1, 8, 8), dtype=bool))]
+    engine.iter_segment_frame_paths.side_effect = lambda *a, **kw: (
+        item
+        for item in [
+            SimpleNamespace(
+                frame_index=0,
+                masks=np.ones((1, 8, 8), dtype=bool),
+                boxes=np.array([[0, 0, 7, 7]]),
+                scores=np.array([0.9]),
+                class_indices=None,
+            )
+        ]
+    )
     job = SimpleNamespace(id="run", score_threshold=0.12, sample_fps=2.5)
     video = SimpleNamespace(id="video", filename="video.mp4", minio_key="videos/video.mp4")
 
@@ -79,7 +90,7 @@ def test_text_processing_consumes_job_sampling_and_threshold_without_evidence_de
 
     assert len(results) == 1
     assert calls == [{"fps": 2.5, "dedup_threshold": -1, "use_cache": False}]
-    assert engine.segment_frames.call_args.kwargs["threshold"] == 0.12
+    assert engine.iter_segment_frame_paths.call_args.kwargs["threshold"] == 0.12
     assert subject._compute_stride(10000, None) == 1
 
 
@@ -575,15 +586,18 @@ def test_transient_download_failure_is_retried_then_completes(monkeypatch, tmp_p
             subject,
             "get_engine",
             lambda: SimpleNamespace(
-                segment_frames=lambda *a, **kw: [
-                    SimpleNamespace(
-                        frame_index=0,
-                        masks=np.empty((0, 8, 8), dtype=bool),
-                        boxes=np.empty((0, 4)),
-                        scores=np.empty(0),
-                        class_indices=np.empty(0),
-                    )
-                ]
+                iter_segment_frame_paths=lambda *a, **kw: (
+                    item
+                    for item in [
+                        SimpleNamespace(
+                            frame_index=0,
+                            masks=np.empty((0, 8, 8), dtype=bool),
+                            boxes=np.empty((0, 4)),
+                            scores=np.empty(0),
+                            class_indices=np.empty(0),
+                        )
+                    ]
+                )
             ),
         )
         frame_path = tmp_path / "frame.png"
@@ -688,15 +702,18 @@ def test_text_successful_clip_evidence_survives_later_transient_failure_and_retr
         subject,
         "get_engine",
         lambda: SimpleNamespace(
-            segment_frames=lambda *a, **kw: [
-                SimpleNamespace(
-                    frame_index=0,
-                    masks=np.zeros((1, 8, 8), dtype=bool),
-                    boxes=np.array([[1, 1, 2, 2]]),
-                    scores=np.array([0.9]),
-                    class_indices=np.array([0]),
-                )
-            ]
+            iter_segment_frame_paths=lambda *a, **kw: (
+                item
+                for item in [
+                    SimpleNamespace(
+                        frame_index=0,
+                        masks=np.zeros((1, 8, 8), dtype=bool),
+                        boxes=np.array([[1, 1, 2, 2]]),
+                        scores=np.array([0.9]),
+                        class_indices=np.array([0]),
+                    )
+                ]
+            )
         ),
     )
     with pytest.raises(RetryableLabelingError):
