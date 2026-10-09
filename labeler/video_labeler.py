@@ -5,6 +5,7 @@ across prompts and tracks objects across sampled video frames.
 Streams detections to Redis for live UI updates.
 """
 
+import copy
 import json
 import logging
 import math
@@ -771,11 +772,24 @@ def run_video_labeling_pipeline(celery_task, job_id: str) -> dict:
     """Store every sampled sighting and report failed clips explicitly.
 
     Track identity is local to this job/video, not a physical-asset identity.
-    Timestamps are source frame index divided by FPS, not source PTS.
+    Each clip records source PTS or its explicit frame-index/FPS approximation.
+    Retries reuse completed clip transactions, including subsequent review edits.
     """
     session = SessionLocal()
     try:
         job = session.query(LabelingJob).filter_by(id=job_id).one()
+        if getattr(job, "status", None) == "completed":
+            summary = job.processing_summary or {}
+            result = {"status": "completed", "processing_summary": summary}
+            if isinstance(summary.get("videos"), list):
+                entries = summary["videos"]
+                completed = [entry for entry in entries if entry["status"] == "completed"]
+                result.update(
+                    videos_processed=len(completed),
+                    videos_failed=sum(entry["status"] == "failed" for entry in entries),
+                    annotations_created=sum(entry.get("observations", 0) for entry in completed),
+                )
+            return result
         class_prompts = job.class_prompts or [{"name": job.text_prompt, "prompt": job.text_prompt}]
         prompts, prompt_to_class, class_names = [], {}, []
         for config in class_prompts:
@@ -790,36 +804,61 @@ def run_video_labeling_pipeline(celery_task, job_id: str) -> dict:
         if threshold is None:
             threshold = settings.sam3_score_threshold
         sample_fps = getattr(job, "sample_fps", None)
-        summary = {
-            "backend": "mlx-image-iou-tracker",
-            "coverage": "sampled",
-            "timestamp_method": "per_frame_source_pts_or_explicit_fps_approximation",
-            "score_threshold": threshold,
-            "requested_sample_fps": sample_fps,
-            "decode_gap_assessment": "early_decode_stop_fails_clip",
-            "videos": [],
-        }
+        summary = (
+            copy.deepcopy(job.processing_summary)
+            if job.processing_summary
+            else {
+                "backend": "mlx-image-iou-tracker",
+                "coverage": "sampled",
+                "timestamp_method": "per_frame_source_pts_or_explicit_fps_approximation",
+                "score_threshold": threshold,
+                "requested_sample_fps": sample_fps,
+                "decode_gap_assessment": "early_decode_stop_fails_clip",
+                "videos": [],
+            }
+        )
+        for key, value in (("score_threshold", threshold), ("requested_sample_fps", sample_fps)):
+            if key in summary and summary[key] != value:
+                raise ValueError(f"Retry configuration differs from recorded {key}; start a new labeling job")
         if job.project_id and not job.video_id:
             videos = session.query(Video).filter_by(project_id=job.project_id).all()
         elif job.video_id:
             videos = [session.query(Video).filter_by(id=job.video_id).one()]
         else:
             videos = []
+        completed = {entry["video_id"]: entry for entry in summary.get("videos", []) if entry["status"] == "completed"}
+        for video in videos:
+            if str(video.id) not in completed:
+                source_frames = session.query(Frame.id).filter_by(video_id=video.id)
+                existing = (
+                    session.query(Annotation.id)
+                    .filter(Annotation.job_id == job.id, Annotation.frame_id.in_(source_frames))
+                    .first()
+                )
+                if existing is not None:
+                    raise ValueError(
+                        "Existing observations lack a committed clip completion record; start a new labeling job"
+                    )
+        summary["videos"] = [completed[str(video.id)] for video in videos if str(video.id) in completed]
+        videos_processed = len(summary["videos"])
+        observations_count = sum(entry.get("observations", 0) for entry in summary["videos"])
+        frames_processed = sum(entry.get("sampled_frames", 0) for entry in summary["videos"])
         _update_job(
             session,
             job,
             status="labeling",
-            total_frames=0,
-            processed_frames=0,
-            progress=0.0,
+            total_frames=frames_processed,
+            processed_frames=frames_processed,
+            progress=videos_processed / len(videos) if videos else 0.0,
             processing_summary=summary,
             error_message=None,
         )
         celery_task.update_state(state="LABELING")
-        observations_count, videos_processed, frames_processed = 0, 0, 0
         with tempfile.TemporaryDirectory() as directory:
             tmpdir = Path(directory)
             for video in videos:
+                if str(video.id) in completed:
+                    continue
                 video_path = tmpdir / f"{video.id}_{Path(video.filename).name}"
                 entry = {"video_id": str(video.id), "status": "failed"}
                 try:
@@ -835,10 +874,6 @@ def run_video_labeling_pipeline(celery_task, job_id: str) -> dict:
                         prompt_to_class,
                         class_names,
                     )
-                    session.commit()
-                    observations_count += len(annotations)
-                    videos_processed += 1
-                    frames_processed += len(results)
                     entry.update(
                         {
                             "status": "completed",
@@ -851,9 +886,25 @@ def run_video_labeling_pipeline(celery_task, job_id: str) -> dict:
                             "timestamp_method": results[0].get("timestamp_method") if results else None,
                         }
                     )
+                    next_summary = {**summary, "videos": [*summary["videos"], entry]}
+                    # Completion metadata and its observations must commit in
+                    # one transaction; otherwise redelivery cannot reuse them.
+                    _update_job(
+                        session,
+                        job,
+                        processed_frames=frames_processed + len(results),
+                        total_frames=frames_processed + len(results),
+                        progress=(videos_processed + 1) / len(videos),
+                        processing_summary=next_summary,
+                        result_minio_key=None,
+                    )
+                    summary = next_summary
+                    observations_count += len(annotations)
+                    videos_processed += 1
+                    frames_processed += len(results)
                 except Exception as error:
                     session.rollback()
-                    entry["error"] = str(error)
+                    entry = {"video_id": str(video.id), "status": "failed", "error": str(error)}
                     logger.exception("Video %s failed during labeling/evidence storage", video.id)
                     if is_retryable(error):
                         entry["status"] = "retrying"
@@ -870,15 +921,16 @@ def run_video_labeling_pipeline(celery_task, job_id: str) -> dict:
                         raise RetryableLabelingError(str(error)) from error
                 finally:
                     video_path.unlink(missing_ok=True)
-                summary["videos"].append(entry)
-                _update_job(
-                    session,
-                    job,
-                    processed_frames=frames_processed,
-                    total_frames=frames_processed,
-                    progress=videos_processed / len(videos),
-                    processing_summary=dict(summary),
-                )
+                if entry["status"] != "completed":
+                    summary["videos"].append(entry)
+                    _update_job(
+                        session,
+                        job,
+                        processed_frames=frames_processed,
+                        total_frames=frames_processed,
+                        progress=videos_processed / len(videos),
+                        processing_summary=dict(summary),
+                    )
                 _publish_progress(
                     job_id, videos_processed, len(videos), video.filename, annotations_so_far=observations_count
                 )
