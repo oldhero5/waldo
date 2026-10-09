@@ -139,7 +139,11 @@ function WorkflowEditor({ workflowId }: { workflowId?: string }) {
 
   const addBlock = useCallback(
     (block: BlockSchema) => {
-      const id = `node_${crypto.randomUUID()}`;
+      // randomUUID is unavailable on non-loopback HTTP origins.
+      const randomId = typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, "0")).join("");
+      const id = `node_${randomId}`;
       const catMeta = CATEGORY_META[block.category] || CATEGORY_META.general;
       setNodes((nds) => [...nds, {
         id,
