@@ -108,19 +108,24 @@ Only synthetic CI data belongs in these reports; never upload local credentials,
 
 | Check | What it establishes | What it does not establish |
 | --- | --- | --- |
-| Lint + Test + Build | Python regressions; migrated PostgreSQL contracts and export races; Redis/MinIO round trips; UI type/build/lint; secret scan | Complete Celery workflow, real inference, model accuracy, GPU compatibility, or a tested container image |
+| Lint + Test + Build | Python regressions; queued labeling with a separate Celery worker and controlled inference; PostgreSQL/Redis/MinIO persistence, review, retry and export checks; UI type/build/lint; secret scan | Real inference, full model training, model accuracy, GPU compatibility, or a tested release image |
 | UI browser smoke | Real UI rendering and synthetic video playback with controlled API responses | Browser-to-production-backend integration or model quality |
 | Independent review | A separate reviewer inspected the named commit and its evidence | An automated test or owner approval |
 | Human approval | The owner accepted the named commit and human test result | An automated test or a release deployment |
 
-Known gaps: worker-dependent API tests can skip when no worker completes a job.
-The two opt-in suites in `test_e2e.py` and `test_e2e_full.py` also need repair:
-one expects automatic export, and the other expects training from one source
-group. Neither qualifies the current workflow. A separate worker-integration PR
-must repair these assumptions, run a real queued workflow, and fail if a
-required worker does not complete. Real SAM/MLX/CUDA and accuracy checks remain
-separate hardware/model qualification. The documentation build is currently a
-local check and a main-branch workflow, not a required PR check.
+CI enables `WALDO_WORKER_INTEGRATION=1` on disposable services. Required worker
+cases fail if a service is missing or a job exceeds its deadline. The test worker
+replaces only inference; it uses the production task, queue, video decoding,
+database, storage, review and export paths. It does not load model weights.
+
+Known limits: the live suites in `test_e2e.py` and `test_e2e_full.py` are opt-in.
+They require an explicit isolated local API and known-positive local clips. They
+request reviewed exports; full training requires two distinct source groups.
+This checks source separation, not a valid model holdout. Real SAM/MLX/CUDA,
+full training, and accuracy still require separate hardware/model qualification.
+See the [testing guide](docs-site/docs/development/testing.md) for the commands.
+The documentation build is a local check and a main-branch workflow, not a
+required PR check.
 
 ## Data and model experiments
 

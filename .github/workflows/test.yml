@@ -24,7 +24,7 @@ jobs:
         env:
           POSTGRES_USER: waldo
           POSTGRES_PASSWORD: waldo  # pragma: allowlist secret
-          POSTGRES_DB: waldo
+          POSTGRES_DB: waldo_worker_test
         ports:
           - 5432:5432
         options: >-
@@ -48,9 +48,10 @@ jobs:
       POSTGRES_PORT: 5432
       POSTGRES_USER: waldo
       POSTGRES_PASSWORD: waldo  # pragma: allowlist secret
-      POSTGRES_DB: waldo
-      WALDO_TEST_POSTGRES_URL: postgresql://waldo:waldo@localhost:5432/waldo  # pragma: allowlist secret
+      POSTGRES_DB: waldo_worker_test
+      WALDO_TEST_POSTGRES_URL: postgresql://waldo:waldo@localhost:5432/waldo_worker_test  # pragma: allowlist secret
       WALDO_SERVICE_STACK: "1"
+      WALDO_WORKER_INTEGRATION: "1"
       REDIS_URL: redis://localhost:6379/0
       MINIO_ENDPOINT: localhost:9000
       MINIO_ACCESS_KEY: minioadmin
@@ -136,7 +137,7 @@ jobs:
         run: uv run alembic upgrade head
 
       # ── Pytest ──────────────────────────────────────────────────────────────
-      - name: Run pytest
+      - name: Run pytest including queued worker integration
         id: pytest
         run: uv run pytest -v --tb=short -ra --junitxml="$RUNNER_TEMP/waldo-pytest.xml"
 
