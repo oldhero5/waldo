@@ -11,10 +11,31 @@ observations occurred. Keep the existing Python workers and React application.
 The largest gap is a trustworthy evidence model, not a different frontend
 framework or a larger chat model.
 
-Updated October 9, 2026 to reflect the current local implementation; the original
-architecture assessment started from commit `868ec56`. The first target is
+Updated October 10, 2026 after [PR #20](https://github.com/oldhero5/waldo/pull/20)
+merged as `edb935c`; the original architecture assessment started from commit
+`868ec56`. The first target is
 **physical traffic cameras visible in uploaded footage**. Searching
 feeds from a directory of known cameras is a different future workflow.
+
+## Next delivery waves
+
+The [current delivery plan](https://github.com/oldhero5/waldo/blob/main/docs/plans/2026-10-10-next-waves.md)
+sets the order below. The later architecture packages remain a backlog; they do
+not change this order. Each wave needs its own feature branch, acceptance tests,
+fresh independent review, and owner approval of the exact commit.
+
+1. **Verify queued work.** Run a real worker against disposable services. Prove
+   upload, labeling, review, export, failure, and retry behavior. Required worker
+   timeouts must fail the check. Controlled inference tests do not qualify models.
+2. **Build the guarded Docker Hub release path.** Test the same CPU and CUDA
+   image artifacts that will be published. Record digests, security results,
+   approval, deployment checks, and recovery steps for a partial publication.
+3. **Store durable native assessments.** Retain source times and completed empty
+   assessments across restarts. Missing coverage must stay unknown.
+
+Worker and release checks come before the new schema so the next evidence
+feature has a tested delivery path. Camera-model comparison, localization, map
+search, and bounded agent tools follow. Desktop and System 1 work remain on hold.
 
 ## What is solid enough to build on
 
