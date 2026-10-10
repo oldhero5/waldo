@@ -44,6 +44,10 @@ class FrameResult:
     frame_index: int
     timestamp_s: float
     detections: list[Detection] = field(default_factory=list)
+    source_width: int | None = None
+    source_height: int | None = None
+    frame_duration_s: float | None = None
+    timestamp_method: str | None = None
 
 
 def _nms_torch(detections: list[Detection], iou_threshold: float = 0.5) -> list[Detection]:
@@ -283,7 +287,13 @@ class InferenceEngine:
         return detections
 
     def _clear_device_cache(self) -> None:
-        import torch
+        try:
+            import torch
+        except ModuleNotFoundError as error:
+            if error.name != "torch":
+                raise
+            # API-only installations have no inference runtime or GPU cache.
+            return
 
         # torch.mps.empty_cache() exists as an API on Linux too but raises
         # RuntimeError when no MPS backend is present — gate on is_available.

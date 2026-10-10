@@ -18,6 +18,15 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from lib.auth import get_current_user
+from lib.authorization import (
+    WorkspacePrincipal,
+    get_workspace_principal,
+    register_task_owner,
+    require_resource,
+    require_task_owner,
+    require_workspace_editor,
+    scope_resources,
+)
 from lib.db import (
     ComparisonRun,
     DeploymentExperiment,
@@ -27,8 +36,8 @@ from lib.db import (
     ModelRegistry,
     SessionLocal,
 )
-from lib.inference_engine import get_engine, get_pool
-from lib.tasks import predict_video_task
+from lib.inference_engine import get_pool
+from lib.tasks import predict_sam_task, predict_video_task
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +66,10 @@ class FrameResultOut(BaseModel):
     frame_index: int
     timestamp_s: float
     detections: list[DetectionOut]
+    source_width: int | None = None
+    source_height: int | None = None
+    frame_duration_s: float | None = None
+    timestamp_method: str | None = None
 
 
 class VideoPredictionResponse(BaseModel):
@@ -113,19 +126,21 @@ class MetricsQuery(BaseModel):
 # ── Blue-green experiment routing ────────────────────────────────
 
 
-def _resolve_experiment_model(target_id: str | None) -> str | None:
+def _resolve_experiment_model(target_id: str | None, principal: WorkspacePrincipal) -> str | None:
     """If there's a running experiment, probabilistically route to champion or challenger."""
     try:
         session = SessionLocal()
         try:
-            query = session.query(DeploymentExperiment).filter_by(status="running")
+            query = scope_resources(session.query(DeploymentExperiment), DeploymentExperiment, principal).filter_by(
+                status="running"
+            )
             if target_id:
                 # Match experiment for this specific target, or global experiments (target_id=null)
                 from sqlalchemy import or_
 
                 query = query.filter(
                     or_(
-                        DeploymentExperiment.target_id == target_id,
+                        DeploymentExperiment.target_id == _uuid.UUID(target_id),
                         DeploymentExperiment.target_id.is_(None),
                     )
                 )
@@ -147,10 +162,47 @@ def _resolve_experiment_model(target_id: str | None) -> str | None:
         return None
 
 
+def _resolve_model_id(principal: WorkspacePrincipal, model_id: str | None = None, target_id: str | None = None) -> str:
+    """Select a persisted model owned by the caller's selected workspace."""
+    session = SessionLocal()
+    try:
+        if target_id:
+            target = require_resource(session, principal, DeploymentTarget, target_id)
+            if not target.is_active:
+                raise HTTPException(status_code=404, detail="Deployment target is inactive")
+            model_id = model_id or (str(target.model_id) if target.model_id else None)
+        if not model_id:
+            model_id = _resolve_experiment_model(target_id, principal)
+        if model_id:
+            model = require_resource(session, principal, ModelRegistry, model_id)
+        else:
+            model = (
+                scope_resources(session.query(ModelRegistry), ModelRegistry, principal)
+                .filter_by(is_active=True)
+                .first()
+            )
+            if model is None:
+                raise HTTPException(status_code=404, detail="No active model in this workspace")
+        return str(model.id)
+    finally:
+        session.close()
+
+
+def _authorize_comparison_models(principal: WorkspacePrincipal, *model_ids: str | None) -> None:
+    session = SessionLocal()
+    try:
+        for model_id in model_ids:
+            if model_id is not None and model_id != "sam3.1":
+                require_resource(session, principal, ModelRegistry, model_id)
+    finally:
+        session.close()
+
+
 # ── Inference logging helper ────────────────────────────────────
 
 
 def _log_inference(
+    principal: WorkspacePrincipal,
     model_id: str | None,
     target_id: str | None,
     request_type: str,
@@ -166,8 +218,9 @@ def _log_inference(
         session = SessionLocal()
         try:
             log = InferenceLog(
-                model_id=model_id,
-                target_id=target_id,
+                workspace_id=principal.workspace_id,
+                model_id=_uuid.UUID(model_id) if model_id else None,
+                target_id=_uuid.UUID(target_id) if target_id else None,
                 request_type=request_type,
                 latency_ms=latency_ms,
                 detection_count=detection_count,
@@ -194,11 +247,13 @@ async def predict_image(
     classes: str | None = Query(None),
     model_id: str | None = Query(None, description="Specific model ID to use (default: active model)"),
     target_id: str | None = Query(None, description="Deployment target — auto-selects the target's assigned model"),
+    principal: WorkspacePrincipal = Depends(get_workspace_principal),
 ):
     """Upload an image and get JSON detections back."""
     import cv2
     import numpy as np
 
+    model_id = _resolve_model_id(principal, model_id, target_id)
     t0 = time.perf_counter()
 
     contents = await file.read()
@@ -210,29 +265,15 @@ async def predict_image(
     h, w = image.shape[:2]
     resolution = f"{w}x{h}"
 
-    # Resolve model: explicit model_id > target_id > active experiment > champion
-    resolved_target_id = None
-    if target_id and not model_id:
-        session = SessionLocal()
-        try:
-            target = session.query(DeploymentTarget).filter_by(id=target_id, is_active=True).first()
-            if target and target.model_id:
-                model_id = str(target.model_id)
-                resolved_target_id = target_id
-        finally:
-            session.close()
-
-    # Blue-green: if no explicit model and there's a running experiment, route probabilistically
-    if not model_id:
-        model_id = _resolve_experiment_model(resolved_target_id)
-
+    resolved_target_id = target_id
     pool = get_pool()
 
     # Get the right engine: specific model_id or active model
     try:
-        engine = pool.get_model(model_id) if model_id else pool.get_active_model()
+        engine = pool.get_model(model_id)
     except Exception as e:
         _log_inference(
+            principal,
             model_id,
             resolved_target_id,
             "image",
@@ -255,7 +296,7 @@ async def predict_image(
     except RuntimeError as e:
         latency = (time.perf_counter() - t0) * 1000
         _log_inference(
-            engine.model_id, resolved_target_id, "image", latency, 0, None, [], resolution, "inference_error"
+            principal, engine.model_id, resolved_target_id, "image", latency, 0, None, [], resolution, "inference_error"
         )
         logger.exception("Inference error on image prediction")
         raise HTTPException(status_code=503, detail=f"Inference error: {e}")
@@ -267,7 +308,15 @@ async def predict_image(
     avg_conf = sum(d.confidence for d in dets_out) / len(dets_out) if dets_out else None
     classes_found = list({d.class_name for d in dets_out})
     _log_inference(
-        engine.model_id, resolved_target_id, "image", latency, len(dets_out), avg_conf, classes_found, resolution
+        principal,
+        engine.model_id,
+        resolved_target_id,
+        "image",
+        latency,
+        len(dets_out),
+        avg_conf,
+        classes_found,
+        resolution,
     )
 
     return ImagePredictionResponse(
@@ -277,110 +326,97 @@ async def predict_image(
     )
 
 
+async def _remove_inference_input(input_key: str) -> None:
+    from lib.storage import delete_object
+
+    try:
+        await asyncio.to_thread(delete_object, input_key)
+    except Exception:
+        logger.warning("Failed to remove ephemeral inference input", exc_info=True)
+
+
+async def _store_inference_input(
+    contents: bytes, filename: str | None, principal: WorkspacePrincipal, input_id: str
+) -> str:
+    from lib.storage import ensure_inference_lifecycle, upload_bytes
+
+    suffix = Path(filename or "input.bin").suffix.lower().lstrip(".")
+    if not suffix.isalnum() or len(suffix) > 10:
+        suffix = "bin"
+    input_key = f"inference/{principal.workspace_id}/{input_id}/input.{suffix}"
+    try:
+        await asyncio.to_thread(ensure_inference_lifecycle)
+        await asyncio.to_thread(upload_bytes, input_key, contents)
+    except Exception:
+        await _remove_inference_input(input_key)
+        raise
+    return input_key
+
+
+async def _dispatch_sam(
+    contents: bytes,
+    filename: str | None,
+    principal: WorkspacePrincipal,
+    is_video: bool,
+    prompts: list[str],
+    conf: float,
+) -> dict:
+    task_id = str(_uuid.uuid4())
+    register_task_owner(task_id, principal)
+    input_key = await _store_inference_input(contents, filename, principal, task_id)
+    try:
+        _prepare_inference_task("sam", task_id, task_id)
+        task = predict_sam_task.apply_async(args=[input_key, is_video, prompts, conf], task_id=task_id, expires=86400)
+    except Exception:
+        await _remove_inference_input(input_key)
+        raise
+    # Celery's blocking wait belongs in a thread; the native worker owns cleanup.
+    return await asyncio.to_thread(task.get, timeout=300)
+
+
 @router.post("/predict/sam", response_model=ImagePredictionResponse)
 async def predict_sam(
     file: UploadFile = File(...),
     prompts: str = Query(..., description="Comma-separated text prompts, e.g. 'person,car'"),
     conf: float = Query(0.15, ge=0.0, le=1.0),
+    principal: WorkspacePrincipal = Depends(get_workspace_principal),
 ):
-    """Run SAM 3.1 (MLX) on an image with text prompts. Returns detections in the same format as YOLO predict.
-
-    This is the teacher model — use for comparison against trained student (YOLO) models.
-    """
-
+    """Run SAM 3.1 on a native worker, preserving the image response contract."""
     import cv2
     import numpy as np
-    from PIL import Image as PILImage
 
     t0 = time.perf_counter()
-
     contents = await file.read()
-    nparr = np.frombuffer(contents, np.uint8)
-    image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    image = cv2.imdecode(np.frombuffer(contents, np.uint8), cv2.IMREAD_COLOR)
     if image is None:
         raise HTTPException(status_code=400, detail="Invalid image file")
-
     h, w = image.shape[:2]
     resolution = f"{w}x{h}"
-    prompt_list = [p.strip() for p in prompts.split(",") if p.strip()]
+    prompt_list = [prompt.strip() for prompt in prompts.split(",") if prompt.strip()]
     if not prompt_list:
         raise HTTPException(status_code=400, detail="At least one prompt required")
-
-    def _run_sam():
-        import mlx.core as mx
-        from mlx_vlm.models.sam3_1.generate import _get_backbone_features
-
-        from labeler.sam3_optimized import detect_with_backbone_fast
-        from labeler.video_labeler import _get_predictor
-
-        predictor = _get_predictor(threshold=conf)
-
-        # Convert to PIL for SAM — use same preprocessing as video pipeline
-        pil_image = PILImage.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
-        inputs = predictor.processor.preprocess_image(pil_image)
-        pixel_values = mx.array(inputs["pixel_values"])
-        backbone_features = _get_backbone_features(predictor.model, pixel_values)
-
-        result = detect_with_backbone_fast(
-            predictor,
-            backbone_features,
-            prompt_list,
-            image_size=pil_image.size,
-            threshold=conf,
-            encoder_cache={},
-        )
-        return result
-
     try:
-        result = await asyncio.to_thread(_run_sam)
-    except Exception as e:
-        latency = (time.perf_counter() - t0) * 1000
-        _log_inference(None, None, "image", latency, 0, None, [], resolution, "sam_error")
-        logger.exception("SAM 3.1 inference error")
-        raise HTTPException(status_code=503, detail=f"SAM 3.1 inference error: {e}")
-
-    # Convert SAM DetectionResult to our standard DetectionOut format
-    dets_out = []
-    for i in range(len(result.scores)):
-        bbox = result.boxes[i].tolist() if i < len(result.boxes) else [0, 0, 0, 0]
-        label = result.labels[i] if result.labels and i < len(result.labels) else prompt_list[0]
-
-        # Extract mask polygon if available
-        mask_polygon = None
-        if i < len(result.masks):
-            mask = result.masks[i]
-            mask_u8 = (mask > 0.5).astype(np.uint8) * 255
-            if mask_u8.shape != (h, w):
-                mask_u8 = cv2.resize(mask_u8, (w, h), interpolation=cv2.INTER_NEAREST)
-            contours, _ = cv2.findContours(mask_u8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            if contours:
-                largest = max(contours, key=cv2.contourArea)
-                if cv2.contourArea(largest) > 50:
-                    eps = 0.001 * cv2.arcLength(largest, True)
-                    approx = cv2.approxPolyDP(largest, eps, True)
-                    if len(approx) >= 3:
-                        mask_polygon = [[float(px), float(py)] for px, py in approx.reshape(-1, 2)]
-
-        dets_out.append(
-            DetectionOut(
-                class_name=label,
-                class_index=prompt_list.index(label) if label in prompt_list else 0,
-                confidence=float(result.scores[i]),
-                bbox=[float(x) for x in bbox],
-                mask=mask_polygon,
-            )
+        result = await _dispatch_sam(contents, file.filename, principal, False, prompt_list, conf)
+        response = ImagePredictionResponse.model_validate(result)
+    except Exception as error:
+        _log_inference(
+            principal, None, None, "image", (time.perf_counter() - t0) * 1000, 0, None, [], resolution, "sam_error"
         )
-
-    latency = (time.perf_counter() - t0) * 1000
-    avg_conf = sum(d.confidence for d in dets_out) / len(dets_out) if dets_out else None
-    classes_found = list({d.class_name for d in dets_out})
-    _log_inference(None, None, "image", latency, len(dets_out), avg_conf, classes_found, resolution)
-
-    return ImagePredictionResponse(
-        detections=dets_out,
-        model_id="sam3.1",
-        count=len(dets_out),
+        logger.exception("SAM 3.1 worker inference error")
+        raise HTTPException(status_code=503, detail=f"SAM 3.1 inference error: {error}") from error
+    avg_conf = sum(d.confidence for d in response.detections) / response.count if response.count else None
+    _log_inference(
+        principal,
+        None,
+        None,
+        "image",
+        (time.perf_counter() - t0) * 1000,
+        response.count,
+        avg_conf,
+        list({d.class_name for d in response.detections}),
+        resolution,
     )
+    return response
 
 
 @router.post("/predict/sam/video")
@@ -388,157 +424,36 @@ async def predict_sam_video(
     file: UploadFile = File(...),
     prompts: str = Query(..., description="Comma-separated text prompts"),
     conf: float = Query(0.35, ge=0.0, le=1.0),
+    principal: WorkspacePrincipal = Depends(get_workspace_principal),
 ):
-    """Run SAM 3.1 (MLX) video-native tracking on a video. Returns per-frame detections with tracking IDs."""
-    import cv2
-
+    """Run SAM 3.1 tracking on a native worker with source timing and geometry."""
     t0 = time.perf_counter()
-
-    tmp_dir = Path(tempfile.mkdtemp(prefix="waldo_sam_predict_"))
+    prompt_list = [prompt.strip() for prompt in prompts.split(",") if prompt.strip()]
+    if not prompt_list:
+        raise HTTPException(status_code=400, detail="At least one prompt required")
     try:
-        safe_name = Path(file.filename).name  # strips directory traversal
-        video_path = tmp_dir / safe_name
-        contents = await file.read()
-        video_path.write_bytes(contents)
-
-        cap = cv2.VideoCapture(str(video_path))
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        cap.release()
-        resolution = f"{width}x{height}"
-
-        prompt_list = [p.strip() for p in prompts.split(",") if p.strip()]
-        if not prompt_list:
-            raise HTTPException(status_code=400, detail="At least one prompt required")
-
-        def _run_sam_video():
-            """Run SAM 3.1 video tracking in a clean session."""
-            import cv2 as _cv2
-            import mlx.core as mx
-            from mlx_vlm.generate import wired_limit
-            from mlx_vlm.models.sam3.generate import SimpleTracker
-            from mlx_vlm.models.sam3_1.generate import _get_backbone_features
-            from PIL import Image as PILImage
-
-            from labeler.sam3_optimized import detect_with_backbone_fast
-            from labeler.video_labeler import _get_predictor, _result_to_detections
-
-            predictor = _get_predictor(threshold=conf)
-            cap = _cv2.VideoCapture(str(video_path))
-            if not cap.isOpened():
-                raise RuntimeError(f"Cannot open video: {video_path}")
-
-            total = int(cap.get(_cv2.CAP_PROP_FRAME_COUNT))
-            fps = cap.get(_cv2.CAP_PROP_FPS) or 24.0
-            W = int(cap.get(_cv2.CAP_PROP_FRAME_WIDTH))
-            H = int(cap.get(_cv2.CAP_PROP_FRAME_HEIGHT))
-
-            # Fresh tracker per run — no state leakage
-            tracker = SimpleTracker()
-            results = []
-
-            with wired_limit(predictor.model):
-                for fi in range(total):
-                    ret, frame_bgr = cap.read()
-                    if not ret:
-                        break
-                    # Detect every 15 frames for comparison granularity
-                    if fi % 15 != 0:
-                        continue
-
-                    frame_pil = PILImage.fromarray(_cv2.cvtColor(frame_bgr, _cv2.COLOR_BGR2RGB))
-                    inputs = predictor.processor.preprocess_image(frame_pil)
-                    pixel_values = mx.array(inputs["pixel_values"])
-
-                    # Fresh backbone every frame for accuracy
-                    backbone = _get_backbone_features(predictor.model, pixel_values)
-
-                    result = detect_with_backbone_fast(
-                        predictor,
-                        backbone,
-                        prompt_list,
-                        image_size=frame_pil.size,
-                        threshold=conf,
-                        encoder_cache={},  # no cache — clean per frame
-                    )
-                    result = tracker.update(result)
-
-                    if len(result.scores) > 0:
-                        results.append(
-                            {
-                                "frame_idx": fi,
-                                "timestamp_s": fi / fps,
-                                "width": W,
-                                "height": H,
-                                "detections": _result_to_detections(result, W, H, prompt_list),
-                            }
-                        )
-
-            cap.release()
-            return results
-
-        try:
-            raw_results = await asyncio.to_thread(_run_sam_video)
-        except Exception as e:
-            latency = (time.perf_counter() - t0) * 1000
-            _log_inference(None, None, "video", latency, 0, None, [], resolution, "sam_video_error")
-            logger.exception("SAM 3.1 video tracking error")
-            raise HTTPException(status_code=503, detail=f"SAM 3.1 video error: {e}")
-
-        # Convert to standard FrameResultOut format
-        frames_out = []
-        total_dets = 0
-        total_conf = 0.0
-        all_classes: set[str] = set()
-
-        for fr in raw_results:
-            dets = []
-            for d in fr["detections"]:
-                bbox = d.get("bbox") or [0, 0, 0, 0]
-                mask_polygon = None
-                raw_poly = d.get("polygon")
-                if raw_poly and len(raw_poly) >= 6:
-                    # polygon is [x_norm, y_norm, ...] — convert to pixel coords
-                    w, h = fr["width"], fr["height"]
-                    mask_polygon = [[raw_poly[i] * w, raw_poly[i + 1] * h] for i in range(0, len(raw_poly), 2)]
-
-                det = DetectionOut(
-                    class_name=d.get("label", prompt_list[0]),
-                    class_index=prompt_list.index(d.get("label", prompt_list[0]))
-                    if d.get("label") in prompt_list
-                    else 0,
-                    confidence=d.get("score", 0.0),
-                    bbox=[float(x) for x in bbox],
-                    track_id=d.get("track_id"),
-                    mask=mask_polygon,
-                )
-                dets.append(det)
-                total_dets += 1
-                total_conf += det.confidence
-                all_classes.add(det.class_name)
-
-            frames_out.append(
-                FrameResultOut(
-                    frame_index=fr["frame_idx"],
-                    timestamp_s=fr["timestamp_s"],
-                    detections=dets,
-                )
-            )
-
-        latency = (time.perf_counter() - t0) * 1000
-        avg_conf = total_conf / total_dets if total_dets else None
-        _log_inference(None, None, "video", latency, total_dets, avg_conf, list(all_classes), resolution)
-
-        return JSONResponse(
-            status_code=200,
-            content=VideoPredictionResponse(
-                frames=frames_out,
-                total_frames=len(frames_out),
-                model_id="sam3.1",
-            ).model_dump(),
+        result = await _dispatch_sam(await file.read(), file.filename, principal, True, prompt_list, conf)
+        response = VideoPredictionResponse.model_validate(result)
+    except Exception as error:
+        _log_inference(
+            principal, None, None, "video", (time.perf_counter() - t0) * 1000, 0, None, [], None, "sam_video_error"
         )
-    finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+        logger.exception("SAM 3.1 worker video error")
+        raise HTTPException(status_code=503, detail=f"SAM 3.1 video error: {error}") from error
+    detections = [d for frame in response.frames for d in frame.detections]
+    avg_conf = sum(d.confidence for d in detections) / len(detections) if detections else None
+    _log_inference(
+        principal,
+        None,
+        None,
+        "video",
+        (time.perf_counter() - t0) * 1000,
+        len(detections),
+        avg_conf,
+        list({d.class_name for d in detections}),
+        result.get("input_resolution"),
+    )
+    return JSONResponse(status_code=200, content=response.model_dump())
 
 
 @router.post("/predict/video")
@@ -548,6 +463,7 @@ async def predict_video(
     classes: str | None = Query(None),
     target_id: str | None = Query(None),
     model_id: str | None = Query(None, description="Specific model ID to use"),
+    principal: WorkspacePrincipal = Depends(get_workspace_principal),
 ):
     """Upload a video for tracked prediction.
 
@@ -561,6 +477,8 @@ async def predict_video(
     from lib.video_tracker import validate_video
 
     t0 = time.perf_counter()
+
+    resolved_model_id = _resolve_model_id(principal, model_id, target_id)
 
     # Save uploaded video to temp location
     session_id = str(uuid.uuid4())
@@ -583,36 +501,27 @@ async def predict_video(
     cap.release()
     resolution = f"{width}x{height}"
 
-    # Resolve model: explicit model_id > target_id > active
-    resolved_model_id = model_id
-    if not resolved_model_id and target_id:
-        db = SessionLocal()
-        try:
-            target = db.query(DeploymentTarget).filter_by(id=target_id, is_active=True).first()
-            if target and target.model_id:
-                resolved_model_id = str(target.model_id)
-        finally:
-            db.close()
-
     if frame_count <= 500:
         try:
             from lib.video_tracker import VideoTracker
 
             pool = get_pool()
             try:
-                engine = pool.get_model(resolved_model_id) if resolved_model_id else pool.get_active_model()
+                engine = pool.get_model(resolved_model_id)
             except RuntimeError as e:
                 raise HTTPException(status_code=503, detail=str(e))
 
             def _run_tracking():
-                tracker = VideoTracker(conf=conf)
+                tracker = VideoTracker(conf=conf, engine=engine)
                 return tracker.track_video(str(video_path))
 
             try:
                 frame_results = await asyncio.to_thread(_run_tracking)
             except Exception as e:
                 latency = (time.perf_counter() - t0) * 1000
-                _log_inference(engine.model_id, target_id, "video", latency, 0, None, [], resolution, "tracking_error")
+                _log_inference(
+                    principal, engine.model_id, target_id, "video", latency, 0, None, [], resolution, "tracking_error"
+                )
                 logger.exception("Video tracking failed")
                 raise HTTPException(status_code=500, detail=f"Video tracking error: {e}")
 
@@ -632,6 +541,10 @@ async def predict_video(
                     frame_index=fr.frame_index,
                     timestamp_s=fr.timestamp_s,
                     detections=[DetectionOut(**asdict(d)) for d in fr.detections],
+                    source_width=fr.source_width,
+                    source_height=fr.source_height,
+                    frame_duration_s=fr.frame_duration_s,
+                    timestamp_method=fr.timestamp_method,
                 )
                 frames_out.append(fout)
                 for d in fout.detections:
@@ -643,7 +556,15 @@ async def predict_video(
             latency = (time.perf_counter() - t0) * 1000
             avg_conf = total_conf / total_dets if total_dets else None
             _log_inference(
-                engine.model_id, target_id, "video", latency, total_dets, avg_conf, list(all_classes), resolution
+                principal,
+                engine.model_id,
+                target_id,
+                "video",
+                latency,
+                total_dets,
+                avg_conf,
+                list(all_classes),
+                resolution,
             )
 
             return JSONResponse(
@@ -657,28 +578,84 @@ async def predict_video(
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    # Long videos: dispatch Celery task (tmp_dir cleanup is the task's responsibility)
-    task = predict_video_task.delay(str(video_path), conf, session_id)
-    return JSONResponse(
-        status_code=202,
-        content={"session_id": session_id, "celery_task_id": task.id, "frame_count": frame_count},
-    )
+    # Native workers cannot access the app container's temporary directory.
+    input_key = None
+    try:
+        task_id = str(_uuid.uuid4())
+        register_task_owner(session_id, principal)
+        register_task_owner(task_id, principal)
+        input_key = await _store_inference_input(contents, file.filename, principal, session_id)
+        _prepare_inference_task("predict", session_id, task_id)
+        task = predict_video_task.apply_async(
+            args=[input_key, conf, session_id], kwargs={"model_id": resolved_model_id}, task_id=task_id, expires=86400
+        )
+        return JSONResponse(
+            status_code=202, content={"session_id": session_id, "celery_task_id": task.id, "frame_count": frame_count}
+        )
+    except Exception:
+        if input_key:
+            await _remove_inference_input(input_key)
+        raise
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 # ── Model management ────────────────────────────────────────────
 
 
+def _prepare_inference_task(kind: str, session_id: str, task_id: str) -> None:
+    from lib.inference_results import save_inference_result
+
+    save_inference_result(kind, session_id, {"status": "running", "session_id": session_id, "celery_task_id": task_id})
+
+
+def _owned_inference_result(kind: str, session_id: str, principal: WorkspacePrincipal):
+    from lib.inference_results import get_inference_result, save_inference_result
+
+    require_task_owner(session_id, principal)
+    try:
+        result = get_inference_result(kind, session_id)
+        if result and result.get("status") == "running" and result.get("celery_task_id"):
+            from lib.tasks import app as celery_app
+
+            task = celery_app.AsyncResult(result["celery_task_id"])
+            if task.state in {"FAILURE", "REVOKED"}:
+                result = {**result, "status": "failed", "error": str(task.result or "Inference task was revoked")}
+                if kind == "compare":
+                    result["results"] = {
+                        side: {"dets": [], "frames": None, "latency": 0, "error": result["error"]}
+                        for side in ("a", "b")
+                    }
+                save_inference_result(kind, session_id, result)
+    except Exception as error:
+        raise HTTPException(status_code=503, detail="Inference result store unavailable") from error
+    if result is None or result.get("status") == "running":
+        return JSONResponse(status_code=202, content=result or {"status": "running", "session_id": session_id})
+    return result
+
+
+@router.get("/predict/video/result/{session_id}")
+def get_video_prediction_result(session_id: str, principal: WorkspacePrincipal = Depends(get_workspace_principal)):
+    """Recover complete frames or failure after a missed WebSocket notification."""
+    return _owned_inference_result("predict", session_id, principal)
+
+
 @router.post("/models/{model_id}/activate")
-def activate_model(model_id: str):
+def activate_model(
+    model_id: str,
+    principal: WorkspacePrincipal = Depends(require_workspace_editor),
+):
     """Set a model as active and trigger hot-reload in the inference engine."""
     session = SessionLocal()
     try:
-        model = session.query(ModelRegistry).filter_by(id=model_id).first()
+        model = require_resource(session, principal, ModelRegistry, model_id)
         if not model:
             raise HTTPException(status_code=404, detail="Model not found")
 
         # Deactivate all other models
-        session.query(ModelRegistry).update({"is_active": False})
+        scope_resources(session.query(ModelRegistry), ModelRegistry, principal).filter(
+            ModelRegistry.id != model.id
+        ).update({"is_active": False}, synchronize_session=False)
         model.is_active = True
         session.commit()
 
@@ -692,17 +669,22 @@ def activate_model(model_id: str):
 
 
 @router.get("/serve/classes")
-def serve_classes():
+def serve_classes(
+    principal: WorkspacePrincipal = Depends(get_workspace_principal),
+):
     """Return list of class names from the active model."""
     try:
-        engine = get_pool().get_active_model()
-    except RuntimeError:
+        model_id = _resolve_model_id(principal)
+        engine = get_pool().get_model(model_id)
+    except (RuntimeError, HTTPException):
         return {"class_names": []}
     return {"class_names": engine.model_info.get("class_names") or []}
 
 
 @router.get("/serve/status", response_model=ServeStatus)
-def serve_status():
+def serve_status(
+    principal: WorkspacePrincipal = Depends(get_workspace_principal),
+):
     """Return info about the currently loaded model.
 
     On a fresh install no model is active yet — return loaded=False instead
@@ -711,8 +693,9 @@ def serve_status():
     from lib.config import settings
 
     try:
-        engine = get_engine()
-    except RuntimeError:
+        model_id = _resolve_model_id(principal)
+        engine = get_pool().get_model(model_id)
+    except (RuntimeError, HTTPException):
         return ServeStatus(loaded=False, device=settings.device)
     return ServeStatus(
         loaded=engine.model is not None,
@@ -729,16 +712,22 @@ def serve_status():
 
 
 @router.get("/targets")
-def list_targets():
+def list_targets(
+    principal: WorkspacePrincipal = Depends(get_workspace_principal),
+):
     """List all deployment targets with their assigned model info."""
     session = SessionLocal()
     try:
-        targets = session.query(DeploymentTarget).order_by(DeploymentTarget.created_at.desc()).all()
+        targets = (
+            scope_resources(session.query(DeploymentTarget), DeploymentTarget, principal)
+            .order_by(DeploymentTarget.created_at.desc())
+            .all()
+        )
         result = []
         for t in targets:
             model_name = None
             if t.model_id:
-                model = session.query(ModelRegistry).filter_by(id=t.model_id).first()
+                model = require_resource(session, principal, ModelRegistry, t.model_id)
                 if model:
                     model_name = model.name
             result.append(
@@ -762,13 +751,16 @@ def list_targets():
 
 
 @router.post("/targets")
-def create_target(body: TargetCreate):
+def create_target(
+    body: TargetCreate,
+    principal: WorkspacePrincipal = Depends(require_workspace_editor),
+):
     """Create a new deployment target (camera, zone, or region)."""
     session = SessionLocal()
     try:
         # Validate model_id if provided
         if body.model_id:
-            model = session.query(ModelRegistry).filter_by(id=body.model_id).first()
+            model = require_resource(session, principal, ModelRegistry, body.model_id)
             if not model:
                 raise HTTPException(status_code=404, detail="Model not found")
 
@@ -776,17 +768,15 @@ def create_target(body: TargetCreate):
         import re
 
         slug = re.sub(r"[^a-z0-9]+", "-", body.name.lower()).strip("-")[:80]
-        # Ensure unique
-        existing = session.query(DeploymentTarget).filter_by(slug=slug).first()
-        if existing:
-            slug = f"{slug}-{str(_uuid.uuid4())[:6]}"
+        slug = f"{slug}-{_uuid.uuid4().hex[:12]}"
 
         target = DeploymentTarget(
+            workspace_id=principal.workspace_id,
             name=body.name,
             slug=slug,
             location_label=body.location_label,
             target_type=body.target_type or "api",
-            model_id=body.model_id,
+            model_id=model.id if body.model_id else None,
             config=body.config,
         )
         session.add(target)
@@ -811,11 +801,15 @@ def create_target(body: TargetCreate):
 
 
 @router.patch("/targets/{target_id}")
-def update_target(target_id: str, body: TargetUpdate):
+def update_target(
+    target_id: str,
+    body: TargetUpdate,
+    principal: WorkspacePrincipal = Depends(require_workspace_editor),
+):
     """Update a deployment target."""
     session = SessionLocal()
     try:
-        target = session.query(DeploymentTarget).filter_by(id=target_id).first()
+        target = require_resource(session, principal, DeploymentTarget, target_id)
         if not target:
             raise HTTPException(status_code=404, detail="Target not found")
 
@@ -827,10 +821,10 @@ def update_target(target_id: str, body: TargetUpdate):
             target.target_type = body.target_type
         if body.model_id is not None:
             if body.model_id:
-                model = session.query(ModelRegistry).filter_by(id=body.model_id).first()
+                model = require_resource(session, principal, ModelRegistry, body.model_id)
                 if not model:
                     raise HTTPException(status_code=404, detail="Model not found")
-            target.model_id = body.model_id or None
+            target.model_id = model.id if body.model_id else None
         if body.config is not None:
             target.config = body.config
         if body.is_active is not None:
@@ -843,11 +837,14 @@ def update_target(target_id: str, body: TargetUpdate):
 
 
 @router.delete("/targets/{target_id}")
-def delete_target(target_id: str):
+def delete_target(
+    target_id: str,
+    principal: WorkspacePrincipal = Depends(require_workspace_editor),
+):
     """Delete a deployment target."""
     session = SessionLocal()
     try:
-        target = session.query(DeploymentTarget).filter_by(id=target_id).first()
+        target = require_resource(session, principal, DeploymentTarget, target_id)
         if not target:
             raise HTTPException(status_code=404, detail="Target not found")
         session.delete(target)
@@ -866,6 +863,7 @@ async def predict_via_endpoint(
     slug: str,
     file: UploadFile = File(...),
     conf: float | None = Query(None),
+    principal: WorkspacePrincipal = Depends(get_workspace_principal),
 ):
     """Run inference through a named endpoint. Each endpoint serves a specific model.
 
@@ -877,13 +875,17 @@ async def predict_via_endpoint(
 
     session = SessionLocal()
     try:
-        target = session.query(DeploymentTarget).filter_by(slug=slug, is_active=True).first()
+        target = (
+            scope_resources(session.query(DeploymentTarget), DeploymentTarget, principal)
+            .filter_by(slug=slug, is_active=True)
+            .first()
+        )
         if not target:
             raise HTTPException(status_code=404, detail=f"Endpoint '{slug}' not found or not active")
         if not target.model_id:
             raise HTTPException(status_code=503, detail=f"Endpoint '{slug}' has no model assigned")
 
-        model_id = str(target.model_id)
+        model_id = str(require_resource(session, principal, ModelRegistry, target.model_id).id)
         config = target.config or {}
         confidence = conf if conf is not None else config.get("confidence", 0.25)
         class_filter = config.get("classes")
@@ -896,7 +898,7 @@ async def predict_via_endpoint(
     if image is None:
         raise HTTPException(status_code=400, detail="Invalid image")
 
-    engine = get_pool().get(model_id)
+    engine = get_pool().get_model(model_id)
 
     def _run():
         return engine.predict_image(image, conf=confidence, class_filter=class_filter)
@@ -909,6 +911,7 @@ async def predict_via_endpoint(
     # Log inference
     try:
         log = InferenceLog(
+            workspace_id=principal.workspace_id,
             model_id=model_id,
             target_id=target.id if target else None,
             request_type="image",
@@ -930,18 +933,23 @@ async def predict_via_endpoint(
 
 
 @router.get("/endpoints/{slug}/status")
-def endpoint_status(slug: str):
+def endpoint_status(
+    slug: str,
+    principal: WorkspacePrincipal = Depends(get_workspace_principal),
+):
     """Get status of a named endpoint — model info, config, and whether it's loaded."""
     session = SessionLocal()
     try:
-        target = session.query(DeploymentTarget).filter_by(slug=slug).first()
+        target = (
+            scope_resources(session.query(DeploymentTarget), DeploymentTarget, principal).filter_by(slug=slug).first()
+        )
         if not target:
             raise HTTPException(status_code=404, detail=f"Endpoint '{slug}' not found")
 
         model_info = None
         is_loaded = False
         if target.model_id:
-            model = session.query(ModelRegistry).filter_by(id=target.model_id).first()
+            model = require_resource(session, principal, ModelRegistry, target.model_id)
             if model:
                 model_info = {
                     "id": str(model.id),
@@ -951,7 +959,7 @@ def endpoint_status(slug: str):
                     "class_names": model.class_names,
                 }
             pool = get_pool()
-            is_loaded = str(target.model_id) in pool.loaded_models()
+            is_loaded = str(target.model_id) in pool.loaded_model_ids()
 
         return {
             "slug": slug,
@@ -970,7 +978,10 @@ def endpoint_status(slug: str):
 
 
 @router.get("/metrics/summary")
-def metrics_summary(window: str = Query("1h", pattern="^(1h|24h|7d)$")):
+def metrics_summary(
+    window: str = Query("1h", pattern="^(1h|24h|7d)$"),
+    principal: WorkspacePrincipal = Depends(get_workspace_principal),
+):
     """Aggregate inference metrics for the monitoring dashboard."""
 
     window_map = {"1h": "1 hour", "24h": "24 hours", "7d": "7 days"}
@@ -981,7 +992,7 @@ def metrics_summary(window: str = Query("1h", pattern="^(1h|24h|7d)$")):
         # The `interval` and `bucket` values below come from server-controlled
         # allowlists (window_map), never from user input — the S608 warnings on
         # the f-strings in this function are silenced via per-file-ignores.
-        from sqlalchemy import text
+        from sqlalchemy import bindparam, text
 
         rows = session.execute(
             text(f"""
@@ -994,8 +1005,9 @@ def metrics_summary(window: str = Query("1h", pattern="^(1h|24h|7d)$")):
                 coalesce(avg(detection_count), 0) as avg_detections,
                 count(CASE WHEN error_code IS NOT NULL THEN 1 END) as error_count
             FROM inference_logs
-            WHERE created_at >= now() - interval '{interval}'
-        """)
+            WHERE workspace_id = :workspace_id AND created_at >= now() - interval '{interval}'
+        """).bindparams(bindparam("workspace_id", type_=InferenceLog.workspace_id.type)),
+            {"workspace_id": principal.workspace_id},
         ).fetchone()
 
         # Per-model breakdown
@@ -1009,11 +1021,12 @@ def metrics_summary(window: str = Query("1h", pattern="^(1h|24h|7d)$")):
                 coalesce(avg(il.avg_confidence), 0) as avg_confidence
             FROM inference_logs il
             LEFT JOIN model_registry mr ON mr.id = il.model_id
-            WHERE il.created_at >= now() - interval '{interval}'
+            WHERE il.workspace_id = :workspace_id AND il.created_at >= now() - interval '{interval}'
             GROUP BY il.model_id, mr.name
             ORDER BY request_count DESC
             LIMIT 10
-        """)
+        """).bindparams(bindparam("workspace_id", type_=InferenceLog.workspace_id.type)),
+            {"workspace_id": principal.workspace_id},
         ).fetchall()
 
         # Per-class breakdown
@@ -1024,13 +1037,14 @@ def metrics_summary(window: str = Query("1h", pattern="^(1h|24h|7d)$")):
                 count(*) as detection_count
             FROM inference_logs il,
                  jsonb_array_elements_text(il.classes_detected::jsonb) as cls(value)
-            WHERE il.created_at >= now() - interval '{interval}'
+            WHERE il.workspace_id = :workspace_id AND il.created_at >= now() - interval '{interval}'
               AND il.classes_detected IS NOT NULL
               AND il.classes_detected::text != '[]'
             GROUP BY cls.value
             ORDER BY detection_count DESC
             LIMIT 20
-        """)
+        """).bindparams(bindparam("workspace_id", type_=InferenceLog.workspace_id.type)),
+            {"workspace_id": principal.workspace_id},
         ).fetchall()
 
         # Per-target breakdown
@@ -1046,11 +1060,12 @@ def metrics_summary(window: str = Query("1h", pattern="^(1h|24h|7d)$")):
                 max(il.created_at) as last_seen
             FROM inference_logs il
             LEFT JOIN deployment_targets dt ON dt.id = il.target_id
-            WHERE il.created_at >= now() - interval '{interval}'
+            WHERE il.workspace_id = :workspace_id AND il.created_at >= now() - interval '{interval}'
               AND il.target_id IS NOT NULL
             GROUP BY il.target_id, dt.name, dt.location_label
             ORDER BY request_count DESC
-        """)
+        """).bindparams(bindparam("workspace_id", type_=InferenceLog.workspace_id.type)),
+            {"workspace_id": principal.workspace_id},
         ).fetchall()
 
         # Time series (bucket by appropriate interval)
@@ -1064,10 +1079,11 @@ def metrics_summary(window: str = Query("1h", pattern="^(1h|24h|7d)$")):
                 coalesce(avg(avg_confidence), 0) as avg_confidence,
                 coalesce(avg(detection_count), 0) as avg_detections
             FROM inference_logs
-            WHERE created_at >= now() - interval '{interval}'
+            WHERE workspace_id = :workspace_id AND created_at >= now() - interval '{interval}'
             GROUP BY bucket
             ORDER BY bucket
-        """)
+        """).bindparams(bindparam("workspace_id", type_=InferenceLog.workspace_id.type)),
+            {"workspace_id": principal.workspace_id},
         ).fetchall()
 
         return {
@@ -1123,7 +1139,11 @@ def metrics_summary(window: str = Query("1h", pattern="^(1h|24h|7d)$")):
 
 
 @router.post("/models/{model_id}/promote")
-def promote_model(model_id: str, alias: str = Query("champion")):
+def promote_model(
+    model_id: str,
+    alias: str = Query("champion"),
+    principal: WorkspacePrincipal = Depends(require_workspace_editor),
+):
     """Promote a model to a named alias (champion, challenger, staging).
 
     Setting alias=champion also sets is_active=True for backward compatibility
@@ -1134,21 +1154,23 @@ def promote_model(model_id: str, alias: str = Query("champion")):
 
     session = SessionLocal()
     try:
-        model = session.query(ModelRegistry).filter_by(id=model_id).first()
+        model = require_resource(session, principal, ModelRegistry, model_id)
         if not model:
             raise HTTPException(status_code=404, detail="Model not found")
 
         # Clear this alias from any other model
-        session.query(ModelRegistry).filter(
+        scope_resources(session.query(ModelRegistry), ModelRegistry, principal).filter(
             ModelRegistry.alias == alias,
-            ModelRegistry.id != model_id,
-        ).update({"alias": None})
+            ModelRegistry.id != model.id,
+        ).update({"alias": None}, synchronize_session=False)
 
         model.alias = alias
 
         # Champion = active model (backward compat)
         if alias == "champion":
-            session.query(ModelRegistry).update({"is_active": False})
+            scope_resources(session.query(ModelRegistry), ModelRegistry, principal).filter(
+                ModelRegistry.id != model.id
+            ).update({"is_active": False}, synchronize_session=False)
             model.is_active = True
             # Hot-reload in pool
             pool = get_pool()
@@ -1187,15 +1209,21 @@ class ExperimentOut(BaseModel):
 
 
 @router.get("/experiments")
-def list_experiments():
+def list_experiments(
+    principal: WorkspacePrincipal = Depends(get_workspace_principal),
+):
     """List all deployment experiments."""
     session = SessionLocal()
     try:
-        exps = session.query(DeploymentExperiment).order_by(DeploymentExperiment.created_at.desc()).all()
+        exps = (
+            scope_resources(session.query(DeploymentExperiment), DeploymentExperiment, principal)
+            .order_by(DeploymentExperiment.created_at.desc())
+            .all()
+        )
         result = []
         for e in exps:
-            champ = session.query(ModelRegistry).filter_by(id=e.champion_model_id).first()
-            chall = session.query(ModelRegistry).filter_by(id=e.challenger_model_id).first()
+            champ = require_resource(session, principal, ModelRegistry, e.champion_model_id)
+            chall = require_resource(session, principal, ModelRegistry, e.challenger_model_id)
             result.append(
                 ExperimentOut(
                     id=str(e.id),
@@ -1218,23 +1246,27 @@ def list_experiments():
 
 
 @router.post("/experiments")
-def create_experiment(body: ExperimentCreate):
+def create_experiment(
+    body: ExperimentCreate,
+    principal: WorkspacePrincipal = Depends(require_workspace_editor),
+):
     """Start a blue-green deployment experiment."""
     session = SessionLocal()
     try:
-        # Validate models exist
-        for mid in [body.champion_model_id, body.challenger_model_id]:
-            if not session.query(ModelRegistry).filter_by(id=mid).first():
-                raise HTTPException(status_code=404, detail=f"Model {mid} not found")
+        champ = require_resource(session, principal, ModelRegistry, body.champion_model_id)
+        chall = require_resource(session, principal, ModelRegistry, body.challenger_model_id)
+        target = require_resource(session, principal, DeploymentTarget, body.target_id) if body.target_id else None
 
         # Cancel any existing running experiment for the same target
-        existing = session.query(DeploymentExperiment).filter_by(status="running")
+        existing = scope_resources(session.query(DeploymentExperiment), DeploymentExperiment, principal).filter_by(
+            status="running"
+        )
         if body.target_id:
             from sqlalchemy import or_
 
             existing = existing.filter(
                 or_(
-                    DeploymentExperiment.target_id == body.target_id,
+                    DeploymentExperiment.target_id == target.id,
                     DeploymentExperiment.target_id.is_(None),
                 )
             )
@@ -1245,8 +1277,8 @@ def create_experiment(body: ExperimentCreate):
             e.status = "cancelled"
 
         # Set aliases
-        champ = session.query(ModelRegistry).filter_by(id=body.champion_model_id).first()
-        chall = session.query(ModelRegistry).filter_by(id=body.challenger_model_id).first()
+        champ = require_resource(session, principal, ModelRegistry, body.champion_model_id)
+        chall = require_resource(session, principal, ModelRegistry, body.challenger_model_id)
         if champ:
             champ.alias = "champion"
         if chall:
@@ -1254,10 +1286,10 @@ def create_experiment(body: ExperimentCreate):
 
         exp = DeploymentExperiment(
             name=body.name,
-            champion_model_id=body.champion_model_id,
-            challenger_model_id=body.challenger_model_id,
+            champion_model_id=champ.id,
+            challenger_model_id=chall.id,
             split_pct=body.split_pct,
-            target_id=body.target_id,
+            target_id=target.id if target else None,
         )
         session.add(exp)
         session.commit()
@@ -1280,13 +1312,17 @@ def create_experiment(body: ExperimentCreate):
 
 
 @router.post("/experiments/{experiment_id}/complete")
-def complete_experiment(experiment_id: str, winner: str = Query(..., pattern="^(champion|challenger)$")):
+def complete_experiment(
+    experiment_id: str,
+    winner: str = Query(..., pattern="^(champion|challenger)$"),
+    principal: WorkspacePrincipal = Depends(require_workspace_editor),
+):
     """End an experiment and optionally promote the winner."""
     from datetime import datetime
 
     session = SessionLocal()
     try:
-        exp = session.query(DeploymentExperiment).filter_by(id=experiment_id).first()
+        exp = require_resource(session, principal, DeploymentExperiment, experiment_id)
         if not exp:
             raise HTTPException(status_code=404, detail="Experiment not found")
         if exp.status != "running":
@@ -1299,10 +1335,10 @@ def complete_experiment(experiment_id: str, winner: str = Query(..., pattern="^(
         # If challenger wins, promote it to champion
         if winner == "challenger":
             # Clear old champion alias
-            session.query(ModelRegistry).filter(ModelRegistry.alias == "champion").update(
-                {"alias": None, "is_active": False}
-            )
-            chall = session.query(ModelRegistry).filter_by(id=exp.challenger_model_id).first()
+            scope_resources(session.query(ModelRegistry), ModelRegistry, principal).filter(
+                ModelRegistry.alias == "champion"
+            ).update({"alias": None, "is_active": False}, synchronize_session=False)
+            chall = require_resource(session, principal, ModelRegistry, exp.challenger_model_id)
             if chall:
                 chall.alias = "champion"
                 chall.is_active = True
@@ -1310,7 +1346,9 @@ def complete_experiment(experiment_id: str, winner: str = Query(..., pattern="^(
                 pool.reload_model(str(chall.id))
 
         # Clear challenger alias
-        session.query(ModelRegistry).filter(ModelRegistry.alias == "challenger").update({"alias": None})
+        scope_resources(session.query(ModelRegistry), ModelRegistry, principal).filter(
+            ModelRegistry.alias == "challenger"
+        ).update({"alias": None}, synchronize_session=False)
 
         session.commit()
         return {"status": "completed", "winner": winner}
@@ -1346,11 +1384,17 @@ class EdgeDeviceOut(BaseModel):
 
 
 @router.get("/devices")
-def list_devices():
+def list_devices(
+    principal: WorkspacePrincipal = Depends(get_workspace_principal),
+):
     """List all registered edge devices."""
     session = SessionLocal()
     try:
-        devices = session.query(EdgeDevice).order_by(EdgeDevice.created_at.desc()).all()
+        devices = (
+            scope_resources(session.query(EdgeDevice), EdgeDevice, principal)
+            .order_by(EdgeDevice.created_at.desc())
+            .all()
+        )
         return [
             EdgeDeviceOut(
                 id=str(d.id),
@@ -1373,16 +1417,22 @@ def list_devices():
 
 
 @router.post("/devices")
-def register_device(body: EdgeDeviceCreate):
+def register_device(
+    body: EdgeDeviceCreate,
+    principal: WorkspacePrincipal = Depends(require_workspace_editor),
+):
     """Register a new edge device."""
     session = SessionLocal()
     try:
+        target = require_resource(session, principal, DeploymentTarget, body.target_id) if body.target_id else None
+        model = require_resource(session, principal, ModelRegistry, body.model_id) if body.model_id else None
         device = EdgeDevice(
+            workspace_id=principal.workspace_id,
             name=body.name,
             device_type=body.device_type,
             location_label=body.location_label,
-            target_id=body.target_id,
-            model_id=body.model_id,
+            target_id=target.id if target else None,
+            model_id=model.id if model else None,
             hardware_info=body.hardware_info,
         )
         session.add(device)
@@ -1394,13 +1444,17 @@ def register_device(body: EdgeDeviceCreate):
 
 
 @router.post("/devices/{device_id}/heartbeat")
-def device_heartbeat(device_id: str, ip: str | None = Query(None)):
+def device_heartbeat(
+    device_id: str,
+    ip: str | None = Query(None),
+    principal: WorkspacePrincipal = Depends(require_workspace_editor),
+):
     """Edge device phones home — updates status and last_heartbeat."""
     from datetime import datetime
 
     session = SessionLocal()
     try:
-        device = session.query(EdgeDevice).filter_by(id=device_id).first()
+        device = require_resource(session, principal, EdgeDevice, device_id)
         if not device:
             raise HTTPException(status_code=404, detail="Device not found")
 
@@ -1413,7 +1467,7 @@ def device_heartbeat(device_id: str, ip: str | None = Query(None)):
         # Return the model the device should be running
         assigned_model = None
         if device.model_id:
-            model = session.query(ModelRegistry).filter_by(id=device.model_id).first()
+            model = require_resource(session, principal, ModelRegistry, device.model_id)
             if model:
                 assigned_model = {
                     "model_id": str(model.id),
@@ -1428,7 +1482,11 @@ def device_heartbeat(device_id: str, ip: str | None = Query(None)):
 
 
 @router.post("/devices/{device_id}/sync-logs")
-async def sync_device_logs(device_id: str, file: UploadFile = File(...)):
+async def sync_device_logs(
+    device_id: str,
+    file: UploadFile = File(...),
+    principal: WorkspacePrincipal = Depends(require_workspace_editor),
+):
     """Upload inference logs from an offline edge device.
 
     Expects a JSON file with an array of log entries:
@@ -1439,7 +1497,7 @@ async def sync_device_logs(device_id: str, file: UploadFile = File(...)):
 
     session = SessionLocal()
     try:
-        device = session.query(EdgeDevice).filter_by(id=device_id).first()
+        device = require_resource(session, principal, EdgeDevice, device_id)
         if not device:
             raise HTTPException(status_code=404, detail="Device not found")
 
@@ -1455,6 +1513,7 @@ async def sync_device_logs(device_id: str, file: UploadFile = File(...)):
         count = 0
         for entry in entries:
             log = InferenceLog(
+                workspace_id=principal.workspace_id,
                 model_id=device.model_id,
                 target_id=device.target_id,
                 request_type=entry.get("request_type", "image"),
@@ -1527,11 +1586,18 @@ class ComparisonOut(BaseModel):
 
 
 @router.get("/comparisons")
-def list_comparisons():
+def list_comparisons(
+    principal: WorkspacePrincipal = Depends(get_workspace_principal),
+):
     """List saved comparison runs, newest first."""
     session = SessionLocal()
     try:
-        runs = session.query(ComparisonRun).order_by(ComparisonRun.created_at.desc()).limit(50).all()
+        runs = (
+            scope_resources(session.query(ComparisonRun), ComparisonRun, principal)
+            .order_by(ComparisonRun.created_at.desc())
+            .limit(50)
+            .all()
+        )
         return [
             ComparisonOut(
                 id=str(r.id),
@@ -1560,11 +1626,16 @@ def list_comparisons():
 
 
 @router.post("/comparisons")
-def save_comparison(body: ComparisonSave):
+def save_comparison(
+    body: ComparisonSave,
+    principal: WorkspacePrincipal = Depends(require_workspace_editor),
+):
     """Save a comparison run for future reference."""
     session = SessionLocal()
     try:
+        _authorize_comparison_models(principal, body.model_a_id, body.model_b_id)
         run = ComparisonRun(
+            workspace_id=principal.workspace_id,
             name=body.name,
             file_name=body.file_name,
             is_video=body.is_video,
@@ -1591,11 +1662,14 @@ def save_comparison(body: ComparisonSave):
 
 
 @router.delete("/comparisons/{comparison_id}")
-def delete_comparison(comparison_id: str):
+def delete_comparison(
+    comparison_id: str,
+    principal: WorkspacePrincipal = Depends(require_workspace_editor),
+):
     """Delete a saved comparison."""
     session = SessionLocal()
     try:
-        run = session.query(ComparisonRun).filter_by(id=comparison_id).first()
+        run = require_resource(session, principal, ComparisonRun, comparison_id)
         if not run:
             raise HTTPException(status_code=404, detail="Comparison not found")
         session.delete(run)
@@ -1622,6 +1696,7 @@ async def run_comparison(
     model_b_id: str = Query(...),
     conf: float = Query(0.25),
     sam_prompts: str | None = Query(None),
+    principal: WorkspacePrincipal = Depends(require_workspace_editor),
 ):
     """Upload a file and kick off a background comparison between two models.
 
@@ -1629,57 +1704,38 @@ async def run_comparison(
     """
     import uuid as _u
 
+    _authorize_comparison_models(principal, model_a_id, model_b_id)
     session_id = str(_u.uuid4())
-    tmp_dir = Path(tempfile.mkdtemp(prefix="waldo_compare_"))
+    contents = await file.read()
+    video_exts = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"}
+    is_video = bool(
+        (file.content_type and file.content_type.startswith("video/"))
+        or Path(file.filename or "").suffix.lower() in video_exts
+    )
+    prompts = [p.strip() for p in sam_prompts.split(",") if p.strip()] if sam_prompts else None
+    from lib.tasks import compare_models_task
+
+    task_id = str(_uuid.uuid4())
+    register_task_owner(session_id, principal)
+    register_task_owner(task_id, principal)
+    input_key = await _store_inference_input(contents, file.filename, principal, session_id)
     try:
-        safe_name = Path(file.filename).name  # strips directory traversal
-        file_path = tmp_dir / safe_name
-        contents = await file.read()
-        file_path.write_bytes(contents)
-
-        # Detect video by content type or file extension
-        video_exts = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"}
-        name_lower = (file.filename or "").lower()
-        is_video = (file.content_type and file.content_type.startswith("video/")) or any(
-            name_lower.endswith(ext) for ext in video_exts
+        _prepare_inference_task("compare", session_id, task_id)
+        task = compare_models_task.apply_async(
+            args=[session_id, input_key, is_video, model_a_id, model_b_id, conf, prompts],
+            task_id=task_id,
+            expires=86400,
         )
-        prompts = [p.strip() for p in sam_prompts.split(",")] if sam_prompts else None
-
-        from lib.tasks import compare_models_task
-
-        # tmp_dir cleanup is the Celery task's responsibility after this point
-        task = compare_models_task.delay(
-            session_id,
-            str(file_path),
-            bool(is_video),
-            model_a_id,
-            model_b_id,
-            conf,
-            prompts,
-        )
-
-        return {
-            "session_id": session_id,
-            "celery_task_id": task.id,
-            "file_name": file.filename,
-            "is_video": bool(is_video),
-        }
+        return {"session_id": session_id, "celery_task_id": task.id, "file_name": file.filename, "is_video": is_video}
     except Exception:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+        await _remove_inference_input(input_key)
         raise
 
 
 @router.get("/comparisons/result/{session_id}")
-def get_comparison_result(session_id: str):
+def get_comparison_result(
+    session_id: str,
+    principal: WorkspacePrincipal = Depends(get_workspace_principal),
+):
     """Poll for comparison results. Returns results if ready, 202 if still running."""
-    import json
-
-    from lib.redis_client import get_redis
-
-    client = get_redis()
-    raw = client.get(f"waldo:compare:result:{session_id}")
-    if not raw:
-        return JSONResponse(status_code=202, content={"status": "running", "session_id": session_id})
-
-    results = json.loads(raw)
-    return {"status": "completed", "session_id": session_id, "results": results}
+    return _owned_inference_result("compare", session_id, principal)

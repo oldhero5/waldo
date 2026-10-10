@@ -5,19 +5,21 @@ sidebar_position: 4
 
 # Codebase Map
 
+import useBaseUrl from '@docusaurus/useBaseUrl';
+
 A single-page architecture map of the whole repo: services, modules, API
 endpoints, Celery tasks, database tables, frontend pages, agent tools, and
 the edges between them.
 
-👉 **[Open the codebase map](/codebase-map.html)** (loads in this browser
+<a href={useBaseUrl('/codebase-map.html')}><strong>Open the codebase map</strong></a> (loads in this browser
 tab; works offline since both the HTML and the JSON are static assets in
 this docs site).
 
 ## What's in it
 
 - **Service diagram** — every container in `docker-compose.yml` plus the
-  `depends_on` edges (`waldo-app` → `postgres`, `redis`, `minio`,
-  `ollama`; profile-gated workers; the LLM sidecar).
+  `depends_on` edges (`waldo-app` → `postgres`, `redis`, `minio`;
+  profile-gated workers and optional local-chat service).
 - **API endpoints** — every `/api/v1/*` route, grouped by router file,
   with method, auth requirement, and one-line summary.
 - **Celery tasks** — every `@app.task(name="waldo.…")` with its queue
@@ -26,7 +28,7 @@ this docs site).
   and foreign-key targets.
 - **Frontend pages** — every route from `ui/src/pages/*.tsx` plus the
   `/api/v1/*` endpoints that page calls.
-- **Agent tools** — the 10 LangChain tools the local agent can call,
+- **Agent tools** — the LangChain tools the configured agent can call,
   split into read vs. action.
 - **Module tree** — every Python file in `lib/`, `app/`, `labeler/`,
   `trainer/`, `tests/`, `alembic/`, `install/`, plus the React pages,

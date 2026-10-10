@@ -26,14 +26,14 @@ export function MonitorTab() {
     let m = 1;
     for (const p of metrics.timeseries) if (p.requests > m) m = p.requests;
     return m;
-  }, [metrics?.timeseries]);
+  }, [metrics]);
 
   const maxClassCount = useMemo(() => {
     if (!metrics?.by_class?.length) return 1;
     let m = 1;
     for (const c of metrics.by_class) if (c.detection_count > m) m = c.detection_count;
     return m;
-  }, [metrics?.by_class]);
+  }, [metrics]);
 
   const activeKeyMetrics = useMemo(
     () => activeModel ? pickKeyMetrics(activeModel.metrics) : [],

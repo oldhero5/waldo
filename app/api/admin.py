@@ -1,6 +1,7 @@
 """Admin endpoints — queue and worker management.
 
-Everything here is gated by `require_admin`. Read-only endpoints list workers,
+Everything here requires explicit installation-admin privilege via `require_admin`.
+Workspace ownership and API keys do not grant access. Read-only endpoints list workers,
 queue depth, and stuck jobs. Action endpoints can revoke Celery tasks, purge
 queues, and force-fail zombie labeling jobs.
 """

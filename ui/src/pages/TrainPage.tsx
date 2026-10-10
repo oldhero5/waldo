@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   getDatasetStats,
+  openAuthenticatedWebSocket,
   getJobStatus,
   getTrainingStatus,
   getVariants,
@@ -48,9 +49,8 @@ function Tooltip({ text }: { text: string }) {
 
 export default function TrainPage() {
   const { jobId: paramId } = useParams<{ jobId: string }>();
-  const [resolvedJobId, setResolvedJobId] = useState<string | null>(null);
-  const [taskType, setTaskType] = useState("segment");
-  const [variant, setVariant] = useState("");
+  const [requestedTaskType, setRequestedTaskType] = useState("segment");
+  const [selectedVariant, setVariant] = useState("");
   const [epochs, setEpochs] = useState(100);
   const [batchSize, setBatchSize] = useState(8);
   const [imgsz, setImgsz] = useState(640);
@@ -58,7 +58,7 @@ export default function TrainPage() {
   const [patience, setPatience] = useState(2);
   const [resumeFrom, setResumeFrom] = useState<string>("");
   const [showNewRun, setShowNewRun] = useState(false);
-  const [runId, setRunId] = useState<string | null>(null);
+  const [submittedRunId, setRunId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [wsMetrics, setWsMetrics] = useState<Record<string, number>>({});
   const [lossHistory, setLossHistory] = useState<Record<string, number>[]>([]);
@@ -82,19 +82,11 @@ export default function TrainPage() {
   const { data: directRun } = useQuery({
     queryKey: ["training-direct", paramId],
     queryFn: () => getTrainingStatus(paramId!),
-    enabled: !!paramId && !runId,
+    enabled: !!paramId && !submittedRunId && !showNewRun,
     retry: false,
   });
 
-  // If direct run lookup succeeds, use it; otherwise treat paramId as a job ID
-  const jobId = directRun ? null : (resolvedJobId || paramId);
-
-  useEffect(() => {
-    if (directRun && !runId) {
-      setRunId(directRun.run_id);
-      if (directRun.job_id) setResolvedJobId(directRun.job_id);
-    }
-  }, [directRun, runId]);
+  const jobId = directRun?.job_id || paramId;
 
   const { data: job } = useQuery({
     queryKey: ["job", jobId],
@@ -106,7 +98,7 @@ export default function TrainPage() {
   const { data: datasetStats } = useQuery({
     queryKey: ["dataset-stats", jobId],
     queryFn: () => getDatasetStats(jobId!),
-    enabled: !!jobId && !runId,
+    enabled: !!jobId && !submittedRunId && !directRun,
     staleTime: 30_000,
   });
 
@@ -119,7 +111,7 @@ export default function TrainPage() {
   const { data: allRuns } = useQuery({
     queryKey: ["training-runs"],
     queryFn: listTrainingRuns,
-    enabled: !!jobId && !runId && !showNewRun,
+    enabled: !!jobId && !submittedRunId && !showNewRun && !directRun,
   });
 
   // Fetch models for the "fine-tune from" dropdown
@@ -128,16 +120,13 @@ export default function TrainPage() {
     queryFn: listModels,
   });
 
-  useEffect(() => {
-    if (jobId && !runId && !showNewRun && allRuns) {
-      const existingRun = allRuns.find((r) => r.job_id === jobId);
-      if (existingRun) {
-        setRunId(existingRun.run_id);
-      }
-    }
-  }, [jobId, runId, showNewRun, allRuns]);
+  const runId = submittedRunId || (!showNewRun
+    ? directRun?.run_id || allRuns?.find((run) => run.job_id === jobId)?.run_id || null
+    : null);
+  const taskType = directRun?.task_type || job?.task_type || requestedTaskType;
+  const variant = selectedVariant || variants?.defaults?.[taskType] || "";
 
-  const { data: runStatus } = useQuery({
+  const { data: runStatus, dataUpdatedAt: statusUpdatedAt } = useQuery({
     queryKey: ["training", runId],
     queryFn: () => getTrainingStatus(runId!),
     enabled: !!runId,
@@ -147,19 +136,17 @@ export default function TrainPage() {
     },
   });
 
-  // Set default variant when task type changes
-  useEffect(() => {
-    if (variants?.defaults) {
-      setVariant(variants.defaults[taskType] || "");
-    }
-  }, [taskType, variants]);
-
   // WebSocket for live metrics
   useEffect(() => {
     if (!runId || runStatus?.status === "completed" || runStatus?.status === "failed") return;
 
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const ws = new WebSocket(`${protocol}//${window.location.host}/ws/training/${runId}`);
+    let ws: WebSocket;
+    try {
+      ws = openAuthenticatedWebSocket(`/ws/training/${runId}`);
+    } catch (error) {
+      console.error("Live metrics connection unavailable", error);
+      return;
+    }
     wsRef.current = ws;
 
     const flushChartBuffer = () => {
@@ -216,7 +203,7 @@ export default function TrainPage() {
     return () => window.removeEventListener("keydown", handler);
   }, [previewExpanded]);
 
-  const effectiveJobId = jobId || resolvedJobId || runStatus?.job_id;
+  const effectiveJobId = jobId || runStatus?.job_id;
 
   const applyRecommended = useCallback(() => {
     if (!datasetStats) return;
@@ -241,10 +228,10 @@ export default function TrainPage() {
       });
       setRunId(result.run_id);
       setShowNewRun(false);
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
     }
-  }, [effectiveJobId, taskType, variant, epochs, batchSize, imgsz, augPreset, resumeFrom]);
+  }, [effectiveJobId, taskType, variant, epochs, batchSize, imgsz, patience, augPreset, resumeFrom]);
 
   const metrics = runStatus?.metrics || wsMetrics;
   const progress = runStatus ? (runStatus.epoch_current / runStatus.total_epochs) * 100 : 0;
@@ -275,7 +262,7 @@ export default function TrainPage() {
         <h1 className="text-2xl font-bold mb-2" style={{ color: "var(--text-primary)" }}>Train Model</h1>
         {job && (
           <p className="text-sm mb-6" style={{ color: "var(--text-secondary)" }}>
-            Dataset: {job.name || job.text_prompt || "exemplar"} &middot; {job.total_frames} video{job.total_frames !== 1 ? "s" : ""}
+            Dataset: {job.name || job.text_prompt || "exemplar"} &middot; {job.total_frames} recorded frames
             {job.annotation_count != null && <> &middot; {job.annotation_count} annotations</>}
             {job.class_count != null && job.class_count > 0 && <> &middot; {job.class_count} class{job.class_count !== 1 ? "es" : ""}</>}
           </p>
@@ -494,7 +481,9 @@ export default function TrainPage() {
 
             <div>
               <label className="eyebrow block mb-1">Task Type</label>
-              <TaskSelector value={taskType} onChange={setTaskType} />
+              {job?.task_type || directRun?.task_type
+                ? <p className="text-sm">Dataset output: {taskType}</p>
+                : <TaskSelector value={taskType} onChange={(value) => { setRequestedTaskType(value); setVariant(""); }} />}
             </div>
 
             <div>
@@ -627,7 +616,7 @@ export default function TrainPage() {
             <button
               onClick={handleTrain}
               className="px-6 py-2 text-white rounded-lg"
-              style={{ backgroundColor: "var(--accent)" }}
+              style={{ backgroundColor: "var(--accent)", color: "var(--text-on-accent)" }}
             >
               Start Training
             </button>
@@ -657,7 +646,7 @@ export default function TrainPage() {
                     Epoch {runStatus.epoch_current}/{runStatus.total_epochs}
                     {/* ETA estimate from epoch timing */}
                     {runStatus.status === "training" && runStatus.epoch_current > 1 && runStatus.started_at && (() => {
-                      const elapsed = (Date.now() - new Date(runStatus.started_at).getTime()) / 1000;
+                      const elapsed = (statusUpdatedAt - new Date(runStatus.started_at).getTime()) / 1000;
                       const secPerEpoch = elapsed / runStatus.epoch_current;
                       const remaining = (runStatus.total_epochs - runStatus.epoch_current) * secPerEpoch;
                       const mins = Math.round(remaining / 60);
@@ -1046,7 +1035,7 @@ export default function TrainPage() {
                     <button
                       onClick={() => { setShowNewRun(true); setRunId(null); }}
                       className="flex items-center gap-1.5 px-4 py-2 text-white rounded-lg text-sm font-medium"
-                      style={{ backgroundColor: "var(--accent)" }}
+                      style={{ backgroundColor: "var(--accent)", color: "var(--text-on-accent)" }}
                     >
                       <RotateCcw size={14} />
                       Train Again

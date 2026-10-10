@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Loader2, VideoIcon } from "lucide-react";
 import {
   predictVideo,
@@ -6,7 +6,9 @@ import {
   type DetectionOut,
   type FrameResultOut,
 } from "../../api";
-import { applyZoomPan, drawDetections, trackColor, useZoomPan, ZoomIndicator } from "./shared";
+import { applyZoomPan, drawDetections, trackColor, useZoomPan } from "./shared";
+import { ZoomIndicator } from "./ZoomIndicator";
+import { assessedFrameAt, compatibleSourceSize, seekDecodedVideo, sourceFrameDuration, watchVideoPresentation } from "../../lib/videoPresentation";
 import { TrackTimeline } from "./TrackTimeline";
 
 export function VideoDemo({ confThreshold, classFilter, classFilterArr, modelId }: {
@@ -22,13 +24,19 @@ export function VideoDemo({ confThreshold, classFilter, classFilterArr, modelId 
   const [currentFrame, setCurrentFrame] = useState(0);
   const [videoReady, setVideoReady] = useState(false);
   const [progress, setProgress] = useState<{ current: number; total: number } | null>(null);
+  const [recovering, setRecovering] = useState(false);
   const [flagged, setFlagged] = useState<Set<string>>(new Set());
   const [feedbackMsg, setFeedbackMsg] = useState("");
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const animRef = useRef<number>(0);
+  const presentedTime = useRef(0);
+  const [assessedFrame, setAssessedFrame] = useState<number | null>(null);
+  const [dimensionMismatch, setDimensionMismatch] = useState(false);
+  const requestRevision = useRef({ revision: 0 });
+  const captureRequest = useRef<AbortController | null>(null);
+  const feedbackInFlight = useRef(false);
+  const predictionSource = useRef<{ modelId: string | null; filename: string } | null>(null);
   const wsCleanupRef = useRef<(() => void) | null>(null);
-  const seekingRef = useRef(false);
 
   useEffect(() => {
     if (!file) { setVideoUrl(""); setVideoReady(false); return; }
@@ -39,11 +47,16 @@ export function VideoDemo({ confThreshold, classFilter, classFilterArr, modelId 
   }, [file]);
 
   useEffect(() => {
-    return () => { wsCleanupRef.current?.(); };
+    const lifetime = requestRevision.current;
+    return () => { lifetime.revision++; wsCleanupRef.current?.(); captureRequest.current?.abort(); };
   }, []);
 
   const handlePredict = useCallback(async () => {
     if (!file) return;
+    const revision = ++requestRevision.current.revision;
+    predictionSource.current = { modelId, filename: file.name };
+    videoRef.current?.pause();
+    captureRequest.current?.abort();
     wsCleanupRef.current?.();
     setLoading(true);
     setError("");
@@ -51,67 +64,86 @@ export function VideoDemo({ confThreshold, classFilter, classFilterArr, modelId 
     setCurrentFrame(0);
     setPlaying(false);
     setProgress(null);
+    setRecovering(false);
     setFlagged(new Set());
     setFeedbackMsg("");
     try {
-      const result = await predictVideo(file, confThreshold, classFilterArr.length > 0 ? classFilterArr : undefined);
+      const result = await predictVideo(file, confThreshold, classFilterArr.length > 0 ? classFilterArr : undefined, modelId || undefined);
+      if (revision !== requestRevision.current.revision) return;
       if ("frames" in result) {
         setFrames(result.frames);
       } else {
         setProgress({ current: 0, total: result.frame_count });
-        const streamedFrames: FrameResultOut[] = [];
+        const streamedFrames = new Map<number, FrameResultOut>();
         wsCleanupRef.current = streamPredictFrames(
           result.session_id,
           (frame) => {
-            streamedFrames.push(frame);
-            setProgress({ current: streamedFrames.length, total: result.frame_count });
+            if (revision !== requestRevision.current.revision) return;
+            streamedFrames.set(frame.frame_index, frame);
+            setProgress({ current: streamedFrames.size, total: result.frame_count });
           },
-          () => { setFrames([...streamedFrames]); setLoading(false); setProgress(null); },
+          (_, completedFrames) => {
+            if (revision !== requestRevision.current.revision) return;
+            setFrames(completedFrames || [...streamedFrames.values()].sort((a, b) => a.timestamp_s - b.timestamp_s));
+            setLoading(false); setProgress(null); setRecovering(false);
+          },
           (err) => {
-            if (streamedFrames.length > 0) setFrames([...streamedFrames]);
-            setError(err); setLoading(false); setProgress(null);
+            if (revision !== requestRevision.current.revision) return;
+            if (streamedFrames.size > 0) setFrames([...streamedFrames.values()].sort((a, b) => a.timestamp_s - b.timestamp_s));
+            setError(err); setLoading(false); setProgress(null); setRecovering(false);
           },
+          () => { if (revision === requestRevision.current.revision) setRecovering(true); },
         );
         return;
       }
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e: unknown) {
+      if (revision !== requestRevision.current.revision) return;
+      setError((e instanceof Error ? e.message : String(e)));
     }
     setLoading(false);
-  }, [file, confThreshold, classFilterArr]);
+  }, [file, confThreshold, classFilterArr, modelId]);
 
-  const drawAtFrame = useCallback((frameIdx: number) => {
+  const drawAtTime = useCallback((time: number) => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    if (!video || !canvas || !frames.length || !video.videoWidth) return;
+    if (!video || !canvas || !frames.length || !video.videoWidth || video.seeking || video.readyState < 2) return;
+    presentedTime.current = time;
+    const frameIdx = assessedFrameAt(frames, time);
+    setAssessedFrame(frameIdx < 0 ? null : frameIdx);
+    if (frameIdx >= 0) setCurrentFrame(frameIdx);
 
     const vw = video.videoWidth;
     const vh = video.videoHeight;
     const maxW = 960;
     const scale = Math.min(maxW / vw, 1);
-    canvas.width = vw * scale;
-    canvas.height = vh * scale;
+    const width = Math.round(vw * scale), height = Math.round(vh * scale);
+    if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
 
     const ctx = canvas.getContext("2d")!;
     ctx.save();
+    ctx.resetTransform();
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
     applyZoomPan(ctx, zpRef.current.zoom, zpRef.current.panX, zpRef.current.panY);
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
     const fr = frames[frameIdx];
-    if (fr) {
+    const compatible = !fr || compatibleSourceSize(fr, vw, vh);
+    setDimensionMismatch(!compatible);
+    if (fr && compatible) {
+      const sourceWidth = fr.source_width || vw, sourceHeight = fr.source_height || vh;
       const visibleDets = fr.detections.filter((d) => {
         const key = `${frameIdx}-${d.track_id}`;
         return !flagged.has(key);
       });
-      drawDetections(ctx, visibleDets, confThreshold, canvas.width, canvas.height, vw, vh, classFilter, zpRef.current.zoom);
+      drawDetections(ctx, visibleDets, confThreshold, canvas.width, canvas.height, sourceWidth, sourceHeight, classFilter, zpRef.current.zoom);
 
       const flaggedDets = fr.detections.filter((d) => {
         const key = `${frameIdx}-${d.track_id}`;
         return flagged.has(key) && d.confidence >= confThreshold && classFilter.has(d.class_name);
       });
       for (const det of flaggedDets) {
-        const scaleX = canvas.width / vw;
-        const scaleY = canvas.height / vh;
+        const scaleX = canvas.width / sourceWidth;
+        const scaleY = canvas.height / sourceHeight;
         const [x1, y1, x2, y2] = det.bbox.map((v, i) => v * (i % 2 === 0 ? scaleX : scaleY));
         ctx.strokeStyle = "#ef4444";
         ctx.lineWidth = 2;
@@ -127,62 +159,35 @@ export function VideoDemo({ confThreshold, classFilter, classFilterArr, modelId 
     ctx.restore();
   }, [frames, confThreshold, classFilter, flagged]);
 
-  const drawFrame = useCallback(() => { drawAtFrame(currentFrame); }, [drawAtFrame, currentFrame]);
-
-  const { zoom, panX, panY, reset } = useZoomPan(canvasRef, drawFrame);
+  const drawFrame = useCallback(() => { drawAtTime(presentedTime.current); }, [drawAtTime]);
+  const { zoom, panX, panY, reset } = useZoomPan(canvasRef, drawFrame, frames.length > 0);
   const zpRef = useRef({ zoom, panX, panY });
-  zpRef.current = { zoom, panX, panY };
+  useLayoutEffect(() => { zpRef.current = { zoom, panX, panY }; }, [zoom, panX, panY]);
 
   useEffect(() => {
-    if (!playing) return;
-    const tick = () => {
-      const video = videoRef.current;
-      if (video && frames.length > 0) {
-        let closest = 0;
-        let minDiff = Infinity;
-        for (let i = 0; i < frames.length; i++) {
-          const diff = Math.abs(frames[i].timestamp_s - video.currentTime);
-          if (diff < minDiff) { minDiff = diff; closest = i; }
-        }
-        setCurrentFrame(closest);
-        drawAtFrame(closest);
-      }
-      animRef.current = requestAnimationFrame(tick);
-    };
-    animRef.current = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(animRef.current);
-  }, [playing, drawAtFrame, frames]);
+    const video = videoRef.current;
+    if (!video || !videoReady || !frames.length) return;
+    return watchVideoPresentation(video, drawAtTime);
+  }, [videoReady, frames.length, videoUrl, drawAtTime]);
 
   const seekToFrame = useCallback((idx: number) => {
-    if (playing) { videoRef.current?.pause(); setPlaying(false); }
-    setCurrentFrame(idx);
     const video = videoRef.current;
     if (!video || !frames[idx]) return;
-    seekingRef.current = true;
-    video.currentTime = frames[idx].timestamp_s;
-    const onSeeked = () => {
-      seekingRef.current = false;
-      drawAtFrame(idx);
-    };
-    video.addEventListener("seeked", onSeeked, { once: true });
-    setTimeout(() => {
-      if (seekingRef.current) {
-        seekingRef.current = false;
-        drawAtFrame(idx);
-      }
-    }, 200);
-  }, [frames, playing, drawAtFrame]);
+    video.pause();
+    setPlaying(false);
+    setCurrentFrame(idx);
+    setAssessedFrame(null);
+    // Seek inside the source frame's interval to avoid floating-point boundary rounding.
+    video.currentTime = frames[idx].timestamp_s + Math.min(sourceFrameDuration(frames, idx) / 4, 0.005);
+  }, [frames]);
 
-  useEffect(() => {
-    if (!frames.length || !videoReady) return;
-    seekToFrame(0);
-  }, [frames.length > 0, videoReady]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const handlePlay = () => {
+  const handlePlay = async () => {
     const video = videoRef.current;
     if (!video) return;
-    if (playing) { video.pause(); setPlaying(false); }
-    else { video.play(); setPlaying(true); }
+    if (!video.paused) video.pause();
+    else {
+      try { await video.play(); } catch { setError("Video playback could not start"); }
+    }
   };
 
   const toggleFlag = (frameIdx: number, det: DetectionOut) => {
@@ -195,30 +200,29 @@ export function VideoDemo({ confThreshold, classFilter, classFilterArr, modelId 
     });
   };
 
-  const captureFrameB64 = useCallback((timestamp: number): Promise<string | null> => {
+  const captureFrameB64 = useCallback(async (frame: FrameResultOut): Promise<string | null> => {
     const video = videoRef.current;
-    if (!video || !video.videoWidth) return Promise.resolve(null);
-    return new Promise((resolve) => {
-      const prev = video.currentTime;
-      const onSeeked = () => {
-        video.removeEventListener("seeked", onSeeked);
-        const tmp = document.createElement("canvas");
-        tmp.width = video.videoWidth;
-        tmp.height = video.videoHeight;
-        const ctx = tmp.getContext("2d");
-        if (!ctx) { resolve(null); return; }
-        ctx.drawImage(video, 0, 0);
-        const b64 = tmp.toDataURL("image/jpeg", 0.85).split(",")[1];
-        video.currentTime = prev;
-        resolve(b64);
-      };
-      video.addEventListener("seeked", onSeeked);
-      video.currentTime = timestamp;
-    });
+    if (!video || !video.videoWidth) return null;
+    video.pause();
+    const controller = new AbortController();
+    captureRequest.current?.abort();
+    captureRequest.current = controller;
+    if (!compatibleSourceSize(frame, video.videoWidth, video.videoHeight)) throw new Error("Cannot capture feedback with incompatible source dimensions");
+    await seekDecodedVideo(video, frame.timestamp_s + Math.min((frame.frame_duration_s || 0) / 4, 0.005), controller.signal,
+      !frame.timestamp_method || frame.timestamp_method === "source_pts" ? frame.timestamp_s : null);
+    const tmp = document.createElement("canvas");
+    tmp.width = frame.source_width || video.videoWidth; tmp.height = frame.source_height || video.videoHeight;
+    const ctx = tmp.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(video, 0, 0, tmp.width, tmp.height);
+    return tmp.toDataURL("image/jpeg", 0.85).split(",")[1];
   }, []);
 
   const handleSubmitFeedback = useCallback(async () => {
-    if (flagged.size === 0) return;
+    if (flagged.size === 0 || feedbackInFlight.current) return;
+    const revision = requestRevision.current.revision;
+    const source = predictionSource.current;
+    feedbackInFlight.current = true;
     setFeedbackMsg("Capturing frames...");
     const items: import("../../api").FeedbackIn[] = [];
 
@@ -235,34 +239,38 @@ export function VideoDemo({ confThreshold, classFilter, classFilterArr, modelId 
       byFrame.get(fi)!.dets.push(det);
     }
 
-    for (const [, { fr, dets }] of byFrame) {
-      const b64 = await captureFrameB64(fr.timestamp_s);
-      for (const det of dets) {
-        items.push({
-          model_id: modelId || undefined,
-          class_name: det.class_name,
-          bbox: det.bbox,
-          polygon: det.mask,
-          confidence: det.confidence,
-          track_id: det.track_id,
-          frame_index: fr.frame_index,
-          timestamp_s: fr.timestamp_s,
-          feedback_type: "false_positive",
-          source_filename: file?.name,
-          frame_image_b64: b64 || undefined,
-        });
-      }
-    }
-
     try {
+      for (const [, { fr, dets }] of byFrame) {
+        const b64 = await captureFrameB64(fr);
+        if (revision !== requestRevision.current.revision) return;
+        for (const det of dets) {
+          items.push({
+            model_id: source?.modelId || undefined,
+            class_name: det.class_name,
+            bbox: det.bbox,
+            polygon: det.mask,
+            confidence: det.confidence,
+            track_id: det.track_id,
+            frame_index: fr.frame_index,
+            timestamp_s: fr.timestamp_s,
+            feedback_type: "false_positive",
+            source_filename: source?.filename,
+            frame_image_b64: b64 || undefined,
+          });
+        }
+      }
       const { submitFeedbackBatch } = await import("../../api");
+      if (revision !== requestRevision.current.revision) return;
       setFeedbackMsg("Submitting...");
       await submitFeedbackBatch(items);
+      if (revision !== requestRevision.current.revision) return;
       setFeedbackMsg(`${items.length} false positive${items.length !== 1 ? "s" : ""} saved. These become negative examples in your next training run.`);
-    } catch (e: any) {
-      setFeedbackMsg(`Error: ${e.message}`);
+    } catch (e: unknown) {
+      if (revision === requestRevision.current.revision) setFeedbackMsg(`Error: ${(e instanceof Error ? e.message : String(e))}`);
+    } finally {
+      feedbackInFlight.current = false;
     }
-  }, [flagged, frames, modelId, file, captureFrameB64]);
+  }, [flagged, frames, captureFrameB64]);
 
   const stats = useMemo(() => {
     const uniqueTracks = new Set<number>();
@@ -276,7 +284,7 @@ export function VideoDemo({ confThreshold, classFilter, classFilterArr, modelId 
     return { uniqueTracks: uniqueTracks.size, totalDets };
   }, [frames, confThreshold, classFilter]);
 
-  const current = frames[currentFrame];
+  const current = assessedFrame == null ? undefined : frames[assessedFrame];
   const visibleDets = current?.detections.filter(
     (d) => d.confidence >= confThreshold && classFilter.has(d.class_name)
   ) || [];
@@ -288,12 +296,15 @@ export function VideoDemo({ confThreshold, classFilter, classFilterArr, modelId 
           <VideoIcon size={16} />
           Choose Video
           <input type="file" accept="video/*" className="hidden" onChange={(e) => {
+            requestRevision.current.revision++;
+            wsCleanupRef.current?.(); captureRequest.current?.abort(); videoRef.current?.pause();
+            setLoading(false); setPlaying(false); setAssessedFrame(null);
             setFile(e.target.files?.[0] || null);
             setFrames([]); setCurrentFrame(0); setFlagged(new Set()); setFeedbackMsg(""); reset();
           }} />
         </label>
         {file && (
-          <button onClick={handlePredict} disabled={loading} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm disabled:opacity-40">
+          <button onClick={handlePredict} disabled={loading} className="px-4 py-2 bg-accent text-on-accent hover:bg-accent-hover rounded-lg text-sm disabled:opacity-40">
             {loading ? "Processing..." : "Track Objects"}
           </button>
         )}
@@ -305,14 +316,14 @@ export function VideoDemo({ confThreshold, classFilter, classFilterArr, modelId 
           <div className="flex items-center gap-3 mb-2">
             <Loader2 size={18} className="animate-spin shrink-0" style={{ color: "var(--text-secondary)" }} />
             <span className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>
-              {progress ? "Processing video frames..." : "Sending video to model..."}
+              {recovering ? "Live updates interrupted; checking server status..." : progress && progress.total > 0 ? "Processing video frames..." : "Sending video to model..."}
             </span>
           </div>
-          {progress ? (
+          {progress && progress.total > 0 ? (
             <div>
               <div className="flex items-center gap-3">
                 <div className="flex-1 rounded-full h-2.5 overflow-hidden" style={{ backgroundColor: "var(--bg-inset)" }}>
-                  <div className="bg-blue-600 h-full rounded-full transition-all duration-300"
+                  <div className="bg-accent text-on-accent h-full rounded-full transition-all duration-300"
                     style={{ width: `${Math.round((progress.current / progress.total) * 100)}%` }} />
                 </div>
                 <span className="font-mono text-sm w-32 text-right shrink-0" style={{ color: "var(--text-secondary)" }}>
@@ -323,7 +334,7 @@ export function VideoDemo({ confThreshold, classFilter, classFilterArr, modelId 
             </div>
           ) : (
             <div className="w-full rounded-full h-2.5 overflow-hidden" style={{ backgroundColor: "var(--bg-inset)" }}>
-              <div className="bg-blue-600 h-full rounded-full animate-pulse w-1/3" />
+              <div className="bg-accent text-on-accent h-full rounded-full animate-pulse w-1/3" />
             </div>
           )}
         </div>
@@ -331,11 +342,14 @@ export function VideoDemo({ confThreshold, classFilter, classFilterArr, modelId 
 
       {videoUrl && (
         <video ref={videoRef} src={videoUrl} className="hidden" muted playsInline preload="auto"
-          onLoadedData={() => setVideoReady(true)} onEnded={() => setPlaying(false)} />
+          onLoadedData={() => setVideoReady(true)} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)} />
       )}
 
       {frames.length > 0 && (
         <div>
+          {frames.some((frame) => frame.timestamp_method && frame.timestamp_method !== "source_pts") && <p className="text-xs mb-2" style={{ color: "var(--warning)" }}>Source timestamps are approximate; exact playback masks are unavailable.</p>}
+          <p className="text-xs mb-2" style={{ color: "var(--text-muted)" }}>Masks appear only on assessed frames; intermediate video frames have no inferred mask.</p>
+          {dimensionMismatch && <p role="alert" className="text-sm mb-2" style={{ color: "var(--warning)" }}>Overlay dimensions do not match the decoded video. Masks are hidden.</p>}
           <div className="relative inline-block">
             <canvas ref={canvasRef} className="rounded-lg mb-2 bg-black"
               style={{ maxWidth: "100%", cursor: zoom > 1 ? "grab" : "default", border: "1px solid var(--border-subtle)" }} />
@@ -344,7 +358,7 @@ export function VideoDemo({ confThreshold, classFilter, classFilterArr, modelId 
 
           <div className="surface p-3 mb-2">
             <div className="flex items-center gap-2 mb-2">
-              <button onClick={handlePlay} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm min-w-[70px] font-medium">
+              <button onClick={handlePlay} className="px-3 py-1.5 bg-accent text-on-accent hover:bg-accent-hover rounded-lg text-sm min-w-[70px] font-medium">
                 {playing ? "Pause" : "Play"}
               </button>
               <button onClick={() => seekToFrame(Math.max(0, currentFrame - 1))} disabled={currentFrame === 0}
@@ -373,7 +387,7 @@ export function VideoDemo({ confThreshold, classFilter, classFilterArr, modelId 
           {visibleDets.length > 0 && (
             <div className="surface p-3 mb-3">
               <div className="flex justify-between text-sm mb-2" style={{ color: "var(--text-muted)" }}>
-                <span>Frame {current.frame_index}</span>
+                <span>Frame {current?.frame_index}</span>
                 <span>{visibleDets.length} detections &middot; click to flag false positives</span>
               </div>
               <div className="space-y-1 max-h-48 overflow-y-auto">

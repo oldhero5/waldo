@@ -1,7 +1,7 @@
 """Proxy downloads from MinIO with proper caching and content types.
 
-Public endpoint — images/frames need to load in <img> tags without auth headers.
-Security via path-prefix allowlist (only serves from known prefixes).
+Exact-object signed URLs allow images/video to load without auth headers.
+Capabilities expire and cannot be reused for another object.
 """
 
 import re
@@ -12,7 +12,7 @@ from fastapi.responses import StreamingResponse
 from lib.config import settings
 from lib.storage import get_client
 
-router = APIRouter()  # Public — secured by path prefix allowlist, not auth
+router = APIRouter()
 
 CONTENT_TYPES = {
     ".jpg": "image/jpeg",
@@ -46,11 +46,14 @@ _RANGE_RE = re.compile(r"bytes=(\d*)-(\d*)")
 
 @router.get("/download/{object_name:path}")
 async def download_object(object_name: str, request: Request):
-    # Public prefixes — images and frames load in browser without auth
-    # Model weights require auth (handled separately if needed)
-    ALLOWED_PREFIXES = ("frames/", "results/", "videos/", "feedback/", "workflows/", "models/")
-    if not any(object_name.startswith(p) for p in ALLOWED_PREFIXES):
-        raise HTTPException(status_code=403, detail="Access denied")
+    from lib.auth import decode_token
+
+    token = request.query_params.get("token")
+    if not token:
+        raise HTTPException(status_code=401, detail="Signed download URL required")
+    claims = decode_token(token)
+    if claims.get("type") != "download" or claims.get("object") != object_name:
+        raise HTTPException(status_code=401, detail="Invalid download capability")
 
     client = get_client()
     try:
@@ -62,12 +65,12 @@ async def download_object(object_name: str, request: Request):
         is_image = media_type.startswith("image/")
         is_video = media_type.startswith("video/")
 
-        base_headers: dict[str, str] = {"Accept-Ranges": "bytes"}
+        base_headers: dict[str, str] = {"Accept-Ranges": "bytes", "Cache-Control": "private, max-age=300"}
         if is_image:
-            base_headers["Cache-Control"] = "public, max-age=86400, immutable"
+            base_headers["Cache-Control"] = "private, max-age=300"
             base_headers["Content-Disposition"] = f'inline; filename="{filename}"'
         elif is_video:
-            base_headers["Cache-Control"] = "public, max-age=3600"
+            base_headers["Cache-Control"] = "private, max-age=300"
             base_headers["Content-Disposition"] = f'inline; filename="{filename}"'
         else:
             base_headers["Content-Disposition"] = f'attachment; filename="{filename}"'

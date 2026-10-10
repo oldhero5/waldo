@@ -15,7 +15,7 @@ def masks_to_yolo_pose(
 ) -> list[str]:
     """Convert masks to YOLO pose format: class_idx cx cy w h kp_x kp_y visible (normalized).
 
-    Uses the mask centroid as a single keypoint. Users can add more keypoints in the review UI.
+    Uses the mask centroid as a single derived keypoint, not an anatomical landmark.
     """
     lines: list[str] = []
     h, w = masks.shape[1], masks.shape[2]
@@ -56,5 +56,9 @@ def write_yolo_dataset(
     annotation_lines: list[list[str]],
     class_names: list[str],
     val_split: float = 0.1,
+    *,
+    group_ids: list[str] | None = None,
 ) -> Path:
-    return write_yolo_label_dataset(output_dir, frame_paths, annotation_lines, class_names, val_split, task="pose")
+    return write_yolo_label_dataset(
+        output_dir, frame_paths, annotation_lines, class_names, val_split, task="pose", group_ids=group_ids
+    )

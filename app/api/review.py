@@ -1,15 +1,28 @@
+import json
+import logging
+import math
 import tempfile
 import uuid as _uuid
 import zipfile
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from jose import JWTError, jwt
 from pydantic import BaseModel
-from sqlalchemy import distinct, func, or_, text
+from sqlalchemy import distinct, func, or_
 
 from lib.auth import get_current_user
-from lib.db import Annotation, Frame, LabelingJob, SessionLocal, Video
-from lib.storage import download_file, get_download_url, upload_file
+from lib.authorization import (
+    WorkspacePrincipal,
+    get_workspace_principal,
+    require_resource,
+    require_workspace_editor,
+    scope_resources,
+)
+from lib.config import settings
+from lib.dataset_evidence import assessed_frame_count, invalidate_current_export, publish_current_export
+from lib.db import Annotation, Frame, LabelingJob, SessionLocal
+from lib.storage import delete_object, download_file, get_download_url, upload_file
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
@@ -32,6 +45,51 @@ class AnnotationOut(BaseModel):
     confidence: float | None = None
     status: str
     frame_url: str | None = None
+    track_id: int | None = None
+    source_video_id: str | None = None
+    timestamp_s: float | None = None
+    timestamp_method: str = "unknown"
+
+
+def _annotation_timestamp_method(job, frame) -> str:
+    """Use matching clip provenance; merged runs can make the origin ambiguous."""
+    if frame is None:
+        return "unknown"
+    methods = set()
+    summaries = [job.processing_summary]
+    while summaries:
+        summary = summaries.pop()
+        if not isinstance(summary, dict):
+            continue
+        merged_runs = summary.get("merged_runs")
+        if isinstance(merged_runs, list):
+            summaries.extend(run.get("processing_summary") for run in merged_runs if isinstance(run, dict))
+        clips = summary.get("videos")
+        if not isinstance(clips, list):
+            continue
+        for clip in clips:
+            if not isinstance(clip, dict) or clip.get("video_id") != str(frame.video_id):
+                continue
+            times = clip.get("assessed_timestamps_s")
+            indices = clip.get("assessed_source_frame_indices")
+            if isinstance(times, list):
+                matching = [
+                    i
+                    for i, value in enumerate(times)
+                    if isinstance(value, (float, int)) and abs(value - frame.timestamp_s) <= 1e-6
+                ]
+                if not matching or (
+                    isinstance(indices, list)
+                    and not any(i < len(indices) and indices[i] == frame.frame_number for i in matching)
+                ):
+                    continue
+            method = clip.get("timestamp_method")
+            methods.add(
+                method
+                if isinstance(method, str) and method in {"source_pts", "frame_index/fps", "resampled_ordinal/fps"}
+                else "unknown"
+            )
+    return methods.pop() if len(methods) == 1 else "unknown"
 
 
 class AnnotationUpdate(BaseModel):
@@ -59,29 +117,38 @@ def list_annotations(
     frame_id: str | None = Query(None),
     offset: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=10000),
+    principal: WorkspacePrincipal = Depends(get_workspace_principal),
 ):
     _validate_uuid(job_id, "job_id")
     if frame_id:
         _validate_uuid(frame_id, "frame_id")
     session = SessionLocal()
     try:
-        job = session.query(LabelingJob).filter_by(id=job_id).first()
+        job = require_resource(session, principal, LabelingJob, job_id)
+        job_id = job.id
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
 
-        query = session.query(Annotation).filter_by(job_id=job_id)
+        query = scope_resources(session.query(Annotation), Annotation, principal).filter_by(job_id=job_id)
         if status:
             query = query.filter_by(status=status)
         if frame_id:
-            query = query.filter_by(frame_id=frame_id)
+            frame = require_resource(session, principal, Frame, frame_id)
+            query = query.filter_by(frame_id=frame.id)
 
-        annotations = query.offset(offset).limit(limit).all()
+        annotations = (
+            query.join(Frame, Annotation.frame_id == Frame.id)
+            .order_by(Frame.video_id, Frame.timestamp_s, Frame.frame_number, Frame.id, Annotation.id)
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
 
         # Batch-load all frames in one query instead of N+1
         frame_ids = list({ann.frame_id for ann in annotations})
         frames_map = {}
         if frame_ids:
-            frames = session.query(Frame).filter(Frame.id.in_(frame_ids)).all()
+            frames = scope_resources(session.query(Frame), Frame, principal).filter(Frame.id.in_(frame_ids)).all()
             frames_map = {f.id: f for f in frames}
 
         results = []
@@ -100,6 +167,10 @@ def list_annotations(
                     confidence=ann.confidence,
                     status=ann.status or "pending",
                     frame_url=frame_url,
+                    track_id=ann.track_id,
+                    source_video_id=str(frame.video_id) if frame else None,
+                    timestamp_s=frame.timestamp_s if frame else None,
+                    timestamp_method=_annotation_timestamp_method(job, frame),
                 )
             )
 
@@ -109,22 +180,33 @@ def list_annotations(
 
 
 @router.patch("/annotations/{annotation_id}", response_model=AnnotationOut)
-def update_annotation(annotation_id: str, update: AnnotationUpdate):
+def update_annotation(
+    annotation_id: str,
+    update: AnnotationUpdate,
+    principal: WorkspacePrincipal = Depends(require_workspace_editor),
+):
     _validate_uuid(annotation_id, "annotation_id")
     session = SessionLocal()
     try:
-        ann = session.query(Annotation).filter_by(id=annotation_id).first()
+        ann = require_resource(session, principal, Annotation, annotation_id)
+        annotation_id = ann.id
         if not ann:
             raise HTTPException(status_code=404, detail="Annotation not found")
 
-        for field in ("status", "polygon", "bbox", "class_name", "class_index"):
-            val = getattr(update, field)
-            if val is not None:
-                setattr(ann, field, val)
+        changes = {
+            field: getattr(update, field)
+            for field in ("status", "polygon", "bbox", "class_name", "class_index")
+            if getattr(update, field) is not None
+        }
+        if changes:
+            # Existing training runs retain their immutable dataset snapshot.
+            invalidate_current_export(session, ann.job_id)
+            for field, value in changes.items():
+                setattr(ann, field, value)
 
         session.commit()
 
-        frame = session.query(Frame).filter_by(id=ann.frame_id).first()
+        frame = require_resource(session, principal, Frame, ann.frame_id)
         frame_url = get_download_url(frame.minio_key) if frame else None
 
         return AnnotationOut(
@@ -137,6 +219,12 @@ def update_annotation(annotation_id: str, update: AnnotationUpdate):
             confidence=ann.confidence,
             status=ann.status or "pending",
             frame_url=frame_url,
+            track_id=ann.track_id,
+            source_video_id=str(frame.video_id) if frame else None,
+            timestamp_s=frame.timestamp_s if frame else None,
+            timestamp_method=_annotation_timestamp_method(
+                require_resource(session, principal, LabelingJob, ann.job_id), frame
+            ),
         )
     finally:
         session.close()
@@ -147,12 +235,17 @@ class JobUpdate(BaseModel):
 
 
 @router.patch("/jobs/{job_id}")
-def update_job(job_id: str, update: JobUpdate):
+def update_job(
+    job_id: str,
+    update: JobUpdate,
+    principal: WorkspacePrincipal = Depends(require_workspace_editor),
+):
     """Update a labeling job's metadata (e.g. rename)."""
     _validate_uuid(job_id, "job_id")
     session = SessionLocal()
     try:
-        job = session.query(LabelingJob).filter_by(id=job_id).first()
+        job = require_resource(session, principal, LabelingJob, job_id)
+        job_id = job.id
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
         if update.name is not None:
@@ -164,24 +257,29 @@ def update_job(job_id: str, update: JobUpdate):
 
 
 @router.delete("/jobs/{job_id}")
-def delete_job(job_id: str):
+def delete_job(
+    job_id: str,
+    principal: WorkspacePrincipal = Depends(require_workspace_editor),
+):
     """Delete a labeling job, its annotations, and any associated training runs/models."""
     _validate_uuid(job_id, "job_id")
     session = SessionLocal()
     try:
-        job = session.query(LabelingJob).filter_by(id=job_id).first()
+        job = require_resource(session, principal, LabelingJob, job_id)
+        job_id = job.id
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
         if job.status in ("labeling", "extracting", "converting"):
             raise HTTPException(status_code=400, detail="Cannot delete a job that is currently running")
 
         # Delete annotations
-        ann_count = session.query(Annotation).filter_by(job_id=job_id).delete()
+        ann_count = scope_resources(session.query(Annotation), Annotation, principal).filter_by(job_id=job_id).delete()
 
         # Unlink training runs (set job_id to null so they don't block deletion)
-        session.execute(
-            text("UPDATE training_runs SET job_id = NULL WHERE job_id = :jid"),
-            {"jid": job_id},
+        from lib.db import TrainingRun
+
+        scope_resources(session.query(TrainingRun), TrainingRun, principal).filter_by(job_id=job.id).update(
+            {"job_id": None}, synchronize_session=False
         )
 
         session.delete(job)
@@ -198,14 +296,19 @@ class AddClassRequest(BaseModel):
 
 
 @router.post("/jobs/{job_id}/add-class")
-def add_class_to_dataset(job_id: str, req: AddClassRequest):
+def add_class_to_dataset(
+    job_id: str,
+    req: AddClassRequest,
+    principal: WorkspacePrincipal = Depends(require_workspace_editor),
+):
     """Add a new class to an existing dataset by labeling its videos with a new prompt."""
     _validate_uuid(job_id, "job_id")
     from lib.tasks import label_video
 
     session = SessionLocal()
     try:
-        job = session.query(LabelingJob).filter_by(id=job_id).first()
+        job = require_resource(session, principal, LabelingJob, job_id)
+        job_id = job.id
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
         if not job.project_id:
@@ -226,7 +329,10 @@ def add_class_to_dataset(job_id: str, req: AddClassRequest):
             else [{"name": req.class_name, "prompt": display_prompt}],
             prompt_type="text",
             task_type=job.task_type or "segment",
+            score_threshold=job.score_threshold,
+            sample_fps=job.sample_fps,
         )
+        invalidate_current_export(session, job.id)
         session.add(child)
         session.commit()
 
@@ -252,34 +358,55 @@ class MergeClassesRequest(BaseModel):
 
 
 @router.post("/annotations/merge-classes")
-def merge_classes(req: MergeClassesRequest):
+def merge_classes(
+    req: MergeClassesRequest,
+    principal: WorkspacePrincipal = Depends(require_workspace_editor),
+):
     """Merge two class names — renames all annotations from source to target."""
     session = SessionLocal()
     try:
-        result = session.execute(
-            text("UPDATE annotations SET class_name = :target WHERE job_id = :job_id AND class_name = :source"),
-            {"target": req.target_class, "source": req.source_class, "job_id": req.job_id},
+        job = require_resource(session, principal, LabelingJob, req.job_id)
+        invalidate_current_export(session, job.id)
+        updated = (
+            scope_resources(session.query(Annotation), Annotation, principal)
+            .filter_by(job_id=job.id, class_name=req.source_class)
+            .update({Annotation.class_name: req.target_class}, synchronize_session=False)
         )
         session.commit()
-        return {"status": "merged", "source": req.source_class, "target": req.target_class, "updated": result.rowcount}
+        return {"status": "merged", "source": req.source_class, "target": req.target_class, "updated": updated}
     finally:
         session.close()
 
 
 @router.post("/jobs/{job_id}/duplicate")
-def duplicate_dataset(job_id: str):
+def duplicate_dataset(
+    job_id: str,
+    principal: WorkspacePrincipal = Depends(require_workspace_editor),
+):
     """Duplicate a labeling job and all its annotations into a new dataset."""
     _validate_uuid(job_id, "job_id")
     session = SessionLocal()
     try:
-        original = session.query(LabelingJob).filter_by(id=job_id).first()
+        original = require_resource(session, principal, LabelingJob, job_id)
+        # Copy the current artifact pointer and annotations from one revision.
+        # Evidence writers take the same short job-row lock before changing rows.
+        session.refresh(original, with_for_update=True)
+        job_id = original.id
         if not original:
             raise HTTPException(status_code=404, detail="Job not found")
+        # Duplicates retain evidence but never start a worker of their own.
+        if original.status not in ("completed", "partial", "failed"):
+            raise HTTPException(
+                status_code=409,
+                detail="Wait for labeling to finish before duplicating this dataset",
+            )
 
         # Compute next version in the lineage
         root_id = original.parent_id or original.id
         max_version = (
-            session.query(LabelingJob).filter((LabelingJob.parent_id == root_id) | (LabelingJob.id == root_id)).count()
+            scope_resources(session.query(LabelingJob), LabelingJob, principal)
+            .filter((LabelingJob.parent_id == root_id) | (LabelingJob.id == root_id))
+            .count()
         )
 
         # Create new job
@@ -292,7 +419,10 @@ def duplicate_dataset(job_id: str):
             text_prompt=original.text_prompt,
             prompt_type=original.prompt_type,
             task_type=original.task_type,
-            status="completed",
+            status=original.status,
+            score_threshold=original.score_threshold,
+            sample_fps=original.sample_fps,
+            processing_summary=original.processing_summary,
             total_frames=original.total_frames,
             processed_frames=original.processed_frames,
             result_minio_key=original.result_minio_key,
@@ -301,7 +431,7 @@ def duplicate_dataset(job_id: str):
         session.flush()
 
         # Copy annotations
-        annotations = session.query(Annotation).filter_by(job_id=job_id).all()
+        annotations = scope_resources(session.query(Annotation), Annotation, principal).filter_by(job_id=job_id).all()
         for ann in annotations:
             new_ann = Annotation(
                 frame_id=ann.frame_id,
@@ -311,6 +441,7 @@ def duplicate_dataset(job_id: str):
                 polygon=ann.polygon,
                 bbox=ann.bbox,
                 confidence=ann.confidence,
+                track_id=ann.track_id,
                 status=ann.status,
             )
             session.add(new_ann)
@@ -327,11 +458,16 @@ def duplicate_dataset(job_id: str):
 
 
 @router.get("/jobs/{job_id}/classes")
-def list_job_classes(job_id: str):
+def list_job_classes(
+    job_id: str,
+    principal: WorkspacePrincipal = Depends(get_workspace_principal),
+):
     """List all unique class names in a dataset with their annotation counts."""
     _validate_uuid(job_id, "job_id")
     session = SessionLocal()
     try:
+        job = require_resource(session, principal, LabelingJob, job_id)
+        job_id = job.id
         results = (
             session.query(Annotation.class_name, func.count())
             .filter_by(job_id=job_id)
@@ -345,17 +481,24 @@ def list_job_classes(job_id: str):
 
 
 @router.delete("/jobs/{job_id}/classes/{class_name}")
-def delete_class(job_id: str, class_name: str):
+def delete_class(
+    job_id: str,
+    class_name: str,
+    principal: WorkspacePrincipal = Depends(require_workspace_editor),
+):
     """Delete all annotations of a specific class from a dataset."""
     _validate_uuid(job_id, "job_id")
     session = SessionLocal()
     try:
-        result = session.execute(
-            text("DELETE FROM annotations WHERE job_id = :job_id AND class_name = :class_name"),
-            {"job_id": job_id, "class_name": class_name},
+        job = require_resource(session, principal, LabelingJob, job_id)
+        invalidate_current_export(session, job.id)
+        deleted = (
+            scope_resources(session.query(Annotation), Annotation, principal)
+            .filter_by(job_id=job.id, class_name=class_name)
+            .delete()
         )
         session.commit()
-        return {"status": "deleted", "class_name": class_name, "deleted_count": result.rowcount}
+        return {"status": "deleted", "class_name": class_name, "deleted_count": deleted}
     finally:
         session.close()
 
@@ -403,12 +546,16 @@ class DatasetOverview(BaseModel):
 
 
 @router.get("/jobs/{job_id}/overview", response_model=DatasetOverview)
-def get_dataset_overview(job_id: str):
+def get_dataset_overview(
+    job_id: str,
+    principal: WorkspacePrincipal = Depends(get_workspace_principal),
+):
     """Rich dataset overview with sample frame thumbnails and annotation stats."""
     _validate_uuid(job_id, "job_id")
     session = SessionLocal()
     try:
-        job = session.query(LabelingJob).filter_by(id=job_id).first()
+        job = require_resource(session, principal, LabelingJob, job_id)
+        job_id = job.id
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
 
@@ -434,7 +581,7 @@ def get_dataset_overview(job_id: str):
             session.query(Annotation.frame_id, func.count().label("cnt"))
             .filter_by(job_id=job_id)
             .group_by(Annotation.frame_id)
-            .order_by(func.count().desc())
+            .order_by(func.count().desc(), Annotation.frame_id)
             .limit(30)
             .all()
         )
@@ -443,10 +590,22 @@ def get_dataset_overview(job_id: str):
 
         # Batch-load Frame objects for the sample
         frames_batch = (
-            {str(f.id): f for f in session.query(Frame).filter(Frame.id.in_(sample_frame_ids)).all()}
+            {
+                str(f.id): f
+                for f in scope_resources(session.query(Frame), Frame, principal)
+                .filter(Frame.id.in_(sample_frame_ids))
+                .all()
+            }
             if sample_frame_ids
             else {}
         )
+        # Select representative frames by count, then present those samples on
+        # each clip's timeline; count ranking is not playback order.
+        frame_order = {
+            fid: (str(frame.video_id), frame.timestamp_s, frame.frame_number, fid)
+            for fid, frame in frames_batch.items()
+        }
+        sample_frame_ids.sort(key=lambda fid: frame_order.get(str(fid), ("\uffff", float("inf"), 0, str(fid))))
 
         # Per-frame status counts and classes (only for the 30 sample frames)
         frame_status_rows = (
@@ -502,7 +661,12 @@ def get_dataset_overview(job_id: str):
         from lib.db import DemoFeedback
 
         # Get feedback corrections with full details
-        feedback_entries = session.query(DemoFeedback).order_by(DemoFeedback.created_at.desc()).limit(50).all()
+        feedback_entries = (
+            scope_resources(session.query(DemoFeedback), DemoFeedback, principal)
+            .order_by(DemoFeedback.created_at.desc())
+            .limit(50)
+            .all()
+        )
         feedback_count = len(feedback_entries)
         corrections = [
             CorrectionOut(
@@ -524,8 +688,8 @@ def get_dataset_overview(job_id: str):
         # Count related labeling jobs still in progress:
         # 1. Auto-label jobs (same project + same prompt)
         # 2. Add-class child jobs (parent_id points to this job)
-        labeling_in_progress_q = session.query(LabelingJob).filter(
-            LabelingJob.status.notin_(["completed", "failed"]),
+        labeling_in_progress_q = scope_resources(session.query(LabelingJob), LabelingJob, principal).filter(
+            LabelingJob.status.notin_(["completed", "partial", "failed"]),
             LabelingJob.id != job.id,
             or_(
                 (LabelingJob.project_id == job.project_id) & (LabelingJob.text_prompt == job.text_prompt)
@@ -577,11 +741,15 @@ def get_dataset_overview(job_id: str):
 
 
 @router.get("/jobs/{job_id}/stats", response_model=JobStats)
-def get_job_stats(job_id: str):
+def get_job_stats(
+    job_id: str,
+    principal: WorkspacePrincipal = Depends(get_workspace_principal),
+):
     _validate_uuid(job_id, "job_id")
     session = SessionLocal()
     try:
-        job = session.query(LabelingJob).filter_by(id=job_id).first()
+        job = require_resource(session, principal, LabelingJob, job_id)
+        job_id = job.id
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
 
@@ -593,17 +761,7 @@ def get_job_stats(job_id: str):
             session.query(func.count(distinct(Annotation.frame_id))).filter_by(job_id=job_id).scalar()
         ) or 0
 
-        # Count actual frames in the DB for this job's videos/project
-        if job.project_id:
-            # Select only Video.id to avoid loading full ORM objects just for IDs
-            video_ids = [row[0] for row in session.query(Video.id).filter_by(project_id=job.project_id).all()]
-            total_frames = (
-                session.query(Frame).filter(Frame.video_id.in_(video_ids)).count() if video_ids else annotated_frames
-            )
-        elif job.video_id:
-            total_frames = session.query(Frame).filter_by(video_id=job.video_id).count()
-        else:
-            total_frames = annotated_frames
+        total_frames = assessed_frame_count(job, annotated_frames)
 
         empty_frames = max(0, total_frames - annotated_frames)
 
@@ -641,25 +799,78 @@ def get_job_stats(job_id: str):
         session.close()
 
 
-EXPORT_FORMATS = ("segment", "detect", "obb")
+EXPORT_FORMATS = ("segment", "detect", "obb", "classify", "pose")
+
+
+def _renewable_export_object(token: str, job: LabelingJob) -> str:
+    """Validate an old signed export capability without replacing its object."""
+    invalid = HTTPException(status_code=401, detail="Invalid download capability")
+    try:
+        claims = jwt.decode(
+            token,
+            settings.jwt_secret,
+            algorithms=[settings.jwt_algorithm],
+            options={"verify_exp": False},
+        )
+    except (JWTError, TypeError, OverflowError) as error:
+        raise invalid from error
+    expiry = claims.get("exp")
+    key = claims.get("object")
+    if (
+        claims.get("type") != "download"
+        or isinstance(expiry, bool)
+        or not isinstance(expiry, (int, float))
+        or (isinstance(expiry, float) and not math.isfinite(expiry))
+        or not isinstance(key, str)
+        or not key
+    ):
+        raise invalid
+    if key == job.result_minio_key or key == f"results/{job.id}/dataset.zip":
+        return key
+    parts = key.split("/")
+    if len(parts) == 5 and parts[:3] == ["results", str(job.id), "exports"]:
+        try:
+            export_id = _uuid.UUID(parts[3])
+        except ValueError as error:
+            raise invalid from error
+        if str(export_id) == parts[3] and parts[4] in {f"dataset-{fmt}.zip" for fmt in EXPORT_FORMATS}:
+            return key
+    raise invalid
+
+
+@router.get("/jobs/{job_id}/download-url")
+def renew_job_download(
+    job_id: str,
+    token: str = Query(...),
+    principal: WorkspacePrincipal = Depends(get_workspace_principal),
+):
+    _validate_uuid(job_id, "job_id")
+    session = SessionLocal()
+    try:
+        job = require_resource(session, principal, LabelingJob, job_id)
+        key = _renewable_export_object(token, job)
+        return {"download_url": get_download_url(key)}
+    finally:
+        session.close()
 
 
 class ExportRequest(BaseModel):
     format: str = "segment"
 
 
-def _annotation_to_label_line(ann: Annotation, fmt: str) -> str | None:
-    """Convert a DB annotation to a YOLO label line in the requested format."""
+def _annotation_to_label_line(ann: Annotation, fmt: str, class_index: int | None = None) -> str | None:
+    """Convert geometry without mutating the stored class index."""
+    index = ann.class_index if class_index is None else class_index
     if fmt == "segment":
         if not ann.polygon or len(ann.polygon) < 6:
             return None
         coords = " ".join(f"{v:.6f}" for v in ann.polygon)
-        return f"{ann.class_index} {coords}"
+        return f"{index} {coords}"
 
     elif fmt == "detect":
         if ann.bbox and len(ann.bbox) == 4:
             cx, cy, w, h = ann.bbox
-            return f"{ann.class_index} {cx:.6f} {cy:.6f} {w:.6f} {h:.6f}"
+            return f"{index} {cx:.6f} {cy:.6f} {w:.6f} {h:.6f}"
         if not ann.polygon or len(ann.polygon) < 6:
             return None
         xs = ann.polygon[0::2]
@@ -668,7 +879,7 @@ def _annotation_to_label_line(ann: Annotation, fmt: str) -> str | None:
         cy = (min(ys) + max(ys)) / 2
         w = max(xs) - min(xs)
         h = max(ys) - min(ys)
-        return f"{ann.class_index} {cx:.6f} {cy:.6f} {w:.6f} {h:.6f}"
+        return f"{index} {cx:.6f} {cy:.6f} {w:.6f} {h:.6f}"
 
     elif fmt == "obb":
         if not ann.polygon or len(ann.polygon) < 6:
@@ -684,13 +895,195 @@ def _annotation_to_label_line(ann: Annotation, fmt: str) -> str | None:
         rect = cv2.minAreaRect(pts_scaled)
         box = cv2.boxPoints(rect) / scale
         coords = " ".join(f"{box[i][0]:.6f} {box[i][1]:.6f}" for i in range(4))
-        return f"{ann.class_index} {coords}"
+        return f"{index} {coords}"
 
     return None
 
 
+def _write_review_export(dataset_dir, source_dir, frames_map, frame_anns, class_names, fmt):
+    """Export whole video groups and never silently omit a visible annotation."""
+    if fmt in ("classify", "pose"):
+        return _write_reviewed_region_export(dataset_dir, source_dir, frames_map, frame_anns, class_names, fmt)
+    from labeler.converters.common import write_yolo_label_dataset
+
+    source_dir.mkdir(parents=True, exist_ok=True)
+    class_to_idx = {name: i for i, name in enumerate(class_names)}
+    paths, labels, groups = [], [], []
+    for fid in sorted(frame_anns):
+        annotations = [a for a in frame_anns[fid] if a.status != "rejected"]
+        # A rejected detection does not establish that the frame is a reviewed negative.
+        if not annotations:
+            continue
+        frame = frames_map.get(fid)
+        if frame is None or not frame.minio_key:
+            raise HTTPException(status_code=400, detail=f"Missing source frame {fid}")
+        lines = [_annotation_to_label_line(a, fmt, class_to_idx[a.class_name]) for a in annotations]
+        if any(line is None for line in lines):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Frame {fid} has geometry unavailable for {fmt}; review it or export detect format",
+            )
+        path = source_dir / (fid + (Path(frame.minio_key).suffix or ".jpg"))
+        download_file(frame.minio_key, path)
+        paths.append(path)
+        labels.append(lines)
+        groups.append(str(frame.video_id))
+    if not paths:
+        raise HTTPException(status_code=400, detail="No non-rejected annotations to export")
+    write_yolo_label_dataset(dataset_dir, paths, labels, class_names, task=fmt, group_ids=groups)
+
+
+def _reviewed_polygon(ann):
+    import numpy as np
+
+    polygon = ann.polygon
+    if (
+        not isinstance(polygon, list)
+        or len(polygon) < 6
+        or len(polygon) % 2
+        or any(
+            isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or not 0 <= v <= 1
+            for v in polygon
+        )
+    ):
+        raise HTTPException(status_code=400, detail="Export requires a finite normalized polygon; review its geometry")
+    points = np.array(polygon, dtype=np.float64).reshape(-1, 2)
+    return points, _polygon_centroid(points)
+
+
+def _polygon_centroid(points):
+    import cv2
+
+    origin, extent = points.min(axis=0), points.max(axis=0) - points.min(axis=0)
+    if any(extent <= 0):
+        raise HTTPException(status_code=400, detail="Export requires a non-degenerate reviewed polygon")
+    # Condition small normalized polygons before OpenCV's moment calculation.
+    moments = cv2.moments(((points - origin) / extent).astype("float32"))
+    if moments["m00"] <= 0:
+        raise HTTPException(status_code=400, detail="Export requires a non-degenerate reviewed polygon")
+    return origin + extent * [moments["m10"] / moments["m00"], moments["m01"] / moments["m00"]]
+
+
+def _reviewed_pose_box(ann, points, centroid):
+    if ann.bbox is None:
+        x1, y1 = points.min(axis=0)
+        x2, y2 = points.max(axis=0)
+        box = [(x1 + x2) / 2, (y1 + y2) / 2, x2 - x1, y2 - y1]
+    else:
+        box = ann.bbox
+    if (
+        not isinstance(box, list)
+        or len(box) != 4
+        or any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) for v in box)
+    ):
+        raise HTTPException(status_code=400, detail="Pose export requires a finite normalized cx/cy/width/height box")
+    cx, cy, width, height = box
+    if (
+        width <= 0
+        or height <= 0
+        or min(cx - width / 2, cy - height / 2) < -1e-6
+        or max(cx + width / 2, cy + height / 2) > 1 + 1e-6
+    ):
+        raise HTTPException(status_code=400, detail="Pose export box must have positive area within the source image")
+    if not (
+        cx - width / 2 - 1e-6 <= centroid[0] <= cx + width / 2 + 1e-6
+        and cy - height / 2 - 1e-6 <= centroid[1] <= cy + height / 2 + 1e-6
+    ):
+        raise HTTPException(
+            status_code=400, detail="Polygon centroid lies outside the edited pose box; review its geometry"
+        )
+    return box
+
+
+def _write_reviewed_region_export(dataset_dir, source_dir, frames_map, frame_anns, class_names, fmt):
+    import cv2
+
+    from labeler.converters.common import write_yolo_label_dataset
+    from labeler.converters.to_classify import validate_class_names, write_yolo_dataset
+
+    if fmt == "classify":
+        try:
+            validate_class_names(class_names)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+    # Validate all reviewed regions before downloading any frame.
+    regions = []
+    for fid in sorted(frame_anns):
+        annotations = sorted((ann for ann in frame_anns[fid] if ann.status != "rejected"), key=lambda ann: str(ann.id))
+        if not annotations:
+            continue
+        frame = frames_map.get(fid)
+        if frame is None or not frame.minio_key:
+            raise HTTPException(status_code=400, detail=f"Missing source frame {fid}")
+        geometry = []
+        for ann in annotations:
+            points, centroid = _reviewed_polygon(ann)
+            geometry.append(
+                (ann, points, _reviewed_pose_box(ann, points, centroid) if fmt == "pose" else None, centroid)
+            )
+        regions.append((fid, frame, geometry))
+    if not regions:
+        raise HTTPException(status_code=400, detail="No non-rejected annotations to export")
+    source_dir.mkdir(parents=True, exist_ok=True)
+    paths, values, groups = [], [], []
+    indices = {name: index for index, name in enumerate(class_names)}
+    for fid, frame, geometry in regions:
+        path = source_dir / (fid + (Path(frame.minio_key).suffix or ".jpg"))
+        download_file(frame.minio_key, path)
+        output = []
+        if fmt == "classify":
+            image = cv2.imread(str(path))
+            if image is None:
+                raise HTTPException(status_code=400, detail=f"Cannot decode source frame {fid}")
+            height, width = image.shape[:2]
+        for ann, points, box, centroid in geometry:
+            if fmt == "classify":
+                minimum, maximum = points.min(axis=0), points.max(axis=0)
+                x1, y1 = (
+                    max(0, math.floor(float(minimum[0]) * width) - 5),
+                    max(0, math.floor(float(minimum[1]) * height) - 5),
+                )
+                x2, y2 = (
+                    min(width, math.ceil(float(maximum[0]) * width) + 5),
+                    min(height, math.ceil(float(maximum[1]) * height) + 5),
+                )
+                output.append((image[y1:y2, x1:x2], ann.class_name))
+            else:
+                output.append(f"{indices[ann.class_name]} " + " ".join(f"{v:.6f}" for v in [*box, *centroid]) + " 2")
+        paths.append(path)
+        values.append(output)
+        groups.append(str(frame.video_id))
+    if fmt == "classify":
+        write_yolo_dataset(dataset_dir, paths, values, class_names, group_ids=groups)
+    else:
+        write_yolo_label_dataset(dataset_dir, paths, values, class_names, task="pose", group_ids=groups)
+    manifest_path = dataset_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest.update(
+        version=2,
+        geometry_method="polygon_envelope_padding_5px_v1"
+        if fmt == "classify"
+        else "polygon_centroid_single_keypoint_v1",
+    )
+    if fmt == "pose":
+        manifest["keypoint_semantics"] = "derived_polygon_centroid; not anatomical landmarks"
+        manifest["bbox_semantics"] = "reviewed_bbox_or_polygon_bounds_when_absent"
+    for sample in manifest["samples"]:
+        fid, _, geometry = regions[sample["source_index"]]
+        sample["source_frame_id"] = fid
+        if fmt == "classify":
+            sample["source_annotation_id"] = str(geometry[sample["crop_index"]][0].id)
+        else:
+            sample["source_annotation_ids"] = [str(ann.id) for ann, _, _, _ in geometry]
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+
 @router.post("/jobs/{job_id}/export")
-def export_dataset(job_id: str, req: ExportRequest):
+def export_dataset(
+    job_id: str,
+    req: ExportRequest,
+    principal: WorkspacePrincipal = Depends(require_workspace_editor),
+):
     """Re-export a dataset from DB annotations in the requested YOLO format."""
     _validate_uuid(job_id, "job_id")
     fmt = req.format
@@ -699,11 +1092,18 @@ def export_dataset(job_id: str, req: ExportRequest):
 
     session = SessionLocal()
     try:
-        job = session.query(LabelingJob).filter_by(id=job_id).first()
+        job = require_resource(session, principal, LabelingJob, job_id)
+        job_id = job.id
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
+        evidence_revision = job.evidence_revision
 
-        annotations = session.query(Annotation).filter_by(job_id=job_id).all()
+        annotations = (
+            scope_resources(session.query(Annotation), Annotation, principal)
+            .filter_by(job_id=job_id)
+            .order_by(Annotation.id)
+            .all()
+        )
         if not annotations:
             raise HTTPException(status_code=400, detail="No annotations to export")
 
@@ -713,61 +1113,19 @@ def export_dataset(job_id: str, req: ExportRequest):
             frame_anns.setdefault(str(a.frame_id), []).append(a)
 
         # Load frame metadata
-        frame_ids = list(frame_anns.keys())
-        frames = session.query(Frame).filter(Frame.id.in_(frame_ids)).all()
+        frame_ids = [_uuid.UUID(frame_id) for frame_id in frame_anns]
+        frames = scope_resources(session.query(Frame), Frame, principal).filter(Frame.id.in_(frame_ids)).all()
         frames_map = {str(f.id): f for f in frames}
 
         # Class name → index mapping
-        class_names = sorted(set(a.class_name for a in annotations))
-        class_to_idx = {name: i for i, name in enumerate(class_names)}
+        class_names = sorted(
+            set(a.class_name for a in annotations if fmt not in ("classify", "pose") or a.status != "rejected")
+        )
 
         with tempfile.TemporaryDirectory() as tmpdir:
             tmpdir = Path(tmpdir)
             dataset_dir = tmpdir / "dataset"
-            for split in ("train", "val"):
-                (dataset_dir / "images" / split).mkdir(parents=True)
-                (dataset_dir / "labels" / split).mkdir(parents=True)
-
-            # 90/10 split
-            import random
-
-            frame_id_list = list(frame_anns.keys())
-            random.shuffle(frame_id_list)
-            val_count = max(1, len(frame_id_list) // 10) if len(frame_id_list) > 1 else 0
-            val_set = set(frame_id_list[:val_count])
-
-            for fid in frame_id_list:
-                frame = frames_map.get(fid)
-                if not frame or not frame.minio_key:
-                    continue
-
-                split = "val" if fid in val_set else "train"
-                ext = Path(frame.minio_key).suffix or ".jpg"
-                img_dst = dataset_dir / "images" / split / f"{fid}{ext}"
-                download_file(frame.minio_key, img_dst)
-
-                # Convert annotations to label lines
-                lines = []
-                for ann in frame_anns[fid]:
-                    ann.class_index = class_to_idx.get(ann.class_name, 0)
-                    line = _annotation_to_label_line(ann, fmt)
-                    if line:
-                        lines.append(line)
-
-                label_dst = dataset_dir / "labels" / split / f"{fid}.txt"
-                label_dst.write_text("\n".join(lines) + "\n" if lines else "")
-
-            # data.yaml
-            import yaml
-
-            data_yaml = {
-                "path": ".",
-                "train": "images/train",
-                "val": "images/val",
-                "nc": len(class_names),
-                "names": {i: name for i, name in enumerate(class_names)},
-            }
-            (dataset_dir / "data.yaml").write_text(yaml.safe_dump(data_yaml, default_flow_style=False, sort_keys=False))
+            _write_review_export(dataset_dir, tmpdir / "sources", frames_map, frame_anns, class_names, fmt)
 
             # Zip
             zip_path = tmpdir / "dataset.zip"
@@ -776,8 +1134,21 @@ def export_dataset(job_id: str, req: ExportRequest):
                     if file.is_file():
                         zf.write(file, file.relative_to(dataset_dir))
 
-            result_key = f"results/{job_id}/dataset-{fmt}.zip"
+            # Each export is an immutable snapshot; existing training runs retain their input.
+            result_key = f"results/{job_id}/exports/{_uuid.uuid4()}/dataset-{fmt}.zip"
             upload_file(result_key, zip_path)
+            training_format = "detect" if job.task_type == "detect_transformer" else (job.task_type or "segment")
+            if fmt == training_format:
+                if not publish_current_export(session, job_id, evidence_revision, result_key):
+                    session.rollback()
+                    try:
+                        delete_object(result_key)
+                    except Exception:
+                        logging.getLogger(__name__).warning(
+                            "Could not remove superseded export %s", result_key, exc_info=True
+                        )
+                    raise HTTPException(status_code=409, detail="Annotations changed during export; retry the export")
+                session.commit()
 
         return {"status": "exported", "format": fmt, "download_url": get_download_url(result_key)}
     finally:

@@ -38,6 +38,9 @@ const sidebars: SidebarsConfig = {
         "architecture/data-model",
         "architecture/security",
         "architecture/codebase-map",
+        "architecture/roadmap",
+      "architecture/perception-selection",
+      "architecture/geolocation-design",
       ],
     },
     {
@@ -69,6 +72,7 @@ const sidebars: SidebarsConfig = {
       label: "Deployment",
       items: [
         "deployment/docker",
+        "deployment/local-testing",
         "deployment/linux",
         "deployment/windows",
         "deployment/edge",

@@ -1,23 +1,42 @@
 name: Release — build & push images to Docker Hub
 
-# Triggers:
-# - Tags v*.*.*  → push :latest, :cuda, :<version>, :<version>-cuda
-# - Pushes to main → push :main, :main-cuda (so curl|bash always pulls something fresh)
-# - workflow_dispatch → on demand
+# Publishing is manual, from a reviewed and tested main SHA only.
 on:
-  push:
-    branches: [main]
-    tags: ["v*.*.*"]
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Optional version, e.g. v1.2.3; blank publishes :main and :main-cuda"
+        required: false
+        type: string
 
 permissions:
   contents: read
+  checks: read
+  statuses: read
 
 jobs:
+  verify:
+    name: Verify release evidence
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Check current main SHA and required evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: bash .github/scripts/check-release.sh
+
   build:
     name: ${{ matrix.image.name }}
-    runs-on: ubuntu-latest
+    needs: verify
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
+    environment: release
     strategy:
       # Don't cancel cuda just because cpu failed (and vice versa).
       fail-fast: false
@@ -34,15 +53,42 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      # Recheck after the release environment approval in case main or a
+      # required status changed while the job waited for review.
+      - name: Recheck release evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: bash .github/scripts/check-release.sh
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
 
-      # Plain `docker login` instead of docker/login-action@v3, which (as of
-      # 2026-04) corrupts the Authorization header for some Hub PATs and
-      # produces "malformed HTTP Authorization header". --password-stdin
-      # also keeps the token out of the runner's process listing.
+      - name: Compute tags
+        id: tags
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          IMAGE="oldhero5/waldo"
+          tags=""
+          add() { tags="${tags:+$tags,}$1"; }
+
+          if [ -n "$RELEASE_VERSION" ]; then
+            version="${RELEASE_VERSION#v}"
+            add "$IMAGE:${version}${{ matrix.image.tag_suffix }}"
+            add "$IMAGE:${{ matrix.image.default_tag }}"
+          else
+            add "$IMAGE:main${{ matrix.image.tag_suffix }}"
+          fi
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
+          echo "Building tags: $tags"
+
+      # --password-stdin keeps the Docker Hub token out of the process listing.
       - name: Log in to Docker Hub
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -50,31 +96,8 @@ jobs:
         run: |
           printf '%s' "$DOCKERHUB_TOKEN" | docker login docker.io -u "$DOCKERHUB_USERNAME" --password-stdin
 
-      - name: Compute tags
-        id: tags
-        run: |
-          set -e
-          IMAGE="oldhero5/waldo"
-          tags=""
-          add() { tags="${tags:+$tags,}$1"; }
-
-          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
-            # vX.Y.Z → strip leading v
-            version="${GITHUB_REF_NAME#v}"
-            add "$IMAGE:${version}${{ matrix.image.tag_suffix }}"
-            add "$IMAGE:${{ matrix.image.default_tag }}"
-          elif [ "${GITHUB_REF_NAME}" = "main" ]; then
-            add "$IMAGE:main${{ matrix.image.tag_suffix }}"
-          else
-            # Manual dispatch on a feature branch — sanity-tag with the SHA
-            # so it doesn't collide with anything.
-            add "$IMAGE:dev-${GITHUB_SHA::7}${{ matrix.image.tag_suffix }}"
-          fi
-          echo "tags=$tags" >> "$GITHUB_OUTPUT"
-          echo "Building tags: $tags"
-
       - name: Build & push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
           context: .
           file: ${{ matrix.image.dockerfile }}

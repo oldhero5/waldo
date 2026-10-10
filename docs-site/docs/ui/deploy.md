@@ -7,70 +7,56 @@ import Demo from "@site/src/components/Demo";
 
 # Deploy Page
 
-Route: `/deploy/:tab` — Source: [`ui/src/pages/DeployPage.tsx`](https://github.com/oldhero5/waldo/blob/main/ui/src/pages/DeployPage.tsx)
+Route: `/deploy` or `/deploy/:tab` — Source: [`ui/src/pages/DeployPage.tsx`](https://github.com/oldhero5/waldo/blob/main/ui/src/pages/DeployPage.tsx)
 
-Promote trained models to a serving endpoint, configure named endpoints, run side-by-side comparisons, watch live metrics, and manage edge devices. Five tabs in one page.
+Inspect model prediction URLs, test inference, manage the model registry, and monitor inference metrics. The current client has four tabs; `/deploy` opens Endpoints.
 
-![Deploy — overview tab](/img/screenshots/deploy.png)
+![Deploy — overview](/img/screenshots/deploy.png)
 
 <Demo
   src="/img/recordings/deploy.mp4"
   poster="/img/recordings/deploy.poster.jpg"
-  caption="Tabbing through Deploy: models → endpoints → test → monitor → edge."
+  caption="Deploy walkthrough. Existing media may show an earlier interface."
 />
 
 ## Tabs
 
 | Tab | Route | Purpose |
 | --- | --- | --- |
-| Models | `/deploy/models` | The model registry — every trained run with metrics, aliases, and the active flag |
-| Endpoints | `/deploy/endpoints` | Named serving endpoints (`/endpoints/<slug>/predict`) |
-| Test | `/deploy/test` | Drag-and-drop demo: send an image to the active model and see the prediction |
-| Monitor | `/deploy/monitor` | Live throughput, latency, and error rate per endpoint |
-| Edge | `/deploy/edge` | Registered edge devices, last heartbeat, on-device model version |
+| Endpoints | `/deploy/endpoints` | Per-model prediction URLs, copyable examples, and API reference |
+| Test | `/deploy/test` | Image/video inference and comparison of two models |
+| Models | `/deploy/models` | Registry, metrics, champion promotion, export, and experiments |
+| Monitor | `/deploy/monitor` | Request counts, latency, confidence, and detection breakdowns |
 
-### Models
-
-![Deploy — models](/img/screenshots/deploy-models.png)
-
-Click the star icon next to any model in the registry to mark it active. The default `/predict/*` endpoints will use it from the next request. Promote a model to a labeled alias (`production`, `staging`, `canary`) so endpoints pinned to that alias pick up the new version automatically.
+The legacy `/deploy/api` URL selects Endpoints. Unknown tab names also display Endpoints. Edge devices have no tab in this client; see [Edge deployment](../deployment/edge) for the separate deployment documentation.
 
 ### Endpoints
 
 ![Deploy — endpoints](/img/screenshots/deploy-endpoints.png)
 
-Create endpoints with their own slug, model pin, and routing rules. Useful for:
-
-- **Blue/green deploys** — run a new model on `/endpoints/staging/predict` until you're confident, then promote.
-- **Per-customer models** — `/endpoints/customer-x/predict` pinned to a custom-trained variant.
-- **A/B testing** — see [Experiments](../api/serve#experiments).
+Each trained model has a prediction URL. Inspect the model's active status and available classes, then copy its URL or a Python, curl, or JavaScript example. The Reference section documents image and video requests and response fields. This tab does not provide a named-endpoint creation form or routing-rule editor.
 
 ### Test
 
 ![Deploy — test](/img/screenshots/deploy-test.png)
 
-A scratchpad for sanity-checking the active model. Drop an image; the page POSTs it to `/api/v1/predict/image` and renders the boxes + scores side-by-side with the source.
+Choose Image, Video, or Compare. Image and video views run inference against the serving model, display detections, and provide confidence and class filters. Video results include track and playback controls. Compare runs two selected models on the same image or video and retains session information while processing continues.
+
+### Models
+
+![Deploy — models](/img/screenshots/deploy-models.png)
+
+Search the registry and inspect model metrics. Promote a model to champion after confirming the traffic change, export weights, or configure an experiment with a champion, challenger, and traffic split. Models are grouped by task type; active and best-metric states are identified in each card.
 
 ### Monitor
 
 ![Deploy — monitor](/img/screenshots/deploy-monitor.png)
 
-Live charts powered by `GET /api/v1/metrics/summary`:
-
-- Requests per second per endpoint
-- p50 / p95 / p99 latency
-- Error rate (HTTP 5xx + inference exceptions)
-- Class distribution of predictions
-
-### Edge
-
-![Deploy — edge devices](/img/screenshots/deploy-edge.png)
-
-Registered Jetson and Pi+TPU devices. Each row shows last heartbeat, battery / temperature, on-device model version, and recent inference rate. Promoting a new model triggers an OTA download on the next heartbeat — see [Edge deployment](../deployment/edge).
+The page polls `GET /api/v1/metrics/summary` every 15 seconds while visible. Choose a 1-hour, 24-hour, or 7-day window to inspect total requests, average latency, p95 latency, and average confidence, along with request volume and breakdowns by detection class and model. It does not currently display p99 latency or an error-rate chart.
 
 ## Related API
 
-- [`POST /api/v1/models/{id}/activate`](../api/serve#post-apiv1modelsmodel_idactivate)
 - [`POST /api/v1/models/{id}/promote`](../api/serve#post-apiv1modelsmodel_idpromote)
 - [`POST /api/v1/endpoints/{slug}/predict`](../api/serve#post-apiv1endpointsslugpredict)
-- [`GET /api/v1/devices`](../api/serve#get-apiv1devices)
+
+Screenshots and recordings may show an earlier appearance; regenerate them before publishing visual documentation for a release.

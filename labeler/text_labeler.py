@@ -1,24 +1,25 @@
 """Text-prompt labeling pipeline — uses Sam3VideoModel for detect-and-track."""
 
+import copy
 import logging
 import math
 import tempfile
 from pathlib import Path
 
 import numpy as np
-from PIL import Image
 
+from labeler.errors import RetryableLabelingError, is_retryable
 from labeler.frame_extractor import extract_frames
-from labeler.pipeline import _update_job, convert_and_store
+from labeler.pipeline import _update_job, replace_raw_observations
+from labeler.result_store import DiskResultSequence
 from labeler.sam3_engine import SegmentationResult, get_engine
 from lib.config import settings
-from lib.db import Frame, LabelingJob, SessionLocal, Video
+from lib.dataset_evidence import invalidate_current_export
+from lib.db import Annotation, Frame, LabelingJob, SessionLocal, Video
 from lib.storage import download_file, upload_file
 
 logger = logging.getLogger(__name__)
 
-# Maximum frames passed to SAM3 before frame-skip kicks in automatically.
-_AUTO_SKIP_TARGET = 500
 # Absolute bounds for the computed stride.
 _MIN_STRIDE = 1
 _MAX_STRIDE = 30
@@ -27,17 +28,12 @@ _MAX_STRIDE = 30
 def _compute_stride(total_frames: int, detect_every: int | None) -> int:
     """Return the frame-sampling stride.
 
-    If *detect_every* is given explicitly, clamp it to [_MIN_STRIDE, _MAX_STRIDE]
-    and return it.  Otherwise auto-compute so that at most *_AUTO_SKIP_TARGET*
-    frames are processed.
+    Explicit stride is clamped to [_MIN_STRIDE, _MAX_STRIDE]. Otherwise preserve
+    every frame returned by the requested extraction rate.
     """
     if detect_every is not None:
         return max(_MIN_STRIDE, min(_MAX_STRIDE, detect_every))
-    if total_frames <= _AUTO_SKIP_TARGET:
-        return 1
-    stride = math.ceil(total_frames / _AUTO_SKIP_TARGET)
-    stride = max(_MIN_STRIDE, min(_MAX_STRIDE, stride))
-    return stride
+    return 1
 
 
 def merge_multiclass_results(
@@ -112,16 +108,20 @@ def _process_single_video(
     """Extract frames, run SAM3 (with multiclass), return (seg_results, db_frames, frame_infos).
 
     Args:
-        detect_every: Explicit frame stride.  *None* triggers auto-computation
-            based on the actual frame count and *_AUTO_SKIP_TARGET*.
+        detect_every: Optional explicit stride over the sampled frames.
+            None preserves every frame returned at the job's requested rate.
     """
-    video_path = tmpdir / video.filename
+    video_path = tmpdir / f"{video.id}_{Path(video.filename).name}"
     download_file(video.minio_key, video_path)
 
     frames_dir = tmpdir / f"frames_{video.id}"
-    frame_infos = extract_frames(video_path, frames_dir)
+    sample_fps = getattr(job, "sample_fps", None)
+    sample_fps = sample_fps if sample_fps is not None else 1.0
+    frame_infos = extract_frames(video_path, frames_dir, fps=sample_fps, dedup_threshold=-1, use_cache=False)
+    if not frame_infos:
+        raise ValueError(f"No sampled frames decoded for video {video.id}")
 
-    # Frame-skip: for long videos sample every Kth frame to cap SAM3 work.
+    # Apply only an explicitly requested additional stride.
     total_frames = len(frame_infos)
     stride = _compute_stride(total_frames, detect_every)
     if stride > 1:
@@ -136,27 +136,30 @@ def _process_single_video(
     # Upload frames to MinIO and record in DB
     db_frames: list[Frame] = []
     for fi in frame_infos:
-        minio_key = f"frames/{job.id}/{video.id}_{fi.file_path.name}"
+        minio_key = f"frames/{job.id}/fps_{sample_fps:g}/{video.id}_{fi.file_path.name}"
         upload_file(minio_key, fi.file_path)
 
-        db_frame = Frame(
-            video_id=video.id,
-            frame_number=fi.frame_number,
-            timestamp_s=fi.timestamp_s,
-            minio_key=minio_key,
-            phash=fi.phash,
-            width=fi.width,
-            height=fi.height,
-        )
-        session.add(db_frame)
+        db_frame = session.query(Frame).filter_by(video_id=video.id, minio_key=minio_key).first()
+        if db_frame is None:
+            db_frame = Frame(
+                video_id=video.id,
+                frame_number=fi.frame_number,
+                timestamp_s=fi.timestamp_s,
+                minio_key=minio_key,
+                phash=fi.phash,
+                width=fi.width,
+                height=fi.height,
+            )
+            session.add(db_frame)
         db_frames.append(db_frame)
-    session.commit()
+    session.flush()
 
     # SAM3 segmentation — once per prompt alias, then merge.
     # Use config-backed threshold; per-call override capability preserved via
-    # engine.segment_frames(threshold=...) when needed.
-    score_threshold = settings.sam3_score_threshold
-    images = [Image.open(fi.file_path) for fi in frame_infos]
+    # engine.iter_segment_frame_paths(threshold=...) when needed.
+    score_threshold = getattr(job, "score_threshold", None)
+    if score_threshold is None:
+        score_threshold = settings.sam3_score_threshold
     class_names = []
     for cp in class_prompts:
         if cp["name"] not in class_names:
@@ -170,99 +173,204 @@ def _process_single_video(
         for alias in aliases:
             prompt_runs.append((alias, cls_idx))
 
-    if len(prompt_runs) == 1:
-        seg_results = engine.segment_frames(images, prompt_runs[0][0], threshold=score_threshold)
-        for sr in seg_results:
-            sr.class_indices = np.full(sr.masks.shape[0], prompt_runs[0][1], dtype=int)
+    if not prompt_runs:
+        raise ValueError("At least one labeling prompt is required")
+    paths = [info.file_path for info in frame_infos]
+    stores = []
+    for alias_index, (prompt_str, cls_idx) in enumerate(prompt_runs):
+        store = DiskResultSequence(tmpdir / f"results_{video.id}_{alias_index}")
+        iterator = engine.iter_segment_frame_paths(
+            paths,
+            prompt_str,
+            threshold=score_threshold,
+            working_dir=tmpdir / f"session_{video.id}_{alias_index}",
+        )
+        try:
+            for ordinal, result in enumerate(iterator):
+                if ordinal >= len(paths) or result.frame_index != ordinal:
+                    raise ValueError("Segmentation and sampled-frame order must match")
+                result.class_indices = np.full(len(result.masks), cls_idx, dtype=int)
+                store.append(result)
+                del result
+            if len(store) != len(paths):
+                raise ValueError("Segmentation and sampled-frame list lengths must match")
+        finally:
+            iterator.close()
+        stores.append(store)
+
+    if len(stores) == 1:
+        seg_results = stores[0]
     else:
-        per_prompt_results = []
-        for prompt_str, cls_idx in prompt_runs:
-            cls_results = engine.segment_frames(images, prompt_str, threshold=score_threshold)
-            for sr in cls_results:
-                sr.class_indices = np.full(sr.masks.shape[0], cls_idx, dtype=int)
-            per_prompt_results.append(cls_results)
-        seg_results = merge_multiclass_results(per_prompt_results, len(images))
+        seg_results = DiskResultSequence(tmpdir / f"results_{video.id}_merged")
+        for ordinal in range(len(paths)):
+            result = merge_multiclass_results([[store[ordinal]] for store in stores], 1)[0]
+            result.frame_index = ordinal
+            seg_results.append(result)
+            del result
 
     return seg_results, db_frames, frame_infos
 
 
 def run_labeling_pipeline(celery_task, job_id: str) -> dict:
+    """Persist observations for explicit review/export; reuse committed clips on retry."""
     session = SessionLocal()
     try:
         job = session.query(LabelingJob).filter_by(id=job_id).one()
+        if getattr(job, "status", None) == "completed":
+            return {
+                "status": "completed",
+                "result_minio_key": getattr(job, "result_minio_key", None),
+                "processing_summary": job.processing_summary or {},
+            }
         class_prompts = _resolve_class_prompts(job)
-        # Deduplicate class names (same class may have multiple prompt aliases)
         class_names = list(dict.fromkeys(cp["name"] for cp in class_prompts))
-
-        # Determine videos to process
-        if job.project_id and not job.video_id:
-            videos = session.query(Video).filter_by(project_id=job.project_id).all()
-        else:
-            videos = [job.video]
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tmpdir = Path(tmpdir)
-
-            # Phase 1: Extract frames for all videos
-            _update_job(session, job, status="extracting")
-            celery_task.update_state(state="EXTRACTING")
-
-            # Estimate total frames across all videos
-            total_estimate = sum(v.frame_count or 0 for v in videos)
-            _update_job(session, job, total_frames=total_estimate)
-
-            # Phase 2: Process each video
-            _update_job(session, job, status="labeling")
-            celery_task.update_state(state="LABELING")
-
-            engine = get_engine()
-            all_seg_results = []
-            all_db_frames = []
-            all_frame_infos = []
-            frame_offset = 0
-
-            for video in videos:
-                seg_results, db_frames, frame_infos = _process_single_video(
-                    session,
-                    job,
-                    video,
-                    engine,
-                    tmpdir,
-                    class_prompts,
-                    frame_offset=frame_offset,
-                    total_frame_estimate=total_estimate,
+        videos = (
+            session.query(Video).filter_by(project_id=job.project_id).all()
+            if job.project_id and not job.video_id
+            else [job.video]
+        )
+        videos = [video for video in videos if video is not None]
+        sample_fps = job.sample_fps if job.sample_fps is not None else 1.0
+        threshold = job.score_threshold if job.score_threshold is not None else settings.sam3_score_threshold
+        summary = (
+            copy.deepcopy(job.processing_summary)
+            if job.processing_summary
+            else {
+                "backend": "pytorch",
+                "coverage": "sampled",
+                "timestamp_method": "resampled_ordinal/fps",
+                "requested_sample_fps": sample_fps,
+                "score_threshold": threshold,
+                "decode_gap_assessment": "ffmpeg_errors_fail_clip; source_indices_unavailable",
+                "videos": [],
+            }
+        )
+        for key, value in (("score_threshold", threshold), ("requested_sample_fps", sample_fps)):
+            if key in summary and summary[key] != value:
+                raise ValueError(f"Retry configuration differs from recorded {key}; start a new labeling job")
+        completed = {entry["video_id"]: entry for entry in summary.get("videos", []) if entry["status"] == "completed"}
+        for video in videos:
+            if str(video.id) not in completed:
+                source_frames = session.query(Frame.id).filter_by(video_id=video.id)
+                existing = (
+                    session.query(Annotation.id)
+                    .filter(Annotation.job_id == job.id, Annotation.frame_id.in_(source_frames))
+                    .first()
                 )
-
-                # Re-index frame_index to be global across all videos
-                for i, sr in enumerate(seg_results):
-                    sr.frame_index = frame_offset + i
-
-                all_seg_results.extend(seg_results)
-                all_db_frames.extend(db_frames)
-                all_frame_infos.extend(frame_infos)
-                frame_offset += len(frame_infos)
-
-            # Update total_frames with actual count
-            _update_job(session, job, total_frames=len(all_frame_infos))
-
-            # Phase 3: Convert + store + package
-            _update_job(session, job, status="converting")
-            celery_task.update_state(state="CONVERTING")
-
-            result_key = convert_and_store(
-                session, job, all_seg_results, all_db_frames, all_frame_infos, class_names, tmpdir
+                if existing is not None:
+                    raise ValueError("Existing observations lack a completed clip summary; start a new labeling job")
+        summary["videos"] = [completed[str(video.id)] for video in videos if str(video.id) in completed]
+        successful = len(summary["videos"])
+        frames_processed = sum(entry.get("sampled_frames", 0) for entry in summary["videos"])
+        _update_job(
+            session,
+            job,
+            status="labeling",
+            progress=successful / len(videos) if videos else 0,
+            processed_frames=frames_processed,
+            total_frames=frames_processed,
+            processing_summary=summary,
+            error_message=None,
+        )
+        celery_task.update_state(state="LABELING")
+        with tempfile.TemporaryDirectory() as temporary:
+            tmpdir = Path(temporary)
+            engine = get_engine() if any(str(video.id) not in completed for video in videos) else None
+            for video in videos:
+                if str(video.id) in completed:
+                    continue
+                entry = {"video_id": str(video.id)}
+                try:
+                    results, frames, infos = _process_single_video(
+                        session,
+                        job,
+                        video,
+                        engine,
+                        tmpdir,
+                        class_prompts,
+                        frame_offset=frames_processed,
+                    )
+                    if not (len(results) == len(frames) == len(infos)):
+                        raise ValueError("Segmentation, database-frame and source-frame list lengths must match")
+                    invalidate_current_export(session, job.id)
+                    replace_raw_observations(session, job, results, frames, class_names)
+                    entry.update(
+                        status="completed",
+                        sampled_frames=len(infos),
+                        assessed_timestamps_s=[info.timestamp_s for info in infos],
+                        timestamp_method="resampled_ordinal/fps",
+                    )
+                    next_summary = {**summary, "videos": [*summary["videos"], entry]}
+                    # Observations and completion metadata must commit together.
+                    # New evidence invalidates a previous partial dataset export.
+                    _update_job(
+                        session,
+                        job,
+                        processing_summary=next_summary,
+                        result_minio_key=None,
+                        processed_frames=frames_processed + len(infos),
+                        total_frames=frames_processed + len(infos),
+                        progress=(successful + 1) / len(videos),
+                    )
+                    summary = next_summary
+                    frames_processed += len(infos)
+                    successful += 1
+                except Exception as error:
+                    session.rollback()
+                    entry = {"video_id": str(video.id)}
+                    logger.exception("Labeling failed for video %s", video.id)
+                    if is_retryable(error):
+                        entry.update(status="retrying", error=str(error))
+                        summary["videos"].append(entry)
+                        _update_job(
+                            session,
+                            job,
+                            status="retrying",
+                            processing_summary=summary,
+                            error_message=str(error),
+                            processed_frames=frames_processed,
+                        )
+                        raise RetryableLabelingError(str(error)) from error
+                    entry.update(status="failed", error=str(error))
+                if entry["status"] != "completed":
+                    summary["videos"].append(entry)
+                    _update_job(
+                        session,
+                        job,
+                        processing_summary=summary,
+                        progress=successful / len(videos),
+                        total_frames=frames_processed,
+                    )
+            failures = [entry for entry in summary["videos"] if entry["status"] == "failed"]
+            status = "completed" if videos and not failures else "partial" if successful else "failed"
+            error_message = "; ".join(f"{entry['video_id']}: {entry['error']}" for entry in failures) or (
+                "No videos to process" if not videos else None
             )
-
-            _update_job(session, job, status="completed", result_minio_key=result_key, progress=1.0)
-            return {"status": "completed", "result_minio_key": result_key}
-
-    except Exception as e:
+            _update_job(
+                session,
+                job,
+                status=status,
+                progress=successful / len(videos) if videos else 0,
+                processed_frames=frames_processed,
+                total_frames=frames_processed,
+                processing_summary=summary,
+                error_message=error_message,
+            )
+            return {
+                "status": status,
+                "result_minio_key": getattr(job, "result_minio_key", None),
+                "processing_summary": summary,
+            }
+    except Exception as error:
         session.rollback()
+        retryable = is_retryable(error)
         try:
             job = session.query(LabelingJob).filter_by(id=job_id).one()
-            _update_job(session, job, status="failed", error_message=str(e))
+            _update_job(session, job, status="retrying" if retryable else "failed", error_message=str(error))
         except Exception:
             pass
+        if retryable and not isinstance(error, RetryableLabelingError):
+            raise RetryableLabelingError(str(error)) from error
         raise
     finally:
         session.close()

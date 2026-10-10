@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import { Sparkles, X, Send, Loader2, Bot, User, Wrench } from "lucide-react";
 
+import { authFetch } from "../api";
 import { streamAgent, type AgentEvent, type ChatMessageWire } from "../lib/agentStream";
 
 interface ToolEvent {
@@ -21,6 +22,7 @@ interface Message {
 }
 
 export default function AgentPanel({ context }: { context?: string }) {
+  const [provider, setProvider] = useState("configured provider");
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -28,6 +30,14 @@ export default function AgentPanel({ context }: { context?: string }) {
   const [streamText, setStreamText] = useState("");
   const [streamTools, setStreamTools] = useState<ToolEvent[]>([]);
   const endRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const controller = new AbortController();
+    authFetch("/api/v1/agent/health", { signal: controller.signal }).then((r) => r.ok ? r.json() : null)
+      .then((data) => { if (data) setProvider(data.provider); }).catch(() => {});
+    return () => controller.abort();
+  }, [open]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -45,8 +55,8 @@ export default function AgentPanel({ context }: { context?: string }) {
 
       const wire: ChatMessageWire[] = [
         {
-          role: "system",
-          content: `You're answering inside a sidebar — keep replies under 3 sentences unless asked for detail.${
+          role: "user",
+          content: `Page context: this conversation is displayed in a sidebar. Please keep replies under 3 sentences unless asked for detail.${
             context ? ` The user is on the ${context} page.` : ""
           }`,
         },
@@ -100,9 +110,9 @@ export default function AgentPanel({ context }: { context?: string }) {
         style={{
           position: "fixed", bottom: 24, right: 24, zIndex: 50,
           width: 48, height: 48, borderRadius: 16,
-          backgroundColor: "var(--accent)", color: "white",
+          backgroundColor: "var(--accent)", color: "var(--text-on-accent)",
           display: "flex", alignItems: "center", justifyContent: "center",
-          boxShadow: "0 8px 24px rgb(37 99 235 / 0.3)",
+          boxShadow: "var(--shadow-md)",
           transition: "all 160ms ease",
           border: "none",
         }}
@@ -143,6 +153,9 @@ export default function AgentPanel({ context }: { context?: string }) {
         </button>
       </div>
 
+      <p style={{ margin: "8px 16px 0", fontSize: 11, color: "var(--text-muted)" }}>
+        {["openai", "anthropic", "openrouter"].includes(provider) ? `${provider}: chat and tool text leave this server.` : `Text provider: ${provider}.`}
+      </p>
       <div style={{ flex: 1, overflowY: "auto", padding: "12px 16px" }}>
         {messages.length === 0 && (
           <p style={{ fontSize: 12, color: "var(--text-muted)", textAlign: "center", marginTop: 40 }}>
@@ -174,7 +187,7 @@ export default function AgentPanel({ context }: { context?: string }) {
               <div style={{
                 padding: "8px 12px", borderRadius: 14, fontSize: 13, lineHeight: 1.5,
                 backgroundColor: m.role === "user" ? "var(--accent)" : "var(--bg-inset)",
-                color: m.role === "user" ? "white" : "var(--text-primary)",
+                color: m.role === "user" ? "var(--text-on-accent)" : "var(--text-primary)",
               }}>
                 {m.role === "assistant"
                   ? <div className="markdown-body" style={{ fontSize: 12 }}><Markdown>{m.content}</Markdown></div>
@@ -234,7 +247,7 @@ export default function AgentPanel({ context }: { context?: string }) {
             disabled={!input.trim() || streaming}
             style={{
               width: 36, height: 36, borderRadius: 12,
-              backgroundColor: "var(--accent)", color: "white",
+              backgroundColor: "var(--accent)", color: "var(--text-on-accent)",
               display: "flex", alignItems: "center", justifyContent: "center",
               border: "none", opacity: !input.trim() || streaming ? 0.4 : 1,
             }}

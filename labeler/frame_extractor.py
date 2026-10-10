@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,6 +29,7 @@ class FrameInfo:
     phash: str
     width: int
     height: int
+    timestamp_method: str = "resampled_ordinal/fps"
 
 
 def get_video_metadata(video_path: str | Path) -> VideoMeta:
@@ -73,6 +75,8 @@ def extract_frames(
     output_dir: str | Path,
     fps: float = 1.0,
     dedup_threshold: int = 8,
+    *,
+    use_cache: bool = True,
 ) -> list[FrameInfo]:
     """Extract frames from *video_path* at *fps*, deduplicating near-identical frames.
 
@@ -83,11 +87,15 @@ def extract_frames(
     """
     from lib.frame_cache import load_cached_frames, save_cached_frames
 
+    if not math.isfinite(fps) or fps <= 0:
+        raise ValueError("fps must be a positive finite number")
     video_path = Path(video_path)
     output_dir = Path(output_dir)
 
     # --- cache lookup ---
-    cached = load_cached_frames(video_path)
+    # Evidence callers bypass the legacy cache because it does not identify
+    # sampling/dedup configuration and may point to deleted temporary files.
+    cached = load_cached_frames(video_path) if use_cache else None
     if cached is not None:
         # Re-use cached frames; ensure output_dir exists for callers that expect it.
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -100,6 +108,8 @@ def extract_frames(
     subprocess.run(
         [
             "ffmpeg",
+            "-nostdin",
+            "-xerror",
             "-i",
             str(video_path),
             "-vf",
@@ -117,17 +127,18 @@ def extract_frames(
     seen_hashes: list[imagehash.ImageHash] = []
 
     for i, fp in enumerate(frame_files):
-        img = Image.open(fp)
-        phash = imagehash.phash(img)
+        with Image.open(fp) as img:
+            phash = imagehash.phash(img)
+            w, h = img.size
 
-        is_duplicate = any(abs(phash - h) <= dedup_threshold for h in seen_hashes)
+        is_duplicate = dedup_threshold >= 0 and any(abs(phash - h) <= dedup_threshold for h in seen_hashes)
         if is_duplicate:
             fp.unlink()
             continue
 
-        seen_hashes.append(phash)
+        if dedup_threshold >= 0:
+            seen_hashes.append(phash)
         timestamp_s = i / fps
-        w, h = img.size
 
         frames.append(
             FrameInfo(
@@ -141,6 +152,7 @@ def extract_frames(
         )
 
     # --- persist to cache ---
-    save_cached_frames(video_path, frames)
+    if use_cache:
+        save_cached_frames(video_path, frames)
 
     return frames

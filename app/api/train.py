@@ -1,11 +1,19 @@
 from collections import Counter
+from math import isfinite
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import func
-from sqlalchemy.orm import joinedload
 
 from lib.auth import get_current_user
+from lib.authorization import (
+    WorkspacePrincipal,
+    get_workspace_principal,
+    register_task_owner,
+    require_resource,
+    require_workspace_editor,
+    scope_resources,
+)
+from lib.dataset_evidence import assessed_frame_count
 from lib.db import (
     Annotation,
     Frame,
@@ -102,7 +110,7 @@ class DatasetStats(BaseModel):
     task_type: str
     total_frames: int
     annotated_frames: int
-    empty_frames: int
+    empty_frames: int  # Assessed frames without exportable annotations, not confirmed negatives.
     total_annotations: int
     class_count: int
     classes: list[ClassBalance]
@@ -124,6 +132,7 @@ def _compute_dataset_stats(session, job: LabelingJob) -> DatasetStats:
         session.query(Annotation, Frame)
         .join(Frame, Annotation.frame_id == Frame.id)
         .filter(Annotation.job_id == job.id)
+        .filter((Annotation.status != "rejected") | Annotation.status.is_(None))
         .all()
     )
     class_counter: Counter[str] = Counter()
@@ -135,30 +144,20 @@ def _compute_dataset_stats(session, job: LabelingJob) -> DatasetStats:
     for ann, frame in annotations:
         class_counter[ann.class_name] += 1
         frame_ids.add(frame.id)
-        if ann.bbox and frame.width and frame.height:
-            # bbox = [x1, y1, x2, y2] in pixel coords
+        if ann.bbox:
+            # Annotation geometry stores normalized cx, cy, width, height.
             try:
-                x1, y1, x2, y2 = ann.bbox[:4]
-                w_norm = max(0.0, (x2 - x1) / max(1, frame.width))
-                h_norm = max(0.0, (y2 - y1) / max(1, frame.height))
-                area = w_norm * h_norm
-                bbox_area_total += area
-                bbox_area_samples += 1
-                if area < 0.01:
-                    small_object_count += 1
-            except Exception:
+                cx, cy, width, height = ann.bbox[:4]
+                if all(isfinite(value) for value in (cx, cy, width, height)) and 0 < width <= 1 and 0 < height <= 1:
+                    area = width * height
+                    bbox_area_total += area
+                    bbox_area_samples += 1
+                    if area < 0.01:
+                        small_object_count += 1
+            except (ValueError, TypeError):
                 pass
 
-    # Count frames that belong to this job's dataset (whether annotated or not)
-    if job.project_id:
-        total_frames = (
-            session.query(func.count(Frame.id)).join(Frame.video).filter_by(project_id=job.project_id).scalar() or 0
-        )
-    elif job.video_id:
-        total_frames = session.query(func.count(Frame.id)).filter_by(video_id=job.video_id).scalar() or 0
-    else:
-        total_frames = len(frame_ids)
-    total_frames = max(total_frames, len(frame_ids))
+    total_frames = assessed_frame_count(job, len(frame_ids))
 
     total_ann = sum(class_counter.values())
     classes_sorted = class_counter.most_common()
@@ -246,14 +245,18 @@ def _compute_dataset_stats(session, job: LabelingJob) -> DatasetStats:
 
 
 @router.get("/train/dataset-stats/{job_id}", response_model=DatasetStats)
-def dataset_stats(job_id: str):
+def dataset_stats(
+    job_id: str,
+    principal: WorkspacePrincipal = Depends(get_workspace_principal),
+):
     """Pre-flight dataset quality report — class histogram, imbalance score,
     small-object ratio, and recommended hyperparameters. The TrainPage shows
     this above the config form so users can fix data problems before burning
     GPU time."""
     session = SessionLocal()
     try:
-        job = session.query(LabelingJob).filter_by(id=job_id).first()
+        job = require_resource(session, principal, LabelingJob, job_id)
+        job_id = job.id
         if not job:
             raise HTTPException(status_code=404, detail="Labeling job not found")
         return _compute_dataset_stats(session, job)
@@ -262,7 +265,9 @@ def dataset_stats(job_id: str):
 
 
 @router.get("/train/variants", response_model=VariantsResponse)
-def get_variants():
+def get_variants(
+    principal: WorkspacePrincipal = Depends(get_workspace_principal),
+):
     return VariantsResponse(
         variants=VARIANTS,
         defaults=TASK_TO_DEFAULT_VARIANT,
@@ -272,15 +277,24 @@ def get_variants():
 
 
 @router.post("/train", status_code=202, response_model=TrainResponse)
-def start_training(req: TrainRequest):
+def start_training(
+    req: TrainRequest,
+    principal: WorkspacePrincipal = Depends(require_workspace_editor),
+):
     session = SessionLocal()
     try:
         # joinedload video so job.video.project_id doesn't trigger a lazy SELECT
-        job = session.query(LabelingJob).filter_by(id=req.job_id).options(joinedload(LabelingJob.video)).first()
+        job = require_resource(session, principal, LabelingJob, req.job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Labeling job not found")
+        # Serialize snapshot selection with evidence invalidation. The lock is
+        # held only through the TrainingRun insert, never model processing.
+        session.refresh(job, with_for_update=True)
         if job.status != "completed":
             raise HTTPException(status_code=400, detail=f"Job not completed (status: {job.status})")
+
+        if req.task_type != job.task_type:
+            raise HTTPException(status_code=400, detail="Training task must match the exported dataset task")
 
         variant = req.model_variant or TASK_TO_DEFAULT_VARIANT.get(req.task_type, "yolo11n-seg")
         name = req.name or f"{job.text_prompt or 'exemplar'}_{variant}"
@@ -288,6 +302,15 @@ def start_training(req: TrainRequest):
         project_id = job.project_id or (job.video.project_id if job.video else None)
         if not project_id:
             raise HTTPException(status_code=400, detail="Job has no associated project")
+
+        resume_id = req.hyperparameters.get("resume_from")
+        if resume_id:
+            resume = require_resource(session, principal, ModelRegistry, resume_id)
+            if resume.project_id != project_id:
+                raise HTTPException(status_code=404, detail="Resume model not found in this project")
+
+        if not job.result_minio_key:
+            raise HTTPException(status_code=400, detail="Export this dataset in its task format before training")
 
         run = TrainingRun(
             project_id=project_id,
@@ -312,10 +335,14 @@ def start_training(req: TrainRequest):
 
 
 @router.get("/train/{run_id}", response_model=TrainingRunStatus)
-def get_training_status(run_id: str):
+def get_training_status(
+    run_id: str,
+    principal: WorkspacePrincipal = Depends(get_workspace_principal),
+):
     session = SessionLocal()
     try:
-        run = session.query(TrainingRun).filter_by(id=run_id).first()
+        run = require_resource(session, principal, TrainingRun, run_id)
+        run_id = run.id
         if not run:
             raise HTTPException(status_code=404, detail="Training run not found")
 
@@ -350,12 +377,18 @@ def get_training_status(run_id: str):
 
 
 @router.get("/train", response_model=list[TrainingRunStatus])
-def list_training_runs(project_id: str | None = Query(None)):
+def list_training_runs(
+    project_id: str | None = Query(None),
+    principal: WorkspacePrincipal = Depends(get_workspace_principal),
+):
     session = SessionLocal()
     try:
-        query = session.query(TrainingRun)
+        query = scope_resources(session.query(TrainingRun), TrainingRun, principal)
         if project_id:
-            query = query.filter_by(project_id=project_id)
+            from lib.db import Project
+
+            project = require_resource(session, principal, Project, project_id)
+            query = query.filter_by(project_id=project.id)
         runs = query.order_by(TrainingRun.created_at.desc()).all()
 
         results = []
@@ -393,11 +426,16 @@ class RunUpdate(BaseModel):
 
 
 @router.patch("/train/{run_id}")
-def update_training_run(run_id: str, update: RunUpdate):
+def update_training_run(
+    run_id: str,
+    update: RunUpdate,
+    principal: WorkspacePrincipal = Depends(require_workspace_editor),
+):
     """Update tags or notes on a training run."""
     session = SessionLocal()
     try:
-        run = session.query(TrainingRun).filter_by(id=run_id).first()
+        run = require_resource(session, principal, TrainingRun, run_id)
+        run_id = run.id
         if not run:
             raise HTTPException(status_code=404, detail="Run not found")
         if update.tags is not None:
@@ -411,11 +449,15 @@ def update_training_run(run_id: str, update: RunUpdate):
 
 
 @router.delete("/train/{run_id}")
-def delete_training_run(run_id: str):
+def delete_training_run(
+    run_id: str,
+    principal: WorkspacePrincipal = Depends(require_workspace_editor),
+):
     """Delete a training run and its associated model."""
     session = SessionLocal()
     try:
-        run = session.query(TrainingRun).filter_by(id=run_id).first()
+        run = require_resource(session, principal, TrainingRun, run_id)
+        run_id = run.id
         if not run:
             raise HTTPException(status_code=404, detail="Training run not found")
         if run.status in ("training", "preparing"):
@@ -432,13 +474,17 @@ def delete_training_run(run_id: str):
 
 
 @router.post("/train/{run_id}/stop")
-def stop_training(run_id: str):
+def stop_training(
+    run_id: str,
+    principal: WorkspacePrincipal = Depends(require_workspace_editor),
+):
     """Request early stopping for a training run."""
     from trainer.metrics_streamer import request_stop
 
     session = SessionLocal()
     try:
-        run = session.query(TrainingRun).filter_by(id=run_id).first()
+        run = require_resource(session, principal, TrainingRun, run_id)
+        run_id = run.id
         if not run:
             raise HTTPException(status_code=404, detail="Training run not found")
         if run.status not in ("training", "preparing"):
@@ -450,10 +496,16 @@ def stop_training(run_id: str):
 
 
 @router.get("/models", response_model=list[ModelOut])
-def list_models():
+def list_models(
+    principal: WorkspacePrincipal = Depends(get_workspace_principal),
+):
     session = SessionLocal()
     try:
-        models = session.query(ModelRegistry).order_by(ModelRegistry.created_at.desc()).all()
+        models = (
+            scope_resources(session.query(ModelRegistry), ModelRegistry, principal)
+            .order_by(ModelRegistry.created_at.desc())
+            .all()
+        )
         return [
             ModelOut(
                 id=str(m.id),
@@ -474,14 +526,23 @@ def list_models():
 
 
 @router.post("/models/{model_id}/export", status_code=202)
-def export_model(model_id: str, req: ExportRequest):
+def export_model(
+    model_id: str,
+    req: ExportRequest,
+    principal: WorkspacePrincipal = Depends(require_workspace_editor),
+):
     session = SessionLocal()
     try:
-        model = session.query(ModelRegistry).filter_by(id=model_id).first()
+        model = require_resource(session, principal, ModelRegistry, model_id)
+        model_id = model.id
         if not model:
             raise HTTPException(status_code=404, detail="Model not found")
 
-        task = export_model_task.delay(model_id, req.format)
+        import uuid
+
+        task_id = str(uuid.uuid4())
+        register_task_owner(task_id, principal)
+        task = export_model_task.apply_async(args=[str(model.id), req.format], task_id=task_id)
         return {"task_id": task.id, "format": req.format}
     finally:
         session.close()

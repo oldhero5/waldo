@@ -13,6 +13,10 @@ else
   PROFILE ?= cpu
 endif
 
+# Keep local chat for make-based installs; use CHAT_PROFILE= for an external provider.
+CHAT_PROFILE ?= local-chat
+CHAT_OPTIONS = $(if $(strip $(CHAT_PROFILE)),--profile $(CHAT_PROFILE),)
+
 .PHONY: setup up up-mac up-linux up-gpu down down-gpu logs dev-app dev-labeler dev-trainer dev-ui build build-ui migrate pull test test-browser download-models
 
 # ── Docker (primary) ─────────────────────────────────────────
@@ -31,17 +35,17 @@ endif
 
 up-linux:
 	@echo "==> Linux/Windows path: PyTorch workers in Docker"
-	docker compose --profile $(PROFILE) pull --quiet
-	docker compose --profile $(PROFILE) up -d
+	docker compose $(CHAT_OPTIONS) --profile $(PROFILE) pull --quiet
+	docker compose $(CHAT_OPTIONS) --profile $(PROFILE) up -d
 	@echo ""
 	@echo "Waldo is running at http://localhost:8000"
 	@echo "MinIO console at http://localhost:9001"
 
 up-mac:
 	@echo "==> macOS path: infra+app in Docker, MLX workers native"
-	docker compose pull --quiet
-	docker compose up -d
-	@docker compose stop waldo-labeler waldo-trainer 2>/dev/null || true
+	docker compose $(CHAT_OPTIONS) pull --quiet
+	docker compose $(CHAT_OPTIONS) up -d
+	@docker compose $(CHAT_OPTIONS) stop waldo-labeler waldo-trainer 2>/dev/null || true
 	@-pkill -f "celery.*lib.tasks" 2>/dev/null; sleep 1
 	@set -a && . ./.env && set +a && nohup uv run celery -A lib.tasks worker --loglevel=info --concurrency=1 --pool=solo -Q celery > /tmp/waldo-labeler.log 2>&1 & disown
 	@set -a && . ./.env && set +a && nohup uv run celery -A lib.tasks worker --loglevel=info --concurrency=1 --pool=solo -Q training > /tmp/waldo-trainer.log 2>&1 & disown
@@ -54,23 +58,23 @@ up-mac:
 # Builds the local Dockerfile(s) and brings the stack up against them.
 # Tag the build :dev (CPU) or :dev-cuda so it doesn't shadow the published image.
 build:
-	docker compose -f docker-compose.yml -f docker-compose.build.yml \
+	docker compose $(CHAT_OPTIONS) -f docker-compose.yml -f docker-compose.build.yml \
 		--profile $(PROFILE) up -d --build
 
 # Pull just the image without starting anything (useful before `make up`
 # in firewalled networks, or to refresh after a release).
 pull:
-	docker compose --profile $(PROFILE) pull
+	docker compose $(CHAT_OPTIONS) --profile $(PROFILE) pull
 
 # Legacy alias — kept so old muscle memory still works.
 up-gpu: up-mac
 
 down:
-	docker compose --profile $(PROFILE) down
+	docker compose $(CHAT_OPTIONS) --profile $(PROFILE) down
 	@-pkill -f "celery.*lib.tasks" 2>/dev/null
 
 logs:
-	docker compose --profile $(PROFILE) logs -f
+	docker compose $(CHAT_OPTIONS) --profile $(PROFILE) logs -f
 
 # ── Local dev ────────────────────────────────────────────────
 
@@ -128,4 +132,4 @@ gpu-check:
 
 # Stream only the GPU check output from the running worker container.
 gpu-logs:
-	docker compose --profile nvidia logs waldo-labeler-nvidia waldo-trainer-nvidia 2>&1 | grep -iE "gpu|cuda|nvidia|entrypoint" | head -40
+	docker compose $(CHAT_OPTIONS) --profile nvidia logs waldo-labeler-nvidia waldo-trainer-nvidia 2>&1 | grep -iE "gpu|cuda|nvidia|entrypoint" | head -40

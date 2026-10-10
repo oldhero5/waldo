@@ -13,7 +13,10 @@ dispatched a Celery task and stashed the task id can be polled here.
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
+from lib import authorization
 from lib.auth import get_current_user
+from lib.authorization import WorkspacePrincipal, get_workspace_principal, require_task_owner
+from lib.db import LabelingJob
 from lib.tasks import app as celery_app
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
@@ -28,6 +31,9 @@ class JobResultResponse(BaseModel):
     result: dict | list | None = None
     # Present only when status == "failed".
     error: str | None = None
+    processing_summary: dict | None = None
+    score_threshold: float | None = None
+    sample_fps: float | None = None
 
 
 def _celery_state_to_status(state: str) -> str:
@@ -44,13 +50,30 @@ def _celery_state_to_status(state: str) -> str:
 
 
 @router.get("/job/{job_id}", response_model=JobResultResponse)
-def get_job_result(job_id: str):
+def get_job_result(
+    job_id: str,
+    principal: WorkspacePrincipal = Depends(get_workspace_principal),
+):
     """Poll a Celery task by id. Returns the task result when SUCCESS, error
     info on FAILURE, otherwise the current state.
 
     `job_id` is the Celery task id returned by endpoints that dispatch async
     work (e.g. `POST /label/preview` without `?wait=true`).
     """
+    require_task_owner(job_id, principal)
+    session = authorization.SessionLocal()
+    try:
+        job = (
+            authorization.scope_resources(session.query(LabelingJob), LabelingJob, principal)
+            .filter_by(celery_task_id=job_id)
+            .first()
+        )
+        metadata = {
+            name: getattr(job, name) if job else None
+            for name in ("processing_summary", "score_threshold", "sample_fps")
+        }
+    finally:
+        session.close()
     async_result = celery_app.AsyncResult(job_id)
     state = async_result.state
     status = _celery_state_to_status(state)
@@ -62,17 +85,19 @@ def get_job_result(job_id: str):
         # response model stays consistent.
         if not isinstance(result, (dict, list)):
             result = {"value": result}
-        return JobResultResponse(job_id=job_id, status="completed", result=result)
+        terminal = result.get("status") if isinstance(result, dict) else None
+        status = terminal if terminal in ("completed", "partial", "failed") else "completed"
+        return JobResultResponse(job_id=job_id, status=status, result=result, **metadata)
 
     if status == "failed":
         # Celery stores the exception object in `.result` when state == FAILURE.
         err = async_result.result
-        return JobResultResponse(job_id=job_id, status="failed", error=str(err) if err else "task failed")
+        return JobResultResponse(job_id=job_id, status="failed", error=str(err) if err else "task failed", **metadata)
 
     # queued or running: no result yet. Don't 404 — PENDING is also returned
     # for unknown task ids (Celery doesn't track id existence in the broker),
     # so we report "queued" and let the caller keep polling.
-    return JobResultResponse(job_id=job_id, status=status, result=None)
+    return JobResultResponse(job_id=job_id, status=status, result=None, **metadata)
 
 
 # Re-exported so callers building 202 responses can reference a single canonical

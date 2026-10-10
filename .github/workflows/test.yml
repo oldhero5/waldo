@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -12,7 +15,7 @@ concurrency:
 jobs:
   test:
     name: Lint + Test + Build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
 
     services:
@@ -46,6 +49,8 @@ jobs:
       POSTGRES_USER: waldo
       POSTGRES_PASSWORD: waldo  # pragma: allowlist secret
       POSTGRES_DB: waldo
+      WALDO_TEST_POSTGRES_URL: postgresql://waldo:waldo@localhost:5432/waldo  # pragma: allowlist secret
+      WALDO_SERVICE_STACK: "1"
       REDIS_URL: redis://localhost:6379/0
       MINIO_ENDPOINT: localhost:9000
       MINIO_ACCESS_KEY: minioadmin
@@ -55,43 +60,42 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # Gitleaks needs the entire PR or push commit range.
 
       # ── System deps (ffmpeg/ffprobe used by lib/frame_extractor + frame_cache) ──
       - name: Install ffmpeg
         run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
 
-      # ── MinIO (started as a step — GH Actions services can't pass `command:`) ──
+      # Archived MinIO release, used only as a disposable CI dependency.
+      # Its official GitHub asset is available while public image pulls are not.
       - name: Start MinIO
         env:
+          MINIO_ROOT_USER: minioadmin
           MINIO_ROOT_PASSWORD: minioadmin  # pragma: allowlist secret
         run: |
-          docker run -d \
-            --name minio \
-            --network host \
-            -e MINIO_ROOT_USER=minioadmin \
-            -e MINIO_ROOT_PASSWORD="$MINIO_ROOT_PASSWORD" \
-            minio/minio server /data
-          # Wait for MinIO to be ready
-          timeout 30 bash -c 'until curl -sf http://localhost:9000/minio/health/live; do sleep 1; done'
-
-      # ── MinIO bucket (compose's minio-init creates this for the runtime stack;
-      #    we mirror it here so tests that store/retrieve via lib.s3 don't 404) ──
-      - name: Create MinIO 'waldo' bucket
-        run: |
-          docker run --rm --network host --entrypoint=/bin/sh minio/mc -c '
-            mc alias set local http://localhost:9000 minioadmin minioadmin &&
-            mc mb --ignore-existing local/waldo
-          '
+          set -euo pipefail
+          minio_bin="$RUNNER_TEMP/minio"
+          curl -fsSL --retry 3 -o "$minio_bin" https://github.com/minio/minio/releases/download/RELEASE.2025-04-22T22-12-26Z/minio.linux-amd64.RELEASE.2025-04-22T22-12-26Z
+          printf '%s  %s\n' 53e2a2cb16c5366ea6fbbc479c19ddb4c6a0948273e752f740fb1fbf27bb817c "$minio_bin" | sha256sum --check
+          chmod +x "$minio_bin"
+          mkdir -p "$RUNNER_TEMP/minio-data"
+          "$minio_bin" server "$RUNNER_TEMP/minio-data" --address 127.0.0.1:9000 >"$RUNNER_TEMP/minio.log" 2>&1 &
+          if ! timeout 30 bash -c 'until curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null; do sleep 1; done'; then
+            cat "$RUNNER_TEMP/minio.log"
+            exit 1
+          fi
 
       # ── Python / uv ──────────────────────────────────────────────────────────
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+      - name: Set up project Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
-          python-version: "3.12"
+          python-version-file: .python-version
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@22695119d769bdb6f7032ad67b9bca0ef8c4a174 # v5.4.0
         with:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
@@ -99,44 +103,185 @@ jobs:
       - name: Sync dependencies (frozen)
         run: uv sync --frozen
 
+      # Compose's minio-init creates this bucket for the runtime stack. The
+      # locked MinIO Python SDK does the same here without a second image.
+      - name: Create MinIO 'waldo' bucket
+        run: |
+          uv run python - <<'PY'
+          import os
+          from minio import Minio
+
+          client = Minio(
+              os.environ["MINIO_ENDPOINT"],
+              access_key=os.environ["MINIO_ACCESS_KEY"],
+              secret_key=os.environ["MINIO_SECRET_KEY"],
+              secure=os.environ["MINIO_SECURE"].lower() == "true",
+          )
+          if not client.bucket_exists("waldo"):
+              client.make_bucket("waldo")
+          PY
+
       # ── Ruff lint + format ───────────────────────────────────────────────────
       - name: Ruff — lint
+        id: ruff_lint
         run: uv run ruff check .
 
       - name: Ruff — format check
+        id: ruff_format
         run: uv run ruff format --check .
 
       # ── Database migrations ──────────────────────────────────────────────────
       - name: Run Alembic migrations
+        id: migrations
         run: uv run alembic upgrade head
 
       # ── Pytest ──────────────────────────────────────────────────────────────
       - name: Run pytest
-        run: uv run pytest -v --tb=short
+        id: pytest
+        run: uv run pytest -v --tb=short -ra --junitxml="$RUNNER_TEMP/waldo-pytest.xml"
 
       # ── Frontend ─────────────────────────────────────────────────────────────
       - name: Set up Node.js 20
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "20"
           cache: npm
           cache-dependency-path: ui/package-lock.json
 
       - name: Install UI dependencies
+        id: ui_deps
         working-directory: ui
         run: npm ci --legacy-peer-deps
 
       - name: Build UI (type-check + bundle)
+        id: ui_build
         working-directory: ui
         run: npm run build
 
-      - name: TypeScript strict check
+      - name: Lint UI
+        id: ui_lint
         working-directory: ui
-        run: npx tsc --noEmit
+        run: npm run lint
 
       # ── Secret scanning ──────────────────────────────────────────────────────
       - name: Gitleaks — secret scan
+        id: secret_scan
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
         run: |
-          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz \
-            | tar -xz -C /usr/local/bin gitleaks
-          gitleaks detect --source . --no-banner --redact
+          set -euo pipefail
+          archive="$RUNNER_TEMP/gitleaks_8.21.2_linux_x64.tar.gz"
+          curl -fsSL --retry 3 -o "$archive" https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz
+          printf '%s  %s\n' 5bc41815076e6ed6ef8fbecc9d9b75bcae31f39029ceb55da08086315316e3ba "$archive" | sha256sum --check
+          tar -xz -C "$RUNNER_TEMP" -f "$archive" gitleaks
+
+          case "$GITHUB_EVENT_NAME" in
+            pull_request) base="$PR_BASE_SHA" ;;
+            push) base="$PUSH_BEFORE_SHA" ;;
+            *) echo "Unsupported secret-scan event: $GITHUB_EVENT_NAME" >&2; exit 1 ;;
+          esac
+          if [[ "$GITHUB_EVENT_NAME" == push && "$base" == 0000000000000000000000000000000000000000 ]]; then
+            # A newly created branch has no previous commit to compare.
+            log_opts="--all"
+          else
+            [[ "$base" =~ ^[0-9a-f]{40}$ ]] || { echo "Invalid scan base SHA" >&2; exit 1; }
+            git cat-file -e "$base^{commit}"
+            log_opts="$base..HEAD"
+            [[ "$(git rev-list --count "$log_opts")" -gt 0 ]] || { echo "Empty secret-scan range" >&2; exit 1; }
+          fi
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]] || { echo "Checkout SHA mismatch" >&2; exit 1; }
+          "$RUNNER_TEMP/gitleaks" git --log-opts="$log_opts" --no-banner --redact .
+
+      - name: Upload backend test report
+        id: backend_artifact
+        if: ${{ !cancelled() && steps.pytest.outcome != 'skipped' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: backend-test-report
+          path: ${{ runner.temp }}/waldo-pytest.xml
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Summarize backend checks
+        if: ${{ !cancelled() }}
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          RUFF_LINT_OUTCOME: ${{ steps.ruff_lint.outcome }}
+          RUFF_FORMAT_OUTCOME: ${{ steps.ruff_format.outcome }}
+          MIGRATIONS_OUTCOME: ${{ steps.migrations.outcome }}
+          PYTEST_OUTCOME: ${{ steps.pytest.outcome }}
+          UI_DEPS_OUTCOME: ${{ steps.ui_deps.outcome }}
+          UI_BUILD_OUTCOME: ${{ steps.ui_build.outcome }}
+          UI_LINT_OUTCOME: ${{ steps.ui_lint.outcome }}
+          SECRET_SCAN_OUTCOME: ${{ steps.secret_scan.outcome }}
+          REPORT_ARTIFACT_URL: ${{ steps.backend_artifact.outputs.artifact-url }}
+        run: |
+          set -o pipefail
+          python3 .github/scripts/test-summary.py --suite backend --report "$RUNNER_TEMP/waldo-pytest.xml" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  ui-browser:
+    name: UI browser smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install UI dependencies
+        id: ui_deps
+        working-directory: ui
+        run: npm ci --legacy-peer-deps
+
+      - name: Build UI
+        id: ui_build
+        working-directory: ui
+        run: npm run build
+
+      - name: Install Chromium
+        id: chromium
+        working-directory: ui
+        run: npx playwright install --with-deps chromium
+
+      - name: Run UI browser smoke tests
+        id: browser
+        env:
+          WALDO_SCREENSHOT_DIR: ${{ github.workspace }}/ui/test-results/visual-evidence
+        working-directory: ui
+        run: npx playwright test -c playwright.smoke.config.ts
+
+      - name: Upload browser test report
+        id: browser_artifact
+        if: ${{ !cancelled() && steps.browser.outcome != 'skipped' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: browser-test-report
+          path: |
+            ui/test-results/
+            ui/playwright-report/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Summarize browser checks
+        if: ${{ !cancelled() }}
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          UI_DEPS_OUTCOME: ${{ steps.ui_deps.outcome }}
+          UI_BUILD_OUTCOME: ${{ steps.ui_build.outcome }}
+          CHROMIUM_OUTCOME: ${{ steps.chromium.outcome }}
+          BROWSER_OUTCOME: ${{ steps.browser.outcome }}
+          REPORT_ARTIFACT_URL: ${{ steps.browser_artifact.outputs.artifact-url }}
+        run: |
+          set -o pipefail
+          python3 .github/scripts/test-summary.py --suite browser --report ui/test-results/junit.xml | tee -a "$GITHUB_STEP_SUMMARY"

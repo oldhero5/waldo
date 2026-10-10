@@ -15,77 +15,74 @@ where a labeling endpoint accidentally re-introduces a blocking `.get()`.
 import asyncio
 import time
 import uuid
-from typing import Any
 from unittest.mock import patch
 
 import httpx
 import pytest
 
 
-def _fake_label_video_delay(*_args: Any, **_kwargs: Any):
-    """Stand-in for `lib.tasks.label_video.delay` — returns an object with the
-    `.id` attribute the route reads, without actually dispatching to Celery.
-    """
-
-    class _FakeAsyncResult:
-        id = "00000000-0000-0000-0000-000000000000"
-
-    return _FakeAsyncResult()
-
-
 @pytest.fixture
-def fake_video_id():
-    return str(uuid.uuid4())
+def patched_label(tmp_path, monkeypatch):
+    """Exercise real JWT, membership and ownership with an isolated SQLite DB."""
+    from types import SimpleNamespace
 
+    from fastapi import FastAPI
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
 
-@pytest.fixture
-def patched_label(fake_video_id):
-    """Patch the DB lookup, the LabelingJob constructor, and Celery dispatch
-    so the route doesn't need real infra. We assign a uuid + default status
-    inside `session.add()` to mimic what SQLAlchemy + a real Postgres do for
-    inserted rows (defaults + id auto-generation).
-    """
-    fake_video = type("V", (), {"id": fake_video_id})()
+    from app.api import job, label
+    from lib import auth, authorization
+    from lib.db import Base, LabelingJob, Project, User, Video, Workspace, WorkspaceMember
 
-    class _Q:
-        def filter_by(self, **_kw):
-            return self
+    engine = create_engine(f"sqlite:///{tmp_path / 'concurrency.db'}", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    for module in (auth, authorization, label):
+        monkeypatch.setattr(module, "SessionLocal", factory)
+    with factory() as session:
+        user = User(email="concurrency@example.invalid", password_hash="x", display_name="Concurrency")
+        workspace = Workspace(name="Concurrency", slug=uuid.uuid4().hex)
+        session.add_all([user, workspace])
+        session.flush()
+        project = Project(name="Owned", workspace_id=workspace.id)
+        session.add_all([project, WorkspaceMember(user_id=user.id, workspace_id=workspace.id, role="admin")])
+        session.flush()
+        video = Video(project_id=project.id, filename="owned.mp4", minio_key="videos/owned.mp4")
+        session.add(video)
+        session.flush()
+        session.add(LabelingJob(project_id=project.id, video_id=video.id, celery_task_id="abc"))
+        session.commit()
+        headers = {
+            "Authorization": f"Bearer {auth.create_access_token(str(user.id))}",
+            "X-Workspace-ID": str(workspace.id),
+        }
+        video_id = str(video.id)
 
-        def first(self):
-            return fake_video
+    def delayed_publish(*args, **kwargs):
+        time.sleep(0.04)
+        return SimpleNamespace(id=str(uuid.uuid4()))
 
-    class _S:
-        def query(self, _model):
-            return _Q()
+    monkeypatch.setattr(label.label_video, "delay", delayed_publish)
+    app = FastAPI()
+    app.include_router(label.router, prefix="/api/v1")
+    app.include_router(job.router, prefix="/api/v1")
 
-        def add(self, obj):
-            # Mimic Postgres-side defaults so the route's `LabelResponse(...)`
-            # doesn't blow up on Pydantic validation.
-            if getattr(obj, "id", None) is None:
-                obj.id = uuid.uuid4()
-            if getattr(obj, "status", None) is None:
-                obj.status = "pending"
+    @app.get("/health")
+    async def health():
+        return {"status": "ok"}
 
-        def commit(self):
-            pass
-
-        def close(self):
-            pass
-
-    with (
-        patch("app.api.label.SessionLocal", return_value=_S()),
-        patch("app.api.label.label_video.delay", side_effect=_fake_label_video_delay),
-    ):
-        yield
+    try:
+        yield app, headers, video_id
+    finally:
+        engine.dispose()
 
 
 @pytest.mark.asyncio
-async def test_job_endpoint_maps_celery_states():
+async def test_job_endpoint_maps_celery_states(patched_label):
     """`GET /api/v1/job/{job_id}` translates Celery states into the
     queued/running/completed/failed enum the polling helper expects.
     """
-    from app.main import app
-
+    app, headers, video_id = patched_label
     transport = httpx.ASGITransport(app=app)
 
     class _AR:
@@ -93,7 +90,7 @@ async def test_job_endpoint_maps_celery_states():
             self.state = state
             self.result = result
 
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+    async with httpx.AsyncClient(transport=transport, base_url="http://test", headers=headers) as client:
         # PENDING → queued
         with patch("app.api.job.celery_app.AsyncResult", return_value=_AR("PENDING")):
             r = await client.get("/api/v1/job/abc")
@@ -121,12 +118,11 @@ async def test_job_endpoint_maps_celery_states():
 
 
 @pytest.mark.asyncio
-async def test_label_storm_does_not_starve_health(patched_label, fake_video_id):
+async def test_label_storm_does_not_starve_health(patched_label):
     """50 simultaneous /label posts must not block /health beyond 200ms."""
-    from app.main import app
-
+    app, headers, video_id = patched_label
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+    async with httpx.AsyncClient(transport=transport, base_url="http://test", headers=headers) as client:
         # Warm the app once so first-hit JIT/import costs don't pollute timings.
         warm = await client.get("/health")
         assert warm.status_code == 200
@@ -135,7 +131,7 @@ async def test_label_storm_does_not_starve_health(patched_label, fake_video_id):
             r = await client.post(
                 "/api/v1/label",
                 json={
-                    "video_id": fake_video_id,
+                    "video_id": video_id,
                     "text_prompt": "person",
                     "task_type": "segment",
                 },

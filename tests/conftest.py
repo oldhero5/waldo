@@ -1,3 +1,5 @@
+import os
+import sys
 import uuid
 
 import pytest
@@ -14,44 +16,63 @@ def test_clip():
     return clip
 
 
-@pytest.fixture(autouse=True)
-def _bypass_auth_in_tests(request):
-    """Default: all API tests see a mock authenticated user so routes don't 401.
+@pytest.fixture
+def register_test_client():
+    """Authenticate through the public registration API, without dependency overrides."""
 
-    Tests that explicitly exercise the auth layer (e.g. `tests/test_auth.py`)
-    can opt out via `@pytest.mark.no_auth_bypass`.
+    def register(client):
+        identity = uuid.uuid4().hex
+        response = client.post(
+            "/api/v1/auth/register",
+            json={
+                "email": f"pytest-{identity}@example.invalid",
+                "password": uuid.uuid4().hex,
+                "display_name": "API test",
+                "workspace_name": f"pytest-{identity}",
+            },
+        )
+        assert response.status_code == 201, response.text
+        client.headers["Authorization"] = f"Bearer {response.json()['access_token']}"
+        me = client.get("/api/v1/auth/me")
+        assert me.status_code == 200, me.text
+        client.headers["X-Workspace-ID"] = me.json()["workspace_id"]
+        assert me.json()["is_platform_admin"] is False
+        return client
+
+    return register
+
+
+@pytest.fixture
+def service_client(monkeypatch, register_test_client):
+    """Opt in with WALDO_TEST_POSTGRES_URL pointing at a migrated disposable DB.
+
+    Each case commits a unique test account/workspace, so explicitly enabled
+    external workers can see its jobs. The disposable database's owner handles
+    teardown; fixtures never touch the application's default database.
     """
-    if request.node.get_closest_marker("no_auth_bypass"):
-        yield
-        return
+    url = os.environ.get("WALDO_TEST_POSTGRES_URL")
+    if not url:
+        pytest.skip("Set WALDO_TEST_POSTGRES_URL to a migrated disposable service-test database")
+    from fastapi.testclient import TestClient
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
 
+    from app.main import app
+
+    engine = create_engine(url)
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    for name, module in list(sys.modules.items()):
+        if name in ("lib.db", "lib.auth", "lib.authorization", "lib.tasks") or name.startswith("app.api."):
+            if hasattr(module, "SessionLocal"):
+                monkeypatch.setattr(module, "SessionLocal", factory)
+    client = TestClient(app)
     try:
-        from app.main import app
-        from lib.auth import get_current_user, require_admin
-        from lib.db import User
-    except Exception:
-        # App can't import — let the test fail on its own terms.
-        yield
-        return
-
-    fake_user = User(
-        id=uuid.uuid4(),
-        email="test@waldo.local",
-        password_hash="",
-        display_name="Test User",
-    )
-
-    async def _fake_user():
-        return fake_user
-
-    app.dependency_overrides[get_current_user] = _fake_user
-    app.dependency_overrides[require_admin] = _fake_user
-    try:
-        yield
+        yield register_test_client(client)
     finally:
-        app.dependency_overrides.pop(get_current_user, None)
-        app.dependency_overrides.pop(require_admin, None)
+        client.close()
+        engine.dispose()
 
 
 def pytest_configure(config):
-    config.addinivalue_line("markers", "no_auth_bypass: don't override auth dependencies for this test")
+    # Retained for older explicit auth tests; there is no global bypass now.
+    config.addinivalue_line("markers", "no_auth_bypass: authentication is exercised without global overrides")

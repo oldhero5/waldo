@@ -15,8 +15,8 @@ function ModelCardImpl({ model, onActivate, isBest }: { model: ModelOut; onActiv
     try {
       await exportModel(model.id, exportFmt);
       setExportMsg(`Export to ${exportFmt} started`);
-    } catch (e: any) {
-      setExportMsg(e.message);
+    } catch (e: unknown) {
+      setExportMsg((e instanceof Error ? e.message : "Request failed"));
     } finally {
       setExporting(false);
     }

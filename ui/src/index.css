@@ -1,29 +1,31 @@
 @import "tailwindcss";
 
-/* ── Design system: Pretext-inspired warm editorial design ── */
+/* Neutral workbench: evidence and status carry the color. */
 
 :root {
-  /* ── Dark slate + warm gold, with green accents ── */
-  --bg-page: #12110f;
-  --bg-surface: #1a1816;
-  --bg-surface-hover: #221f1c;
-  --bg-elevated: #262320;
-  --bg-inset: #0f0e0c;
+  /* Charcoal surfaces and readable neutral text */
+  --bg-page: #181818;
+  --bg-surface: #222222;
+  --bg-surface-hover: #292929;
+  --bg-elevated: #2c2c2c;
+  --bg-inset: #141414;
 
-  --text-primary: #ede8e2;
-  --text-secondary: #9e8e7e;
-  --text-muted: #6a5f55;
+  --text-primary: #f4f4f4;
+  --text-secondary: #bcbcbc;
+  --text-muted: #a3a3a3;
 
-  --border-default: rgba(149, 95, 59, 0.2);
-  --border-subtle: rgba(149, 95, 59, 0.1);
+  --border-default: #484848;
+  --border-subtle: #383838;
 
-  --accent: #c4a882;
-  --accent-hover: #d4b892;
-  --accent-soft: rgba(149, 95, 59, 0.15);
-  --accent-warm: #955f3b;
+  --accent: #ededed;
+  --accent-hover: #ffffff;
+  --accent-soft: rgba(255, 255, 255, 0.08);
 
-  /* Pretext typography */
-  --font-serif: Georgia, 'Times New Roman', serif;
+  --text-on-accent: #181818;
+
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  /* Compatibility alias for existing page headings. */
+  --font-serif: var(--font-sans);
   --font-mono: 'SF Mono', ui-monospace, 'Fira Code', monospace;
   --transition: 160ms ease;
 
@@ -34,7 +36,7 @@
   --warning: #d4a44c;
   --warning-soft: rgba(212, 164, 76, 0.1);
 
-  /* Warm shadows with dark base */
+  /* Shadows are reserved for floating surfaces. */
   --shadow-sm: 0 2px 8px rgb(0 0 0 / 0.3);
   --shadow-md: 0 8px 24px rgb(0 0 0 / 0.4);
   --shadow-lg: 0 16px 40px rgb(0 0 0 / 0.5);
@@ -56,7 +58,7 @@ body {
   transition: background-color 0.2s ease, color 0.2s ease;
 }
 
-/* ── Pretext editorial typography ── */
+/* ── Typography ── */
 
 h1, h2 {
   font-family: var(--font-serif);
@@ -64,10 +66,10 @@ h1, h2 {
 }
 
 .eyebrow {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0;
   color: var(--text-muted);
 }
 
@@ -97,7 +99,7 @@ h1, h2 {
   background: var(--bg-inset);
   padding: 1px 5px;
   border-radius: 4px;
-  color: var(--accent-warm, #955f3b);
+  color: var(--text-secondary);
   white-space: nowrap;
 }
 .markdown-body pre {
@@ -118,7 +120,7 @@ h1, h2 {
 .markdown-body em { font-style: italic; }
 .markdown-body a { color: var(--accent); text-decoration: underline; }
 .markdown-body blockquote {
-  border-left: 3px solid var(--accent-warm, #955f3b);
+  border-left: 3px solid var(--text-secondary);
   padding-left: 12px;
   margin: 0.6em 0;
   color: var(--text-secondary);
@@ -149,28 +151,26 @@ h1, h2 {
 
 /* ── Utility classes for the design system ── */
 
-/* Card system — dark slate with gold accents */
+/* Quiet structural surfaces */
 .surface {
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
-  border-radius: 20px;
-  box-shadow: var(--shadow-sm);
-  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+  border-radius: var(--radius-md);
+  transition: border-color var(--transition);
 }
 
 .surface:hover {
   border-color: var(--border-default);
-  box-shadow: var(--shadow-md);
 }
 
 .surface-interactive:hover {
-  transform: translateY(-1px);
+  background: var(--bg-surface-hover);
 }
 
 .elevated {
   background: var(--bg-elevated);
   border: 1px solid var(--border-default);
-  border-radius: 20px;
+  border-radius: var(--radius-md);
   box-shadow: var(--shadow-md);
 }
 
@@ -268,7 +268,7 @@ input[type="checkbox"] {
 
 .hover\:bg-gray-50:hover, .hover\:bg-gray-100:hover { background-color: var(--bg-surface-hover) !important; }
 
-.bg-blue-600 { background-color: var(--accent) !important; }
+.bg-blue-600 { background-color: var(--accent) !important; color: var(--text-on-accent) !important; }
 .hover\:bg-blue-700:hover { background-color: var(--accent-hover) !important; }
 .text-blue-600, .text-blue-700 { color: var(--accent) !important; }
 .bg-blue-50 { background-color: var(--accent-soft) !important; }
@@ -293,4 +293,17 @@ select, textarea {
 input::placeholder, textarea::placeholder { color: var(--text-muted) !important; }
 
 /* Code */
-pre { background-color: #0a0a0b !important; color: var(--success) !important; }
+pre { background-color: var(--bg-inset) !important; color: var(--text-secondary) !important; }
+
+/* Explicit primary action colors, including labels and icons. */
+.bg-accent { background-color: var(--accent); }
+.text-on-accent { color: var(--text-on-accent); }
+.hover\:bg-accent-hover:hover { background-color: var(--accent-hover); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -5,6 +5,8 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AnnotationOut } from "../api";
+import { useRenewableFrame } from "../hooks/useRenewableFrame";
+import { useAuth } from "../contexts/authState";
 import { segmentPoints, createAnnotation } from "../api";
 import { X, ZoomIn, ZoomOut, RotateCcw, Check, XCircle, Plus, Loader2, MousePointer, Pencil, GripVertical } from "lucide-react";
 
@@ -60,21 +62,44 @@ export default function AnnotationCanvas({
   const [newClassName, setNewClassName] = useState("");
   const [saving, setSaving] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const submittedPointsRef = useRef<ClickPoint[] | null>(null);
 
-  // Load image
+  const { user, token } = useAuth();
+  const { url: mediaUrl, onLoad: mediaOnLoad, onError: mediaOnError, loading: mediaLoading, error: mediaError, retry: mediaRetry } = useRenewableFrame(frameId, imageUrl);
+
+  // A capability refresh does not reset unsaved annotation work.
   useEffect(() => {
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-    img.onload = () => { imgRef.current = img; setImgLoaded(true); };
-    img.onerror = () => { console.error("Failed to load image:", imageUrl); setImgLoaded(false); };
-    img.src = imageUrl;
-    setImgLoaded(false);
     setZoom(1);
     setPan({ x: 0, y: 0 });
     setSelectedId(null);
+    setHoveredId(null);
     setClickPoints([]);
     setPreviewPolygon(null);
-  }, [imageUrl]);
+  }, [frameId, token, user?.id, user?.workspace_id]);
+
+  useEffect(() => {
+    let active = true;
+    imgRef.current = null;
+    const canvas = canvasRef.current;
+    if (canvas) canvas.getContext("2d")?.clearRect(0, 0, canvas.width, canvas.height);
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      if (!active) return;
+      imgRef.current = img;
+      setImgLoaded(true);
+      mediaOnLoad();
+    };
+    img.onerror = () => {
+      if (!active) return;
+      imgRef.current = null;
+      setImgLoaded(false);
+      mediaOnError();
+    };
+    img.src = mediaUrl;
+    setImgLoaded(false);
+    return () => { active = false; img.onload = null; img.onerror = null; };
+  }, [mediaUrl, mediaOnLoad, mediaOnError]);
 
   // Memoize per-annotation polygon geometry (normalized coords, not screen space).
   // Keyed on annotation id + serialized polygon — recomputes only when annotations change,
@@ -231,14 +256,15 @@ export default function AnnotationCanvas({
 
   useEffect(() => { draw(); }, [draw]);
 
-  // Call SAM3 when points change
+  // Resume pending point work after image loading, without resubmitting a preview.
   useEffect(() => {
-    if (clickPoints.length === 0 || mode !== "annotate") return;
+    if (clickPoints.length === 0 || mode !== "annotate" || !imgLoaded || submittedPointsRef.current === clickPoints) return;
     if (debounceRef.current) clearTimeout(debounceRef.current);
 
     debounceRef.current = setTimeout(async () => {
       const img = imgRef.current;
       if (!img) return;
+      submittedPointsRef.current = clickPoints;
       setSegmenting(true);
       try {
         // Convert normalized points to pixel coords for SAM3
@@ -258,7 +284,7 @@ export default function AnnotationCanvas({
     }, 400);
 
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-  }, [clickPoints, frameId, mode]);
+  }, [clickPoints, frameId, mode, imgLoaded]);
 
   // Hit test for review mode
   const hitTest = useCallback((clientX: number, clientY: number): AnnotationOut | null => {
@@ -455,7 +481,7 @@ export default function AnnotationCanvas({
           <button
             onClick={() => { setMode("annotate"); setSelectedId(null); }}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm ${
-              mode === "annotate" ? "bg-blue-600 text-white" : "text-gray-400 hover:text-white"
+              mode === "annotate" ? "bg-accent text-on-accent" : "text-gray-400 hover:text-white"
             }`}
           >
             <Pencil size={14} /> Annotate
@@ -463,9 +489,9 @@ export default function AnnotationCanvas({
 
           <div className="w-px h-5 bg-gray-700 mx-2" />
 
-          <button onClick={() => setZoom((z) => Math.min(z * 1.3, 20))} className="p-1.5 rounded hover:bg-gray-800 text-gray-400"><ZoomIn size={16} /></button>
-          <button onClick={() => setZoom((z) => Math.max(z / 1.3, 0.5))} className="p-1.5 rounded hover:bg-gray-800 text-gray-400"><ZoomOut size={16} /></button>
-          <button onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }} className="p-1.5 rounded hover:bg-gray-800 text-gray-400"><RotateCcw size={16} /></button>
+          <button aria-label="Zoom in" onClick={() => setZoom((z) => Math.min(z * 1.3, 20))} className="p-1.5 rounded hover:bg-gray-800 text-gray-400"><ZoomIn size={16} /></button>
+          <button aria-label="Zoom out" onClick={() => setZoom((z) => Math.max(z / 1.3, 0.5))} className="p-1.5 rounded hover:bg-gray-800 text-gray-400"><ZoomOut size={16} /></button>
+          <button aria-label="Reset zoom and pan" onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }} className="p-1.5 rounded hover:bg-gray-800 text-gray-400"><RotateCcw size={16} /></button>
           <span className="text-xs text-gray-500 ml-1 font-mono">{(zoom * 100).toFixed(0)}%</span>
 
           <div className="w-px h-5 bg-gray-700 mx-2" />
@@ -476,6 +502,7 @@ export default function AnnotationCanvas({
                 onClick={() => { if (activeAnn?.polygon) { /* zoom toggle handled by Z key */ const e = new KeyboardEvent('keydown', {key: 'z'}); window.dispatchEvent(e); } }}
                 className="flex items-center gap-1 px-2 py-1 rounded text-xs text-gray-300 hover:bg-gray-800"
                 title="Zoom to annotation (Z)"
+                aria-label="Zoom to selected annotation"
               >
                 <ZoomIn size={13} /> <kbd className="text-[9px] opacity-50">Z</kbd>
               </button>
@@ -483,6 +510,8 @@ export default function AnnotationCanvas({
                 onClick={() => setShowBoxes((prev) => !prev)}
                 className={`flex items-center gap-1 px-2 py-1 rounded text-xs ${showBoxes ? "text-gray-300 hover:bg-gray-800" : "text-amber-400 hover:bg-gray-800"}`}
                 title="Toggle boxes/labels (B)"
+                aria-label="Show annotation boxes and labels"
+                aria-pressed={showBoxes}
               >
                 {showBoxes ? "Boxes" : "Off"} <kbd className="text-[9px] opacity-50">B</kbd>
               </button>
@@ -499,7 +528,7 @@ export default function AnnotationCanvas({
         <div className="flex items-center gap-2 text-xs text-gray-500">
           {mode === "review" && <span><kbd className="px-1 py-0.5 bg-gray-800 rounded">A</kbd> accept <kbd className="px-1 py-0.5 bg-gray-800 rounded">R</kbd> reject <kbd className="px-1 py-0.5 bg-gray-800 rounded">Z</kbd> zoom <kbd className="px-1 py-0.5 bg-gray-800 rounded">B</kbd> boxes</span>}
           {mode === "annotate" && <span>Left-click = positive, Right-click = negative, <kbd className="px-1 py-0.5 bg-gray-800 rounded">Enter</kbd> save</span>}
-          <button onClick={onClose} className="p-1.5 rounded hover:bg-gray-800 text-gray-400 ml-2"><X size={18} /></button>
+          <button aria-label="Close annotation editor" onClick={onClose} className="p-1.5 rounded hover:bg-gray-800 text-gray-400 ml-2"><X size={18} /></button>
         </div>
       </div>
 
@@ -516,6 +545,12 @@ export default function AnnotationCanvas({
           onWheel={handleWheel}
           onContextMenu={handleContextMenu}
         />
+
+        {mediaLoading && <div role="status" className="absolute top-4 left-4 text-white">Reloading image…</div>}
+        {mediaError && <div role="alert" className="absolute top-4 left-4 bg-gray-900 text-white p-3 rounded-lg">
+          {mediaError} {" "}
+          <button type="button" aria-label="Retry image" onClick={mediaRetry} className="underline">Retry</button>
+        </div>}
 
         {/* Review mode: always-visible action panel */}
         {mode === "review" && activeAnn && (
@@ -578,7 +613,7 @@ export default function AnnotationCanvas({
             <button
               onClick={handleSave}
               disabled={!previewPolygon || !effectiveClass || saving}
-              className="flex items-center gap-1.5 px-4 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-40"
+              className="flex items-center gap-1.5 px-4 py-1.5 bg-accent text-on-accent rounded-lg text-sm font-medium hover:bg-accent-hover disabled:opacity-40"
             >
               {saving ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
               Save Annotation
@@ -587,8 +622,8 @@ export default function AnnotationCanvas({
         )}
 
         {/* Nav arrows */}
-        {onPrev && <button onClick={onPrev} className="absolute left-4 top-1/2 -translate-y-1/2 w-10 h-10 bg-gray-900/80 rounded-full flex items-center justify-center text-gray-400 hover:text-white">&larr;</button>}
-        {onNext && <button onClick={onNext} className="absolute right-4 top-1/2 -translate-y-1/2 w-10 h-10 bg-gray-900/80 rounded-full flex items-center justify-center text-gray-400 hover:text-white">&rarr;</button>}
+        {onPrev && <button aria-label="Previous frame" onClick={onPrev} className="absolute left-4 top-1/2 -translate-y-1/2 w-10 h-10 bg-gray-900/80 rounded-full flex items-center justify-center text-gray-400 hover:text-white">&larr;</button>}
+        {onNext && <button aria-label="Next frame" onClick={onNext} className="absolute right-4 top-1/2 -translate-y-1/2 w-10 h-10 bg-gray-900/80 rounded-full flex items-center justify-center text-gray-400 hover:text-white">&rarr;</button>}
 
         {/* Draggable annotation sidebar */}
         <div
@@ -626,6 +661,8 @@ export default function AnnotationCanvas({
               <span className="text-[10px] text-gray-500 uppercase tracking-wide">{annotations.length} annotations</span>
             </div>
             <button
+              aria-label={sidebarCollapsed ? "Expand annotation list" : "Collapse annotation list"}
+              aria-expanded={!sidebarCollapsed}
               onClick={(e) => { e.stopPropagation(); setSidebarCollapsed(!sidebarCollapsed); }}
               className="text-gray-500 hover:text-gray-300 text-xs px-1"
             >
@@ -638,6 +675,7 @@ export default function AnnotationCanvas({
             <div className="p-1.5 overflow-y-auto" style={{ maxHeight: "calc(100vh - 200px)" }}>
               {annotations.map((a) => (
                 <button key={a.id}
+                  aria-pressed={a.id === selectedId}
                   onClick={(e) => { e.stopPropagation(); setMode("review"); setSelectedId(a.id === selectedId ? null : a.id); }}
                   onMouseEnter={() => setHoveredId(a.id)}
                   onMouseLeave={() => setHoveredId(null)}

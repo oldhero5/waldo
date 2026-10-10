@@ -1,4 +1,4 @@
-"""LangGraph ReAct agent — Ollama LLM + Waldo tools, with auth-scoped context.
+"""LangGraph ReAct agent — configured text provider + Waldo tools, with auth-scoped context.
 
 The graph is a textbook two-node ReAct loop:
 
@@ -26,14 +26,13 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
-from langchain_ollama import ChatOllama
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 from typing_extensions import TypedDict
 
-from lib.agent.tools import AgentContext, get_tools, set_context
-from lib.config import settings
+from lib.agent.providers import ProviderConfig, create_chat_model, get_config
+from lib.agent.tools import AgentContext, _ctx_or_raise, get_tools, set_context
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +56,9 @@ Operating rules:
   4. Keep prose short. Bulleted lists for comparisons, fenced code only when
      showing real commands.
   5. When asked for hardware-aware advice, call get_system_info first so you
-     know whether the user is on CUDA / MPS / CPU.
+     can report its scope accurately. API-process CPU/GPU availability does
+     not establish worker or text-provider hardware. If worker hardware is
+     not reported, say it is unknown; do not infer that MLX/MPS is unavailable.
 
 Today: respond in Markdown. The UI renders it. Avoid emoji unless the user uses one first."""
 
@@ -68,26 +69,19 @@ class AgentState(TypedDict):
     messages: Annotated[list[BaseMessage], add_messages]
 
 
-def _build_llm(model: str | None, *, allow_actions: bool) -> ChatOllama:
-    """Return a tool-bound ChatOllama instance."""
-    tools = get_tools(allow_actions=allow_actions)
-    llm = ChatOllama(
-        model=model or settings.agent_model,
-        base_url=settings.ollama_url,
-        temperature=settings.agent_temperature,
-        # Enough for a multi-tool plan + final answer; bumped from default 256.
-        num_predict=1024,
-    )
-    return llm.bind_tools(tools)
+def _build_llm(model: str | None, *, allow_actions: bool, provider_config: ProviderConfig | None = None):
+    context = _ctx_or_raise()
+    llm = create_chat_model(workspace_id=context.workspace_id, model=model, config=provider_config)
+    return llm.bind_tools(get_tools(allow_actions=allow_actions))
 
 
-def build_graph(*, model: str | None = None, allow_actions: bool = True):
+def build_graph(*, model: str | None = None, allow_actions: bool = True, provider_config: ProviderConfig | None = None):
     """Compile the LangGraph state machine.
 
     The graph is rebuilt per-call (cheap) so a model override or read-only
     flag from the request takes effect immediately.
     """
-    llm = _build_llm(model, allow_actions=allow_actions)
+    llm = _build_llm(model, allow_actions=allow_actions, provider_config=provider_config)
     tool_node = ToolNode(get_tools(allow_actions=allow_actions))
 
     def should_continue(state: AgentState) -> str:
@@ -97,10 +91,10 @@ def build_graph(*, model: str | None = None, allow_actions: bool = True):
         return END
 
     def call_model(state: AgentState) -> dict:
-        messages = state["messages"]
-        # Front-load the system prompt if the caller didn't.
-        if not messages or not isinstance(messages[0], SystemMessage):
-            messages = [SystemMessage(content=SYSTEM_PROMPT)] + messages
+        # Client history can never replace the server-owned policy.
+        messages = [SystemMessage(content=SYSTEM_PROMPT)] + [
+            message for message in state["messages"] if not isinstance(message, SystemMessage)
+        ]
         response = llm.invoke(messages)
         return {"messages": [response]}
 
@@ -120,15 +114,12 @@ def _coerce_messages(raw: list[dict]) -> list[BaseMessage]:
     for m in raw:
         role = m.get("role")
         content = m.get("content", "")
-        if role == "system":
-            out.append(SystemMessage(content=content))
-        elif role == "user":
+        if role == "user":
             out.append(HumanMessage(content=content))
         elif role == "assistant":
             out.append(AIMessage(content=content))
-        elif role == "tool":
-            # Allow rehydrating a prior tool turn (rare but possible).
-            out.append(ToolMessage(content=content, tool_call_id=m.get("tool_call_id", "")))
+        else:
+            raise ValueError("Chat history role must be user or assistant")
     return out
 
 
@@ -138,11 +129,18 @@ def run_agent(
     *,
     context: AgentContext,
     model: str | None = None,
+    provider_config: ProviderConfig | None = None,
 ) -> dict:
     """Run the agent synchronously. Returns ``{"content": str, "tool_calls": [...]}``."""
     set_context(context)
-    graph = build_graph(model=model, allow_actions=context.allow_actions)
-    result = graph.invoke({"messages": _coerce_messages(messages)})
+    _ctx_or_raise()
+    inputs = {"messages": _coerce_messages(messages)}
+    graph = build_graph(
+        model=model,
+        allow_actions=context.actions_allowed,
+        provider_config=provider_config or get_config(context.workspace_id),
+    )
+    result = graph.invoke(inputs)
 
     final_text = ""
     tool_calls: list[dict] = []
@@ -163,6 +161,7 @@ async def stream_agent(
     *,
     context: AgentContext,
     model: str | None = None,
+    provider_config: ProviderConfig | None = None,
 ) -> AsyncIterator[dict]:
     """Stream agent events as a sequence of small dicts.
 
@@ -175,8 +174,13 @@ async def stream_agent(
       {"type": "error",      "message": "..."}
     """
     set_context(context)
-    graph = build_graph(model=model, allow_actions=context.allow_actions)
+    _ctx_or_raise()
     inputs = {"messages": _coerce_messages(messages)}
+    graph = build_graph(
+        model=model,
+        allow_actions=context.actions_allowed,
+        provider_config=provider_config or get_config(context.workspace_id),
+    )
 
     try:
         async for kind, payload in graph.astream(inputs, stream_mode=["messages", "updates"]):
@@ -210,5 +214,5 @@ async def stream_agent(
                         }
         yield {"type": "done"}
     except Exception as e:  # noqa: BLE001
-        logger.exception("agent stream failed")
-        yield {"type": "error", "message": str(e)}
+        logger.warning("agent stream failed (%s)", type(e).__name__)
+        yield {"type": "error", "message": "Text provider request failed; check server configuration"}

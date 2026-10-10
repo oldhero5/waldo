@@ -47,7 +47,7 @@ def make_in_memory_engine():
 def db_session():
     """Provide a SQLAlchemy session backed by an in-memory SQLite database."""
     engine = make_in_memory_engine()
-    Session = sessionmaker(bind=engine)
+    Session = sessionmaker(bind=engine, expire_on_commit=False)
     session = Session()
     yield session
     session.close()
@@ -299,7 +299,7 @@ async def test_get_current_user_nonexistent_user(db_session):
 async def test_api_key_valid(db_session, test_user):
     """A valid wld_* API key resolves to the owning user."""
     from lib.auth import get_current_user, hash_password
-    from lib.db import ApiKey, Workspace
+    from lib.db import ApiKey, Workspace, WorkspaceMember
 
     # Create a minimal workspace for the FK constraint
     ws = Workspace(id=uuid.uuid4(), name="Test WS", slug="test-ws")
@@ -314,10 +314,11 @@ async def test_api_key_valid(db_session, test_user):
         name="test key",
         key_hash=hash_password(raw_key),
         key_prefix=raw_key[:8],
-        scopes=[],
+        scopes=["read", "write"],
         expires_at=None,
     )
     db_session.add(api_key)
+    db_session.add(WorkspaceMember(workspace_id=ws.id, user_id=test_user.id, role="admin"))
     db_session.commit()
 
     creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=raw_key)
@@ -342,14 +343,6 @@ async def test_api_key_invalid(db_session, test_user):
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    reason=(
-        "lib/auth.py _auth_api_key compares naive expires_at from SQLite against "
-        "tz-aware datetime.now(UTC), raising TypeError.  This is a known SQLite "
-        "limitation — the test passes on the CI Postgres which stores TIMESTAMP WITH TIME ZONE."
-    ),
-    strict=False,
-)
 async def test_api_key_expired(db_session, test_user):
     """An expired wld_* API key → 401."""
     from lib.auth import get_current_user, hash_password
@@ -368,13 +361,7 @@ async def test_api_key_expired(db_session, test_user):
         key_hash=hash_password(raw_key),
         key_prefix=raw_key[:8],
         scopes=[],
-        # Use naive datetime (no tzinfo) — SQLAlchemy/SQLite stores naive datetimes,
-        # and lib/auth.py's _auth_api_key compares against datetime.now(UTC) which
-        # is tz-aware. The comparison raises TypeError on SQLite. On Postgres this
-        # works because the DB column is TIMESTAMP WITH TIME ZONE.
-        # Workaround: use a naive datetime far in the past so the expired check
-        # fires before the tz comparison — but lib/auth.py still triggers the bug.
-        # We mark this test xfail on SQLite (passes on Postgres where tz is preserved).
+        # Databases can return naive UTC timestamps; authentication normalizes them.
         expires_at=datetime.utcnow() - timedelta(days=1),  # naive, already expired
     )
     db_session.add(api_key)

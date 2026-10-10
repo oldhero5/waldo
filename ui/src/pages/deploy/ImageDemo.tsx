@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ZoomIndicator } from "./ZoomIndicator";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ImageIcon, Loader2, Move, ZoomIn } from "lucide-react";
 import { predictImage, type DetectionOut } from "../../api";
-import { applyZoomPan, drawDetections, useZoomPan, ZoomIndicator } from "./shared";
+import { applyZoomPan, drawDetections, useZoomPan } from "./shared";
 
 export function ImageDemo({ confThreshold, classFilter }: { confThreshold: number; classFilter: Set<string> }) {
   const [file, setFile] = useState<File | null>(null);
@@ -25,9 +26,9 @@ export function ImageDemo({ confThreshold, classFilter }: { confThreshold: numbe
     ctx.restore();
   }, [detections, confThreshold, classFilter]);
 
-  const { zoom, panX, panY, reset } = useZoomPan(canvasRef, redraw);
+  const { zoom, panX, panY, reset } = useZoomPan(canvasRef, redraw, Boolean(file));
   const zpRef = useRef({ zoom, panX, panY });
-  zpRef.current = { zoom, panX, panY };
+  useLayoutEffect(() => { zpRef.current = { zoom, panX, panY }; }, [zoom, panX, panY]);
 
   useEffect(() => { redraw(); }, [redraw]);
 
@@ -38,8 +39,8 @@ export function ImageDemo({ confThreshold, classFilter }: { confThreshold: numbe
     try {
       const result = await predictImage(file, confThreshold);
       setDetections(result.detections);
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e: unknown) {
+      setError((e instanceof Error ? e.message : "Request failed"));
     } finally {
       setLoading(false);
     }
@@ -62,7 +63,7 @@ export function ImageDemo({ confThreshold, classFilter }: { confThreshold: numbe
           <input type="file" accept="image/*" className="hidden" onChange={(e) => { setFile(e.target.files?.[0] || null); setDetections([]); reset(); }} />
         </label>
         {file && (
-          <button onClick={handlePredict} disabled={loading} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm disabled:opacity-40">
+          <button onClick={handlePredict} disabled={loading} className="px-4 py-2 bg-accent text-on-accent hover:bg-accent-hover rounded-lg text-sm disabled:opacity-40">
             {loading ? "Predicting..." : "Predict"}
           </button>
         )}
