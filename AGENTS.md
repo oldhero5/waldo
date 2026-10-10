@@ -108,10 +108,22 @@ FFmpeg resampling ordinals. A local track ID is not a physical asset ID.
 
 ## Write for people
 
-Use plain, direct technical English, broadly aligned with ASD-STE100 (about 80%,
-not formal certification). Use short sentences, stable terms, active verbs, and
-explicit units. State the result, evidence, limits, and next action. Avoid generic
-praise, jargon, and inflated claims. PRs must contain a human test plan with
-expected results and rollback notes. Use a diagram or interactive HTML explanation
-when it helps the human understand the change within the whole system; skip
-decorative visuals. Never include private footage or secrets in public diagrams.
+All PR titles, descriptions, review comments, documentation, plans, and agent
+handoffs must use plain, direct technical English, roughly 80% aligned with
+ASD-STE100 (Simplified Technical English). This is a writing target, not formal
+certification or a numerical pass score.
+
+- Write for a human who has not read the chat. Start with the problem and the
+  resulting behavior. Explain why the change matters.
+- Use short sentences, active verbs, consistent terms, and explicit units.
+  Define an acronym on first use. Keep precise technical terms when needed.
+- State what changed, what was checked, the result, and any remaining limits.
+  Separate measured results from plans and assumptions. Remove generic praise,
+  filler, repeated claims, and unexplained jargon.
+- Keep PRs as short as their risk allows. Mark irrelevant template fields as
+  not applicable and say why. Include a human test plan with expected results
+  and rollback notes. A reviewer must be able to identify the change and test it
+  without reconstructing the conversation.
+- Review the wording before requesting review. Use a diagram or interactive
+  explanation when it clarifies the system; skip decorative visuals. Never put
+  private footage or secrets in public diagrams.
