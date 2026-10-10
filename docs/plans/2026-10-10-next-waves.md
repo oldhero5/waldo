@@ -184,6 +184,29 @@ documentation build passed. Fresh review caught and closed two test gaps:
 required mode now fails for a missing fixture, and restart must report a clean
 Celery exit. These results do not replace current-head hosted CI or owner review.
 
+### CI reliability correction
+
+The first PR #22 browser run repeated the clock setup failure seen in PR #21:
+95 cases passed, and one failed before its preview assertions. The host timestamp
+passed to `pauseAt` could already be behind the running browser clock. Sol
+`/root/worker_impl` and the orchestrator compared another unchanged rerun with a
+small test-only repair. We chose the repair because a repeatable gate must not
+depend on winning that race.
+
+This extends the wave to the pause target in `ui/e2e/media-renewal.spec.ts` and
+the stale scope note in `.github/scripts/test-summary.py`. The pause target is
+31 seconds ahead of the host clock, beyond the configured 30-second smoke-test limit.
+The three affected preview cases have no earlier virtual-clock advance. Their
+assertions and the production UI stay unchanged. The focused cases and full
+browser suite must pass before fresh review of the new head. The CI summary must
+describe the required worker tests and keep real-model qualification separate.
+
+The repaired clock passed the three focused cases. A full local run with one
+worker exited successfully with 96 passes and zero skips. An earlier four-worker
+run reported 96 passes but hung during shutdown and was interrupted with exit
+code 130; it is not a clean pass. Hosted CI must still verify normal parallel
+execution. The UI build, targeted lint and 18 CI report tests also passed.
+
 ## Wave 2: qualify Docker Hub releases
 
 Branch: `feat/verified-image-release`; depends on Wave 1.
