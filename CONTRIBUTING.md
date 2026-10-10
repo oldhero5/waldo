@@ -4,6 +4,24 @@ Read [AGENTS.md](AGENTS.md) for the four engineering rules. They apply to human
 and agent changes: think first, use a simple design, change only the required
 code, and verify the result.
 
+## Write for the reviewer
+
+All pull requests (PRs) and documentation must use plain, direct English, roughly
+80% aligned with ASD-STE100 (Simplified Technical English). Apply this to titles,
+descriptions, review comments, plans, and agent handoffs. It is a practical
+writing target, not a compliance claim or a score from a language checker.
+
+Start with the problem and the resulting behavior. Use short sentences, active
+verbs, consistent terms, and explicit units. Define necessary acronyms. Keep
+technical names exact. Remove filler, generic praise, and repeated explanations.
+Separate facts, assumptions, and planned work.
+
+A person who has not read the chat must be able to answer: What changed? Why?
+How was it checked? What must I test? What are the limits and rollback steps?
+Keep detail proportional to risk. Mark irrelevant template fields as not
+applicable and explain why. Reviewers should flag unclear text and suggest a
+specific correction. Do not add a mechanical language score to CI.
+
 ## From request to release
 
 ```mermaid

@@ -16,8 +16,20 @@ document the dependency and retarget it when the prerequisite lands.
 The repository's [AGENTS.md](https://github.com/oldhero5/waldo/blob/main/AGENTS.md)
 and [CONTRIBUTING.md](https://github.com/oldhero5/waldo/blob/main/CONTRIBUTING.md)
 define the operating rules: paired design choices, test-first implementation,
-surgical changes, and verified acceptance criteria. Use simple, direct language
-that follows the intent of ASD-STE100 without claiming formal compliance.
+surgical changes, and verified acceptance criteria.
+
+## Write for people
+
+All pull requests (PRs) and documentation must use plain, direct English, roughly
+80% aligned with ASD-STE100 (Simplified Technical English). This includes titles,
+descriptions, review comments, plans, and agent handoffs. It is a writing target,
+not formal certification or a numerical pass score.
+
+Start with the problem and the resulting behavior. Use short sentences, active
+verbs, consistent terms, and explicit units. Define necessary acronyms. Keep
+technical names exact. Remove filler and generic praise. State the checks,
+results, limits, human test steps, and rollback steps. Keep plans separate from
+measured results. A reviewer must understand the change without reading the chat.
 
 ## Commit messages
 
@@ -57,6 +69,7 @@ to merge, publish, or deploy. Every PR includes a human test plan.
 
 Reviewers should check:
 
+- The PR and changed docs meet the writing rule above
 - The change does what the description says
 - Tests cover the new behavior
 - No secrets, no commented-out code, no `console.log` / `print` left behind

@@ -1,3 +1,7 @@
+<!-- Use plain English, roughly 80% aligned with ASD-STE100. Write for a reviewer
+who has not read the chat. Use short sentences and active verbs. Define necessary
+acronyms. Remove filler. Mark irrelevant fields as not applicable with a reason. -->
+
 ## Problem and result
 
 State the trigger, the previous behavior, and the new behavior.
@@ -32,6 +36,7 @@ State the trigger, the previous behavior, and the new behavior.
 - Compatibility, migration, deployment and rollback notes:
 
 - [ ] The diff is surgical and private data is excluded.
+- [ ] The PR and changed docs use plain English; a reader can explain the change, checks, limits, and human test steps without the chat.
 - [ ] Local tests and required CI pass on the current head.
 - [ ] A fresh independent review covers the current head.
 - [ ] The owner has approved this exact head and human test result.
