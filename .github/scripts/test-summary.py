@@ -25,7 +25,9 @@ STEP_LABELS = {
     "BROWSER": "Browser tests",
 }
 SCOPES = {
-    "backend": "Backend tests include configured PostgreSQL, Redis and MinIO services; inference is mocked or skipped.",
+    "backend": (
+        "Required CI includes a separate Celery worker with controlled inference, PostgreSQL, Redis and MinIO."
+    ),
     "browser": "Browser tests use a mocked API; they verify UI behavior, not live backend services.",
 }
 
@@ -63,7 +65,8 @@ def main():
         "",
         SCOPES[args.suite],
         "Neither suite qualifies real SAM accuracy or a complete live labeling-to-training workflow.",
-        "Worker API tests can skip without live workers; opt-in E2E tests still need repair. "
+        "Required worker cases fail on missing services or unfinished jobs. "
+        "Real-model HTTP and training workflows remain opt-in hardware checks. "
         f"See {doc}. These are scope notes, not result counts.",
         "",
     ]
