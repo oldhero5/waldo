@@ -3,8 +3,12 @@ import { useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { listJobs, getDatasetOverview, uploadImages, uploadVideo, listFeedback, listProjects, listProjectVideos, linkVideos, deleteJob, renameJob, duplicateDataset, mergeClasses, deleteClass, listAnnotations, updateAnnotation, exportDataset, addClassToDataset, type JobStatus } from "../api";
 import AnnotationCanvas from "../components/AnnotationCanvas";
+import RenewableFrameImage from "../components/RenewableFrameImage";
+import RenewableDownloadLink from "../components/RenewableDownloadLink";
 import { Database, CheckCircle, Clock, AlertCircle, Download, Eye, Cpu, MessageSquareWarning, Images, Plus, Upload as UploadIcon, Loader, FolderInput, Trash2, Copy, Merge, Tag, Pencil, Check, X, Search, ChevronDown, ArrowUpDown, SquareCheck } from "lucide-react";
 import Accordion from "../components/Accordion";
+import JobCoverage from "../components/JobCoverage";
+import { hasTrainingArtifact, isTerminalJobStatus } from "../lib/jobStatus";
 
 function DatasetAnnotationViewer({ frameId, imageUrl, jobId, classes, onClose, onPrev, onNext }: {
   frameId: string; imageUrl: string; jobId: string; classes: string[];
@@ -19,7 +23,7 @@ function DatasetAnnotationViewer({ frameId, imageUrl, jobId, classes, onClose, o
 
   return (
     <AnnotationCanvas
-      imageUrl={imageUrl}
+      imageUrl={frameAnnotations[0]?.frame_url || imageUrl}
       frameId={frameId}
       jobId={jobId}
       annotations={frameAnnotations}
@@ -51,11 +55,13 @@ function DatasetCard({ job, onDeleted, selected, onToggleSelect }: {
   const [editName, setEditName] = useState("");
   const [showExport, setShowExport] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [readyExport, setReadyExport] = useState<{ url: string; label: string } | null>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
 
   const displayName = job.name || job.text_prompt || "Exemplar labeling";
+  const canDuplicate = ["completed", "partial", "failed"].includes(job.status);
 
   const handleRename = async () => {
     const trimmed = editName.trim();
@@ -67,8 +73,8 @@ function DatasetCard({ job, onDeleted, selected, onToggleSelect }: {
       await renameJob(job.job_id, trimmed);
       queryClient.invalidateQueries({ queryKey: ["jobs"] });
       queryClient.invalidateQueries({ queryKey: ["dataset-overview", job.job_id] });
-    } catch (e: any) {
-      setUploadMsg(`Error: ${e.message}`);
+    } catch (e: unknown) {
+      setUploadMsg(`Error: ${(e instanceof Error ? e.message : String(e))}`);
     }
     setEditing(false);
   };
@@ -92,8 +98,8 @@ function DatasetCard({ job, onDeleted, selected, onToggleSelect }: {
     try {
       await deleteJob(job.job_id);
       onDeleted();
-    } catch (e: any) {
-      setUploadMsg(`Error: ${e.message}`);
+    } catch (e: unknown) {
+      setUploadMsg(`Error: ${(e instanceof Error ? e.message : String(e))}`);
     }
   };
 
@@ -109,8 +115,8 @@ function DatasetCard({ job, onDeleted, selected, onToggleSelect }: {
       setUploadMsg(`Linked ${result.linked} video${result.linked !== 1 ? "s" : ""} — auto-labeling ${result.auto_labeled}`);
       setShowImport(false);
       setImportingFrom(null);
-    } catch (e: any) {
-      setUploadMsg(`Error: ${e.message}`);
+    } catch (e: unknown) {
+      setUploadMsg(`Error: ${(e instanceof Error ? e.message : String(e))}`);
     } finally {
       setUploading(false);
     }
@@ -129,8 +135,8 @@ function DatasetCard({ job, onDeleted, selected, onToggleSelect }: {
     try {
       const result = await uploadImages(Array.from(files), collectionName);
       setUploadMsg(`Added ${result.frame_ids.length} image${result.frame_ids.length !== 1 ? "s" : ""} to "${collectionName}"`);
-    } catch (e: any) {
-      setUploadMsg(`Error: ${e.message}`);
+    } catch (e: unknown) {
+      setUploadMsg(`Error: ${(e instanceof Error ? e.message : String(e))}`);
     } finally {
       setUploading(false);
     }
@@ -180,10 +186,10 @@ function DatasetCard({ job, onDeleted, selected, onToggleSelect }: {
       if (skipped > 0) parts.push(`(${skipped} duplicate${skipped !== 1 ? "s" : ""} skipped)`);
       if (added > 0) parts.push("— auto-labeling started");
       setUploadMsg(parts.join(" "));
-    } catch (e: any) {
+    } catch (e: unknown) {
       const parts = [];
       if (added > 0) parts.push(`Added ${added} video${added !== 1 ? "s" : ""}`);
-      parts.push(`Error: ${e.message}`);
+      parts.push(`Error: ${(e instanceof Error ? e.message : String(e))}`);
       setUploadMsg(parts.join(". "));
     } finally {
       setUploading(false);
@@ -205,11 +211,11 @@ function DatasetCard({ job, onDeleted, selected, onToggleSelect }: {
     : null;
 
   const statusColor = job.status === "completed"
-    ? "var(--success)" : job.status === "failed"
+    ? "var(--success)" : ["failed", "partial"].includes(job.status)
     ? "var(--danger)" : "var(--accent)";
 
   const statusBg = job.status === "completed"
-    ? "var(--success-soft)" : job.status === "failed"
+    ? "var(--success-soft)" : ["failed", "partial"].includes(job.status)
     ? "var(--danger-soft)" : "var(--accent-soft)";
 
   return (
@@ -227,6 +233,7 @@ function DatasetCard({ job, onDeleted, selected, onToggleSelect }: {
           {onToggleSelect && (
             <input
               type="checkbox"
+              aria-label={`Select ${displayName}`}
               checked={selected || false}
               onChange={(e) => { e.stopPropagation(); onToggleSelect(); }}
               onClick={(e) => e.stopPropagation()}
@@ -240,7 +247,7 @@ function DatasetCard({ job, onDeleted, selected, onToggleSelect }: {
             style={{ backgroundColor: statusBg }}
           >
             {job.status === "completed" ? <CheckCircle size={20} style={{ color: statusColor }} />
-              : job.status === "failed" ? <AlertCircle size={20} style={{ color: statusColor }} />
+              : ["failed", "partial"].includes(job.status) ? <AlertCircle size={20} style={{ color: statusColor }} />
                 : <Clock size={20} style={{ color: statusColor }} />}
           </div>
 
@@ -312,7 +319,7 @@ function DatasetCard({ job, onDeleted, selected, onToggleSelect }: {
               )}
             </div>
             <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2, fontFamily: "var(--font-mono)" }}>
-              {job.total_frames} video{job.total_frames !== 1 ? "s" : ""} &middot; {job.processed_frames} processed
+              {job.total_frames} {job.processing_summary?.coverage === "sampled" ? `sampled frame${job.total_frames !== 1 ? "s" : ""}` : `entr${job.total_frames !== 1 ? "ies" : "y"}`} &middot; {job.processed_frames} processed
               {job.version > 1 && (
                 <span
                   style={{
@@ -337,7 +344,7 @@ function DatasetCard({ job, onDeleted, selected, onToggleSelect }: {
               <span className="font-medium capitalize" style={{ color: statusColor }}>{job.status}</span>
             </div>
             <div className="text-center">
-              <span className="eyebrow block" style={{ fontSize: 10 }}>Videos</span>
+              <span className="eyebrow block" style={{ fontSize: 10 }}>{job.processing_summary?.coverage === "sampled" ? "Sampled frames" : "Entries"}</span>
               <span className="font-medium" style={{ color: "var(--text-primary)" }}>{job.total_frames}</span>
             </div>
             {job.annotation_count != null && (
@@ -372,14 +379,14 @@ function DatasetCard({ job, onDeleted, selected, onToggleSelect }: {
                   </p>
                   <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
                     {overview.sample_frames.map((f, idx) => (
-                      <button
+                      <div
                         key={f.frame_id}
-                        onClick={() => setGalleryIdx(idx)}
-                        className="relative group text-left cursor-pointer"
+                        className="relative group text-left"
                       >
                         {f.thumbnail_url ? (
-                          <img
-                            src={f.thumbnail_url}
+                          <RenewableFrameImage
+                            frameId={f.frame_id}
+                            initialUrl={f.thumbnail_url}
                             alt={`Frame ${f.frame_number}`}
                             className="w-full aspect-video object-cover rounded-lg transition-colors"
                             style={{ border: "1px solid var(--border-default)" }}
@@ -390,17 +397,19 @@ function DatasetCard({ job, onDeleted, selected, onToggleSelect }: {
                         ) : (
                           <div className="w-full aspect-video rounded-lg" style={{ backgroundColor: "var(--bg-inset)" }} />
                         )}
-                        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent rounded-b-lg px-1.5 py-1">
+                        <button type="button" aria-label={`Inspect frame ${f.frame_number}`} onClick={() => setGalleryIdx(idx)} className="absolute inset-0 rounded-lg cursor-pointer" />
+                        <div className="pointer-events-none absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent rounded-b-lg px-1.5 py-1">
                           <span style={{ fontSize: 10, color: "#fff", fontWeight: 500, fontFamily: "var(--font-mono)" }}>
                             {f.annotation_count} label{f.annotation_count !== 1 ? "s" : ""}
                           </span>
                         </div>
-                      </button>
+                      </div>
                     ))}
                   </div>
                 </div>
               )}
 
+              <JobCoverage job={job} />
               {/* Stats row */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
                 {[
@@ -450,7 +459,7 @@ function DatasetCard({ job, onDeleted, selected, onToggleSelect }: {
                             Adding <strong>{d.class_name}</strong>
                             {d.total > 0 && (
                               <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, marginLeft: 6 }}>
-                                {d.processed}/{d.total} video{d.total !== 1 ? "s" : ""}
+                                {d.processed}/{d.total} entries
                               </span>
                             )}
                             {d.status === "pending" && (
@@ -474,7 +483,7 @@ function DatasetCard({ job, onDeleted, selected, onToggleSelect }: {
                     <div className="flex items-center gap-2">
                       <Loader size={13} className="animate-spin shrink-0" />
                       <span>
-                        <strong>{overview.labeling_in_progress}</strong> video{overview.labeling_in_progress !== 1 ? "s" : ""} being auto-labeled
+                        <strong>{overview.labeling_in_progress}</strong> labeling job{overview.labeling_in_progress !== 1 ? "s" : ""} running
                       </span>
                     </div>
                   )}
@@ -507,14 +516,14 @@ function DatasetCard({ job, onDeleted, selected, onToggleSelect }: {
                   <Eye size={14} />
                   {overview.pending > 0 ? `Review (${overview.pending} pending)` : "View Annotations"}
                 </Link>
-                <Link
+                {hasTrainingArtifact(job) && <Link
                   to={`/train/${job.job_id}`}
                   className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium text-white"
-                  style={{ backgroundColor: "var(--accent)" }}
+                  style={{ backgroundColor: "var(--accent)", color: "var(--text-on-accent)" }}
                 >
                   <Cpu size={14} />
                   Train New Model
-                </Link>
+                </Link>}
                 <div className="relative">
                   <button
                     onClick={() => setShowExport(!showExport)}
@@ -532,13 +541,11 @@ function DatasetCard({ job, onDeleted, selected, onToggleSelect }: {
                     >
                       <p className="eyebrow px-3 py-1">Export format</p>
                       {overview.dataset_url && (
-                        <a
-                          href={overview.dataset_url}
-                          onClick={() => setShowExport(false)}
+                        <RenewableDownloadLink
+                          jobId={job.job_id}
+                          url={overview.dataset_url}
                           className="flex items-center gap-2 px-3 py-2 text-sm w-full text-left"
                           style={{ color: "var(--text-primary)" }}
-                          onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "var(--bg-surface-hover)")}
-                          onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "")}
                         >
                           <Download size={13} style={{ color: "var(--text-muted)" }} />
                           <div>
@@ -547,12 +554,14 @@ function DatasetCard({ job, onDeleted, selected, onToggleSelect }: {
                               Pre-built dataset zip
                             </span>
                           </div>
-                        </a>
+                        </RenewableDownloadLink>
                       )}
                       {[
                         { fmt: "segment", label: "YOLO Segment", desc: "Polygon labels" },
                         { fmt: "detect", label: "YOLO Detect", desc: "Bounding box labels" },
                         { fmt: "obb", label: "YOLO OBB", desc: "Oriented bounding boxes" },
+                        { fmt: "classify", label: "YOLO Classify", desc: "Padded crops of saved objects, grouped by source video" },
+                        { fmt: "pose", label: "YOLO Pose", desc: "One centroid keypoint per saved object" },
                       ].map(({ fmt, label, desc }) => (
                         <button
                           key={fmt}
@@ -562,9 +571,12 @@ function DatasetCard({ job, onDeleted, selected, onToggleSelect }: {
                             setShowExport(false);
                             try {
                               const result = await exportDataset(job.job_id, fmt);
-                              window.open(result.download_url, "_blank");
-                            } catch (e: any) {
-                              setUploadMsg(`Error: ${e.message}`);
+                              queryClient.invalidateQueries({ queryKey: ["jobs"] });
+                              queryClient.invalidateQueries({ queryKey: ["job", job.job_id] });
+                              queryClient.invalidateQueries({ queryKey: ["dataset-overview", job.job_id] });
+                              setReadyExport({ url: result.download_url, label });
+                            } catch (e: unknown) {
+                              setUploadMsg(`Error: ${(e instanceof Error ? e.message : String(e))}`);
                             } finally {
                               setExporting(false);
                             }
@@ -595,6 +607,16 @@ function DatasetCard({ job, onDeleted, selected, onToggleSelect }: {
                   Delete
                 </button>
               </div>
+
+              {exporting && <p className="text-sm mb-3" role="status" style={{ color: "var(--text-secondary)" }}>Preparing export...</p>}
+              {readyExport && (
+                <p className="text-sm mb-3" role="status" style={{ color: "var(--text-secondary)" }}>
+                  Export ready. {" "}
+                  <RenewableDownloadLink jobId={job.job_id} url={readyExport.url} className="underline" style={{ color: "var(--text-primary)" }}>
+                    Download {readyExport.label} export
+                  </RenewableDownloadLink>
+                </p>
+              )}
 
               {/* Add data */}
               <div className="pt-3" style={{ borderTop: "1px solid var(--border-subtle)" }}>
@@ -669,7 +691,7 @@ function DatasetCard({ job, onDeleted, selected, onToggleSelect }: {
                           onClick={handleImportAll}
                           disabled={uploading}
                           className="px-3 py-1.5 text-xs rounded-lg text-white disabled:opacity-50"
-                          style={{ backgroundColor: "var(--accent)" }}
+                          style={{ backgroundColor: "var(--accent)", color: "var(--text-on-accent)" }}
                         >
                           Import All
                         </button>
@@ -818,8 +840,8 @@ function DatasetCard({ job, onDeleted, selected, onToggleSelect }: {
                           await addClassToDataset(job.job_id, name, promptText);
                           setUploadMsg(`Labeling "${name}" — results will merge into this dataset`);
                           queryClient.invalidateQueries({ queryKey: ["dataset-overview", job.job_id] });
-                        } catch (e: any) {
-                          setUploadMsg(`Error: ${e.message}`);
+                        } catch (e: unknown) {
+                          setUploadMsg(`Error: ${(e instanceof Error ? e.message : String(e))}`);
                         }
                       }}
                       className="flex items-center gap-1 text-xs px-3 py-1.5 surface"
@@ -829,11 +851,17 @@ function DatasetCard({ job, onDeleted, selected, onToggleSelect }: {
                     </button>
                     <button
                       onClick={async () => {
-                        const result = await duplicateDataset(job.job_id);
-                        queryClient.invalidateQueries({ queryKey: ["jobs"] });
-                        alert(`Dataset duplicated. ${result.annotations_copied} annotations copied.`);
+                        try {
+                          const result = await duplicateDataset(job.job_id);
+                          queryClient.invalidateQueries({ queryKey: ["jobs"] });
+                          alert(`Dataset duplicated. ${result.annotations_copied} annotations copied.`);
+                        } catch (e: unknown) {
+                          setUploadMsg(`Error: ${(e instanceof Error ? e.message : String(e))}`);
+                        }
                       }}
-                      className="flex items-center gap-1 text-xs px-3 py-1.5 surface"
+                      disabled={!canDuplicate}
+                      title={canDuplicate ? undefined : "Wait for labeling to finish before duplicating this dataset."}
+                      className="flex items-center gap-1 text-xs px-3 py-1.5 surface disabled:opacity-50"
                       style={{ color: "var(--text-secondary)", borderRadius: 8 }}
                     >
                       <Copy size={11} /> Duplicate Dataset
@@ -871,24 +899,26 @@ export default function DatasetsPage() {
   const { data: jobs, isLoading } = useQuery({
     queryKey: ["jobs"],
     queryFn: () => listJobs(),
+    refetchInterval: (query) => query.state.data?.some((job) => !isTerminalJobStatus(job.status)) ? 5000 : false,
   });
 
   const [showAll, setShowAll] = useState(false);
   const [search, setSearch] = useState("");
-  const [sortBy, setSortBy] = useState<"newest" | "name" | "labels" | "videos">("newest");
+  const [sortBy, setSortBy] = useState<"newest" | "name" | "labels" | "frames">("newest");
   const [selecting, setSelecting] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkDownloads, setBulkDownloads] = useState<{ jobId: string; name: string; url: string }[]>([]);
 
   // Only show meaningful datasets (multi-frame or with real prompts)
   const allDatasets = jobs
-    ?.filter((j) => j.status === "completed" && j.total_frames > 0)
-    .reverse() || [];
+    ?.filter((j) => j.total_frames > 0 || (j.annotation_count || 0) > 0 || ["partial", "failed"].includes(j.status))
+    || [];
 
   // By default, only show substantial datasets (not 1-frame test jobs)
   const substantial = showAll
     ? allDatasets
-    : allDatasets.filter((j) => j.total_frames > 5);
+    : allDatasets.filter((j) => j.total_frames > 5 || (j.annotation_count || 0) > 0 || ["partial", "failed"].includes(j.status));
 
   // Filter by search term (matches name or prompt)
   const needle = search.toLowerCase().trim();
@@ -903,8 +933,8 @@ export default function DatasetsPage() {
   const datasets = [...searched].sort((a, b) => {
     if (sortBy === "name") return (a.name || a.text_prompt || "").localeCompare(b.name || b.text_prompt || "");
     if (sortBy === "labels") return (b.annotation_count || 0) - (a.annotation_count || 0);
-    if (sortBy === "videos") return b.total_frames - a.total_frames;
-    return 0; // newest — already in reverse chronological order
+    if (sortBy === "frames") return b.total_frames - a.total_frames;
+    return 0; // /status already orders by creation time descending; stable sorting retains it.
   });
 
   return (
@@ -940,12 +970,25 @@ export default function DatasetsPage() {
             <Link
               to="/upload"
               className="px-4 py-2 text-white rounded-lg text-sm"
-              style={{ backgroundColor: "var(--accent)" }}
+              style={{ backgroundColor: "var(--accent)", color: "var(--text-on-accent)" }}
             >
               + New Dataset
             </Link>
           </div>
         </div>
+
+        {bulkDownloads.length > 0 && (
+          <div className="surface p-3 mb-4 text-sm" role="status">
+            <p className="mb-2" style={{ color: "var(--text-secondary)" }}>Exports ready. Download each dataset:</p>
+            <div className="flex flex-wrap gap-3">
+              {bulkDownloads.map((item) => (
+                <RenewableDownloadLink key={item.jobId} jobId={item.jobId} url={item.url} className="underline" style={{ color: "var(--text-primary)" }}>
+                  Download {item.name} export
+                </RenewableDownloadLink>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Search + sort bar */}
         {allDatasets.length > 0 && (
@@ -992,7 +1035,7 @@ export default function DatasetsPage() {
                 <option value="newest">Newest</option>
                 <option value="name">Name</option>
                 <option value="labels">Most labels</option>
-                <option value="videos">Most videos</option>
+                <option value="frames">Most frames</option>
               </select>
             </div>
           </div>
@@ -1071,7 +1114,7 @@ export default function DatasetsPage() {
                 <Link
                   to="/upload"
                   className="inline-block px-6 py-2 text-white rounded-lg"
-                  style={{ backgroundColor: "var(--accent)" }}
+                  style={{ backgroundColor: "var(--accent)", color: "var(--text-on-accent)" }}
                 >
                   Upload Video
                 </Link>
@@ -1105,8 +1148,8 @@ export default function DatasetsPage() {
                 setSelected(new Set());
                 setSelecting(false);
                 queryClient.invalidateQueries({ queryKey: ["jobs"] });
-              } catch (e: any) {
-                alert(`Error: ${e.message}`);
+              } catch (e: unknown) {
+                alert(`Error: ${(e instanceof Error ? e.message : String(e))}`);
               } finally {
                 setBulkBusy(false);
               }
@@ -1123,17 +1166,20 @@ export default function DatasetsPage() {
               setBulkBusy(true);
               try {
                 for (const id of selected) {
-                  const result = await exportDataset(id, "segment");
-                  window.open(result.download_url, "_blank");
+                  const job = allDatasets.find((item) => item.job_id === id);
+                  const format = job?.task_type === "detect_transformer" ? "detect" : job?.task_type || "segment";
+                  const result = await exportDataset(id, format);
+                  const name = job?.name || id;
+                  setBulkDownloads((previous) => [...previous.filter((item) => item.jobId !== id), { jobId: id, name, url: result.download_url }]);
                 }
-              } catch (e: any) {
-                alert(`Error: ${e.message}`);
+              } catch (e: unknown) {
+                alert(`Error: ${(e instanceof Error ? e.message : String(e))}`);
               } finally {
                 setBulkBusy(false);
               }
             }}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm disabled:opacity-50"
-            style={{ backgroundColor: "var(--accent)", color: "#fff" }}
+            style={{ backgroundColor: "var(--accent)", color: "var(--text-on-accent)" }}
           >
             <Download size={13} />
             Export All

@@ -12,13 +12,9 @@ COPY ui/ ./
 RUN mkdir -p /app/static && npm run build
 
 # ── Stage 2: runtime (CUDA base) ─────────────────────────────────────
-# Note: ubuntu:22.04's python3.11 package is 3.11.0rc1, which predates
-# sys.get_int_max_str_digits (added in 3.11.1). torch's _dynamo polyfills
-# require it, so we let uv manage Python instead of using the distro one.
-# Use the runtime (not devel) base — we ship prebuilt CUDA torch wheels
-# and never compile kernels, so nvcc/headers/SDK aren't needed in the
-# image. Saves ~2.5 GB of base layer.
-FROM nvidia/cuda:12.4.0-runtime-ubuntu22.04 AS runtime
+# Match the cu130 wheel family. Python is managed by uv, not the distro.
+# Qualify the resulting image and host driver on the target NVIDIA hardware.
+FROM nvidia/cuda:13.0.3-runtime-ubuntu24.04 AS runtime
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && \
@@ -30,23 +26,19 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 WORKDIR /app
 
 COPY pyproject.toml .python-version uv.lock ./
-# --python-preference only-managed forces uv to download a current 3.11.x
-# rather than picking up a broken system python. Skip torch + torchvision
-# (and their CUDA toolkit transitives) in the first sync — we want the
-# cu130 wheels, not PyPI's CPU torch + lockfile-pinned nvidia-cudnn-cu13.
-# The CUDA wheels go in via the next RUN.
+# Use the managed Python version. Install torch/torchvision separately from
+# their explicit CUDA wheel index; other dependencies follow the lockfile.
 RUN uv sync --frozen --no-dev --group app --group labeler --group trainer \
         --no-install-project --python-preference only-managed \
         --no-install-package torch --no-install-package torchvision
 
-# CUDA 13.0 torch wheels (PyPI default is CPU-only). Pulls the matching
-# nvidia-cudnn-cu13 (with its .so files) as a transitive dep. We do NOT
+# CUDA 13.0 wheels, pinned to the versions recorded in uv.lock. We do NOT
 # follow this with `uv sync` later because that re-reconciles against the
 # lockfile and silently strips libcudnn.so.9 off disk, breaking torch.
 RUN uv pip install \
     --index-url https://download.pytorch.org/whl/cu130 \
     --extra-index-url https://pypi.org/simple \
-    torch torchvision
+    torch==2.12.0 torchvision==0.27.0
 
 COPY lib/ lib/
 COPY app/ app/

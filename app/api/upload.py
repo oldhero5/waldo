@@ -10,6 +10,13 @@ from sqlalchemy import func
 
 from labeler.frame_extractor import get_video_metadata
 from lib.auth import get_current_user
+from lib.authorization import (
+    WorkspacePrincipal,
+    get_workspace_principal,
+    require_resource,
+    require_workspace_editor,
+    scope_resources,
+)
 from lib.db import Frame, LabelingJob, Project, SessionLocal, Video
 from lib.storage import get_download_url, upload_bytes, upload_file
 from lib.tasks import label_video
@@ -48,11 +55,11 @@ class VideoOut(BaseModel):
     url: str | None = None
 
 
-def _get_or_create_project(session, project_name: str) -> Project:
+def _get_or_create_project(session, project_name: str, principal: WorkspacePrincipal) -> Project:
     """Get an existing project by name or create a new one."""
-    project = session.query(Project).filter_by(name=project_name).first()
+    project = scope_resources(session.query(Project), Project, principal).filter_by(name=project_name).first()
     if not project:
-        project = Project(name=project_name)
+        project = Project(name=project_name, workspace_id=principal.workspace_id)
         session.add(project)
         session.commit()
     return project
@@ -79,6 +86,7 @@ def _auto_label_if_applicable(session, project: Project, video: Video) -> None:
                 session.query(LabelingJob)
                 .filter(
                     LabelingJob.status == "completed",
+                    LabelingJob.project_id == project.id,
                     LabelingJob.text_prompt.ilike(f"%{project.name}%"),
                 )
                 .order_by(LabelingJob.created_at.desc())
@@ -124,16 +132,19 @@ class LinkVideosResponse(BaseModel):
 
 
 @router.post("/link-videos", response_model=LinkVideosResponse)
-def link_existing_videos(req: LinkVideosRequest):
+def link_existing_videos(
+    req: LinkVideosRequest,
+    principal: WorkspacePrincipal = Depends(require_workspace_editor),
+):
     """Copy/link existing videos from other projects into a target project and auto-label them."""
     session = SessionLocal()
     try:
-        target_project = _get_or_create_project(session, req.target_project_name)
+        sources = [require_resource(session, principal, Video, vid_id) for vid_id in req.video_ids]
+        target_project = _get_or_create_project(session, req.target_project_name, principal)
         linked = 0
         auto_labeled = 0
 
-        for vid_id in req.video_ids:
-            source_video = session.query(Video).filter_by(id=vid_id).first()
+        for source_video in sources:
             if not source_video:
                 continue
             if str(source_video.project_id) == str(target_project.id):
@@ -257,10 +268,11 @@ async def _upload_single_video(session, project: Project, file: UploadFile) -> U
 async def upload_video(
     file: UploadFile = File(...),
     project_name: str = Query("default"),
+    principal: WorkspacePrincipal = Depends(require_workspace_editor),
 ):
     session = SessionLocal()
     try:
-        project = _get_or_create_project(session, project_name)
+        project = _get_or_create_project(session, project_name, principal)
         return await _upload_single_video(session, project, file)
     finally:
         session.close()
@@ -270,10 +282,11 @@ async def upload_video(
 async def upload_videos_batch(
     files: list[UploadFile] = File(...),
     project_name: str = Query("default"),
+    principal: WorkspacePrincipal = Depends(require_workspace_editor),
 ):
     session = SessionLocal()
     try:
-        project = _get_or_create_project(session, project_name)
+        project = _get_or_create_project(session, project_name, principal)
         results = []
         for file in files:
             result = await _upload_single_video(session, project, file)
@@ -284,13 +297,16 @@ async def upload_videos_batch(
 
 
 @router.get("/projects", response_model=list[ProjectOut])
-def list_projects():
+def list_projects(
+    principal: WorkspacePrincipal = Depends(get_workspace_principal),
+):
     session = SessionLocal()
     try:
         # Single GROUP BY query instead of one lazy-load per project.
         rows = (
             session.query(Project, func.count(Video.id))
             .outerjoin(Video, Video.project_id == Project.id)
+            .filter(Project.workspace_id == principal.workspace_id)
             .group_by(Project.id)
             .all()
         )
@@ -339,11 +355,12 @@ def _get_or_create_images_video(session, project: Project) -> Video:
 async def upload_images(
     files: list[UploadFile] = File(...),
     project_name: str = Form("default"),
+    principal: WorkspacePrincipal = Depends(require_workspace_editor),
 ):
     """Upload one or more images to a project as standalone Frame records."""
     session = SessionLocal()
     try:
-        project = _get_or_create_project(session, project_name)
+        project = _get_or_create_project(session, project_name, principal)
         images_video = _get_or_create_images_video(session, project)
 
         # Determine next frame_number offset
@@ -405,10 +422,14 @@ async def upload_images(
 
 
 @router.get("/projects/{project_id}/videos", response_model=list[VideoOut])
-def list_project_videos(project_id: str):
+def list_project_videos(
+    project_id: str,
+    principal: WorkspacePrincipal = Depends(get_workspace_principal),
+):
     session = SessionLocal()
     try:
-        videos = session.query(Video).filter_by(project_id=project_id).all()
+        project = require_resource(session, principal, Project, project_id)
+        videos = session.query(Video).filter_by(project_id=project.id).all()
         return [
             VideoOut(
                 id=str(v.id),

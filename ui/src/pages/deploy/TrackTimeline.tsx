@@ -57,7 +57,7 @@ export function TrackTimeline({ frames, currentFrame, confThreshold, classFilter
       >
         <div style={{ height: innerH, position: "relative" }}>
           <div
-            className="absolute top-0 w-px bg-blue-600 z-10"
+            className="absolute top-0 w-px bg-accent text-on-accent z-10"
             style={{ left: `${(currentFrame / Math.max(1, totalFrames - 1)) * 100}%`, height: innerH }}
           />
           {sortedTracks.map(([tkey, info], row) => {

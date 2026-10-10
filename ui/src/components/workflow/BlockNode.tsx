@@ -9,8 +9,10 @@
  * - -webkit-font-smoothing: antialiased
  * - Inline config display for key settings
  */
-import { Handle, Position } from "@xyflow/react";
+import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { Cpu, Scissors, MessageSquare, ArrowDownToLine, Eye, GitBranch, Scan, Rocket } from "lucide-react";
+
+import type { WorkflowNode } from "../../lib/workflowTypes";
 
 const CATEGORY_ICONS: Record<string, typeof Cpu> = {
   models: Cpu,
@@ -32,14 +34,14 @@ const PORT_TYPE_COLORS: Record<string, string> = {
   image_list: "#3b82f6",
 };
 
-export default function BlockNode({ data, selected }: any) {
+export default function BlockNode({ data, selected }: NodeProps<WorkflowNode>) {
   const color = data.color || "#6b7280";
   const Icon = CATEGORY_ICONS[data.category] || Cpu;
 
   // Get the primary config value to show inline
   const configEntries = Object.entries(data.configSchema || {});
   const primaryConfig = configEntries.length > 0 ? configEntries[0] : null;
-  const primaryValue = primaryConfig ? (data.config?.[primaryConfig[0]] ?? (primaryConfig[1] as any).default) : null;
+  const primaryValue = primaryConfig ? (data.config?.[primaryConfig[0]] ?? primaryConfig[1].default) : null;
 
   return (
     <div
@@ -109,7 +111,7 @@ export default function BlockNode({ data, selected }: any) {
           justifyContent: "space-between",
         }}>
           <span style={{ fontSize: 10, color: "#888", fontFamily: "ui-monospace, monospace" }}>
-            {(primaryConfig[1] as any).label || primaryConfig[0]}
+            {primaryConfig[1].label || primaryConfig[0]}
           </span>
           <span style={{ fontSize: 10, color: "#333", fontWeight: 600, fontFamily: "ui-monospace, monospace" }}>
             {typeof primaryValue === "number" ? primaryValue.toFixed(primaryValue < 1 ? 2 : 0) : String(primaryValue).slice(0, 20)}
@@ -120,7 +122,7 @@ export default function BlockNode({ data, selected }: any) {
       {/* Ports */}
       <div style={{ padding: "6px 12px 8px", display: "flex", justifyContent: "space-between", gap: 8 }}>
         <div>
-          {data.inputs?.map((p: any) => (
+          {data.inputs?.map((p) => (
             <div key={p.name} style={{
               fontSize: 9,
               color: "#777",
@@ -141,7 +143,7 @@ export default function BlockNode({ data, selected }: any) {
           ))}
         </div>
         <div style={{ textAlign: "right" }}>
-          {data.outputs?.map((p: any) => (
+          {data.outputs?.map((p) => (
             <div key={p.name} style={{
               fontSize: 9,
               color: "#777",
@@ -165,7 +167,7 @@ export default function BlockNode({ data, selected }: any) {
       </div>
 
       {/* Input handles */}
-      {data.inputs?.map((port: any, i: number) => (
+      {data.inputs?.map((port, i: number) => (
         <Handle
           key={`in-${port.name}`}
           type="target"
@@ -183,7 +185,7 @@ export default function BlockNode({ data, selected }: any) {
       ))}
 
       {/* Output handles */}
-      {data.outputs?.map((port: any, i: number) => (
+      {data.outputs?.map((port, i: number) => (
         <Handle
           key={`out-${port.name}`}
           type="source"

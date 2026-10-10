@@ -1,61 +1,32 @@
-"""Migration sanity tests — verify alembic can upgrade to head without error.
+"""Migration checks against an explicitly selected disposable PostgreSQL database.
 
-SQLite compatibility note:
-  The Waldo schema uses `sqlalchemy.dialects.postgresql.UUID` columns in every
-  migration file (e.g. 001_initial_schema.py uses `UUID(as_uuid=True)`).
-  SQLite does not understand the PostgreSQL UUID dialect type, so running
-  alembic migrations against an in-memory SQLite database is NOT supported.
-
-  These tests therefore require a live PostgreSQL connection.  They are skipped
-  automatically when the POSTGRES_HOST env var is absent or when psycopg2
-  cannot reach the configured host, so local development (no running Postgres)
-  does not break `uv run pytest`.  In CI the Postgres service is always present.
+Set WALDO_TEST_POSTGRES_URL. No default application database is inspected or
+migrated. Once configured, an unavailable service fails the check instead of
+silently skipping it. The revision-graph check runs without a database.
 """
 
 from __future__ import annotations
 
 import os
+import uuid
 
 import pytest
 import sqlalchemy
 from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from sqlalchemy import inspect, text
+from sqlalchemy import inspect
 
 from alembic import command
 
 
 def _postgres_dsn() -> str:
-    """Build DSN from env vars, falling back to the lib.config defaults."""
-    host = os.environ.get("POSTGRES_HOST", "localhost")
-    port = os.environ.get("POSTGRES_PORT", "5432")
-    user = os.environ.get("POSTGRES_USER", "waldo")
-    password = os.environ.get("POSTGRES_PASSWORD", "waldo")
-    db = os.environ.get("POSTGRES_DB", "waldo")
-    return f"postgresql://{user}:{password}@{host}:{port}/{db}"
-
-
-def _postgres_available() -> bool:
-    """Return True if we can connect to the configured Postgres instance."""
-    try:
-        import psycopg2  # noqa: F401
-    except ImportError:
-        return False
-    dsn = _postgres_dsn()
-    try:
-        engine = sqlalchemy.create_engine(dsn, connect_args={"connect_timeout": 3})
-        with engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
-        engine.dispose()
-        return True
-    except Exception:
-        return False
+    return os.environ["WALDO_TEST_POSTGRES_URL"]
 
 
 requires_postgres = pytest.mark.skipif(
-    not _postgres_available(),
-    reason="PostgreSQL not reachable — skipping migration tests (set POSTGRES_HOST to enable)",
+    not os.environ.get("WALDO_TEST_POSTGRES_URL"),
+    reason="Set WALDO_TEST_POSTGRES_URL to a disposable database to run migrations",
 )
 
 
@@ -63,8 +34,7 @@ requires_postgres = pytest.mark.skipif(
 def test_alembic_upgrade_head_succeeds():
     """Running `alembic upgrade head` against the CI Postgres must not raise."""
     alembic_cfg = Config("alembic.ini")
-    # Override the DB URL to use CI env vars
-    alembic_cfg.set_main_option("sqlalchemy.url", _postgres_dsn())
+    alembic_cfg.attributes["database_url"] = _postgres_dsn()
     # Should complete without raising
     command.upgrade(alembic_cfg, "head")
 
@@ -74,7 +44,7 @@ def test_expected_tables_exist_after_migration():
     """Core tables must exist after migrating to head."""
     # The upgrade is idempotent — run again to ensure we're at head
     alembic_cfg = Config("alembic.ini")
-    alembic_cfg.set_main_option("sqlalchemy.url", _postgres_dsn())
+    alembic_cfg.attributes["database_url"] = _postgres_dsn()
     command.upgrade(alembic_cfg, "head")
 
     dsn = _postgres_dsn()
@@ -95,11 +65,9 @@ def test_expected_tables_exist_after_migration():
         engine.dispose()
 
 
-@requires_postgres
 def test_alembic_history_is_linear():
     """Alembic revision chain must be a single linear history (no branching)."""
     alembic_cfg = Config("alembic.ini")
-    alembic_cfg.set_main_option("sqlalchemy.url", _postgres_dsn())
     alembic_cfg.set_main_option("script_location", "alembic")
 
     scripts = ScriptDirectory.from_config(alembic_cfg)
@@ -110,11 +78,119 @@ def test_alembic_history_is_linear():
     )
 
 
+def test_evidence_revision_schema_uses_nonnull_bigint_and_database_default():
+    from lib.db import LabelingJob
+
+    column = LabelingJob.__table__.c.evidence_revision
+    assert isinstance(column.type, sqlalchemy.BigInteger)
+    assert column.nullable is False
+    assert str(column.server_default.arg) == "0"
+    assert not column.index
+
+
+@requires_postgres
+def test_evidence_revision_upgrade_preserves_populated_artifacts_and_database_defaults():
+    """Migrate only a newly created private schema; leave other schemas at head."""
+    schema = f"waldo_migration_{uuid.uuid4().hex}"
+    engine = sqlalchemy.create_engine(_postgres_dsn())
+    url = sqlalchemy.engine.make_url(_postgres_dsn()).update_query_dict({"options": f"-csearch_path={schema}"})
+    scoped = sqlalchemy.create_engine(url)
+    cfg = Config("alembic.ini")
+    # ConfigParser requires literal percent escapes in SQLAlchemy URLs.
+    cfg.attributes["database_url"] = url.render_as_string(hide_password=False).replace("%", "%%")
+    old_job, new_job, project, training = [str(uuid.uuid4()) for _ in range(4)]
+    try:
+        with engine.begin() as connection:
+            connection.exec_driver_sql(f'CREATE SCHEMA "{schema}"')
+        command.upgrade(cfg, "3d4e5f6a7b8c")
+        with scoped.begin() as connection:
+            connection.execute(
+                sqlalchemy.text(
+                    "INSERT INTO labeling_jobs(id, text_prompt, result_minio_key) VALUES (:id, 'camera', :key)"
+                ),
+                {"id": old_job, "key": "datasets/immutable/reviewed.zip"},
+            )
+            connection.execute(
+                sqlalchemy.text("INSERT INTO projects(id, name) VALUES (:id, 'migration fixture')"), {"id": project}
+            )
+            connection.execute(
+                sqlalchemy.text(
+                    "INSERT INTO training_runs(id, project_id, name, task_type, model_variant, dataset_minio_key) "
+                    "VALUES (:id, :project, 'migration fixture', 'detect', 'yolo26n', :key)"
+                ),
+                {"id": training, "project": project, "key": "datasets/immutable/training-snapshot.zip"},
+            )
+        command.upgrade(cfg, "head")
+        with scoped.begin() as connection:
+            revision = next(
+                c for c in inspect(connection).get_columns("labeling_jobs") if c["name"] == "evidence_revision"
+            )
+            assert isinstance(revision["type"], sqlalchemy.BigInteger) and revision["nullable"] is False
+            assert revision["default"] is not None
+            assert (
+                connection.scalar(
+                    sqlalchemy.text("SELECT evidence_revision FROM labeling_jobs WHERE id = :id"), {"id": old_job}
+                )
+                == 0
+            )
+            connection.execute(
+                sqlalchemy.text("INSERT INTO labeling_jobs(id, text_prompt) VALUES (:id, 'camera')"), {"id": new_job}
+            )
+            assert (
+                connection.scalar(
+                    sqlalchemy.text("SELECT evidence_revision FROM labeling_jobs WHERE id = :id"), {"id": new_job}
+                )
+                == 0
+            )
+            connection.execute(
+                sqlalchemy.text("UPDATE labeling_jobs SET evidence_revision = 2147483648 WHERE id = :id"),
+                {"id": old_job},
+            )
+            assert (
+                connection.scalar(
+                    sqlalchemy.text(
+                        "UPDATE labeling_jobs SET evidence_revision = evidence_revision + 1 "
+                        "WHERE id = :id RETURNING evidence_revision"
+                    ),
+                    {"id": old_job},
+                )
+                == 2147483649
+            )
+            with pytest.raises(sqlalchemy.exc.IntegrityError):
+                with connection.begin_nested():
+                    connection.execute(
+                        sqlalchemy.text("UPDATE labeling_jobs SET evidence_revision = NULL WHERE id = :id"),
+                        {"id": old_job},
+                    )
+        command.downgrade(cfg, "3d4e5f6a7b8c")
+        with scoped.connect() as connection:
+            assert "evidence_revision" not in {c["name"] for c in inspect(connection).get_columns("labeling_jobs")}
+        command.upgrade(cfg, "head")
+        with scoped.connect() as connection:
+            assert (
+                connection.scalar(
+                    sqlalchemy.text("SELECT result_minio_key FROM labeling_jobs WHERE id = :id"), {"id": old_job}
+                )
+                == "datasets/immutable/reviewed.zip"
+            )
+            assert (
+                connection.scalar(
+                    sqlalchemy.text("SELECT dataset_minio_key FROM training_runs WHERE id = :id"), {"id": training}
+                )
+                == "datasets/immutable/training-snapshot.zip"
+            )
+    finally:
+        scoped.dispose()
+        with engine.begin() as connection:
+            connection.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+        engine.dispose()
+
+
 @requires_postgres
 def test_alembic_current_is_head_after_upgrade():
     """After `upgrade head`, `alembic current` must report the head revision."""
     alembic_cfg = Config("alembic.ini")
-    alembic_cfg.set_main_option("sqlalchemy.url", _postgres_dsn())
+    alembic_cfg.attributes["database_url"] = _postgres_dsn()
     command.upgrade(alembic_cfg, "head")
 
     scripts = ScriptDirectory.from_config(alembic_cfg)

@@ -56,9 +56,10 @@ test.describe("Screenshot walkthrough", () => {
 
     // Get the job_id from the page URL or API
     const jobsRes = await request.get(`/api/v1/status?video_id=${video_id}`);
-    const jobs = await jobsRes.json();
-    const completedJob = jobs.find((j: any) => j.status === "completed");
-    const job_id = completedJob.job_id;
+    const jobs: { status: string; job_id: string }[] = await jobsRes.json();
+    const completedJob = jobs.find((j) => j.status === "completed");
+    expect(completedJob).toBeDefined();
+    const job_id = completedJob!.job_id;
 
     // ── 3. Review page ──────────────────────────────────────
     await page.click("text=Review Results");

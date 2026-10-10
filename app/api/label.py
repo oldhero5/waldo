@@ -1,5 +1,6 @@
 import asyncio
 import tempfile
+import uuid
 from pathlib import Path
 
 import cv2
@@ -7,10 +8,18 @@ import numpy as np
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 from PIL import Image
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from lib.auth import get_current_user
+from lib.authorization import (
+    WorkspacePrincipal,
+    register_task_owner,
+    require_resource,
+    require_workspace_editor,
+)
+from lib.dataset_evidence import invalidate_current_export
 from lib.db import Annotation, Frame, LabelingJob, Project, SessionLocal, Video
+from lib.preview import normalize_preview_result
 from lib.storage import download_file
 from lib.tasks import label_video, label_video_exemplar
 
@@ -36,8 +45,8 @@ class LabelRequest(BaseModel):
     project_id: str | None = None
     text_prompt: str | None = None
     class_prompts: list[ClassPrompt] | None = None
-    threshold: float = 0.5
-    fps: float = 1.0
+    threshold: float = Field(0.5, ge=0, le=1, allow_inf_nan=False)
+    fps: float = Field(1.0, gt=0, allow_inf_nan=False)
     task_type: str = "segment"
 
 
@@ -57,7 +66,10 @@ class LabelResponse(BaseModel):
 
 
 @router.post("/label", status_code=202, response_model=LabelResponse)
-def start_labeling(req: LabelRequest):
+def start_labeling(
+    req: LabelRequest,
+    principal: WorkspacePrincipal = Depends(require_workspace_editor),
+):
     session = SessionLocal()
     try:
         if not req.video_id and not req.project_id:
@@ -78,16 +90,19 @@ def start_labeling(req: LabelRequest):
         project_id = None
 
         if req.video_id:
-            video = session.query(Video).filter_by(id=req.video_id).first()
+            video = require_resource(session, principal, Video, req.video_id)
             if not video:
                 raise HTTPException(status_code=404, detail="Video not found")
             video_id = video.id
+            project_id = video.project_id
 
         if req.project_id:
-            project = session.query(Project).filter_by(id=req.project_id).first()
+            project = require_resource(session, principal, Project, req.project_id)
             if not project:
                 raise HTTPException(status_code=404, detail="Project not found")
             project_id = project.id
+            if req.video_id and video.project_id != project.id:
+                raise HTTPException(status_code=400, detail="Video does not belong to the requested project")
 
         job = LabelingJob(
             video_id=video_id,
@@ -96,6 +111,8 @@ def start_labeling(req: LabelRequest):
             class_prompts=[cp.model_dump() for cp in class_prompts] if class_prompts else None,
             prompt_type="text",
             task_type=req.task_type,
+            score_threshold=req.threshold,
+            sample_fps=req.fps,
         )
         session.add(job)
         session.commit()
@@ -110,15 +127,19 @@ def start_labeling(req: LabelRequest):
 
 
 @router.post("/label/exemplar", status_code=202, response_model=LabelResponse)
-def start_exemplar_labeling(req: ExemplarRequest):
+def start_exemplar_labeling(
+    req: ExemplarRequest,
+    principal: WorkspacePrincipal = Depends(require_workspace_editor),
+):
     session = SessionLocal()
     try:
-        video = session.query(Video).filter_by(id=req.video_id).first()
+        video = require_resource(session, principal, Video, req.video_id)
         if not video:
             raise HTTPException(status_code=404, detail="Video not found")
 
         job = LabelingJob(
             video_id=video.id,
+            project_id=video.project_id,
             text_prompt=req.class_name,
             prompt_type="exemplar",
             task_type=req.task_type,
@@ -173,6 +194,10 @@ class PreviewFrame(BaseModel):
     width: int
     height: int
     detections: list[PreviewDetection]
+    source_width: int | None = None
+    source_height: int | None = None
+    frame_duration_s: float | None = None
+    timestamp_method: str = "unknown"
 
 
 class PreviewResponse(BaseModel):
@@ -190,35 +215,7 @@ def _preview_result_to_response(result: dict) -> PreviewResponse:
     Kept as a free function so both the sync (?wait=true) path and the polling
     endpoint produce identical bodies.
     """
-    frames_out: list[PreviewFrame] = []
-    for f in result.get("frames", []):
-        frames_out.append(
-            PreviewFrame(
-                frame_idx=f["frame_index"],
-                image_b64=f["image_b64"],
-                timestamp_s=f["timestamp_s"],
-                width=f["width"],
-                height=f["height"],
-                detections=[
-                    PreviewDetection(
-                        bbox=d["bbox"],
-                        score=d["score"],
-                        label=d["label"],
-                        polygon=d.get("polygon"),
-                        track_id=d.get("track_id"),
-                    )
-                    for d in f["detections"]
-                ],
-            )
-        )
-    return PreviewResponse(
-        frames=frames_out,
-        total_detections=result.get("total_detections", 0),
-        unique_track_count=result.get("unique_track_count", 0),
-        fps=result.get("fps", 0.0),
-        video_duration_s=result.get("video_duration_s", 0.0),
-        mode=result.get("mode", "sample"),
-    )
+    return PreviewResponse.model_validate(normalize_preview_result(result))
 
 
 @router.post("/label/preview")
@@ -233,6 +230,7 @@ async def preview_prompts(
             "synchronous path will be removed in a future release."
         ),
     ),
+    principal: WorkspacePrincipal = Depends(require_workspace_editor),
 ):
     """Prompt playground — dispatches a small SAM3.1 run to the Celery worker.
 
@@ -249,11 +247,11 @@ async def preview_prompts(
     try:
         # Resolve the video to sample from.
         if req.video_id:
-            video = session.query(Video).filter_by(id=req.video_id).first()
+            video = require_resource(session, principal, Video, req.video_id)
             if not video:
                 raise HTTPException(status_code=404, detail="Video not found")
         elif req.project_id:
-            project = session.query(Project).filter_by(id=req.project_id).first()
+            project = require_resource(session, principal, Project, req.project_id)
             if not project:
                 raise HTTPException(status_code=404, detail="Project not found")
             video = session.query(Video).filter_by(project_id=project.id).first()
@@ -270,8 +268,11 @@ async def preview_prompts(
 
     from lib.tasks import app as celery_app
 
+    task_id = str(uuid.uuid4())
+    register_task_owner(task_id, principal)
     async_result = celery_app.send_task(
         "waldo.label_playground",
+        task_id=task_id,
         kwargs={
             "video_id": video_id_str,
             "prompts": req.prompts,
@@ -330,11 +331,14 @@ class SegmentPointsResponse(BaseModel):
 
 
 @router.post("/label/segment-points", response_model=SegmentPointsResponse)
-async def segment_with_points(req: SegmentPointsRequest):
+async def segment_with_points(
+    req: SegmentPointsRequest,
+    principal: WorkspacePrincipal = Depends(require_workspace_editor),
+):
     """Run SAM3 on a single frame with click points. Returns polygons for preview."""
     session = SessionLocal()
     try:
-        frame = session.query(Frame).filter_by(id=req.frame_id).first()
+        frame = require_resource(session, principal, Frame, req.frame_id)
         if not frame:
             raise HTTPException(status_code=404, detail="Frame not found")
         minio_key = frame.minio_key
@@ -419,17 +423,25 @@ class AnnotationCreateResponse(BaseModel):
 
 
 @router.post("/annotations", status_code=201, response_model=AnnotationCreateResponse)
-def create_annotation(req: AnnotationCreateRequest):
+def create_annotation(
+    req: AnnotationCreateRequest,
+    principal: WorkspacePrincipal = Depends(require_workspace_editor),
+):
     """Create a new annotation (e.g. from interactive SAM3 click-to-annotate)."""
     session = SessionLocal()
     try:
-        frame = session.query(Frame).filter_by(id=req.frame_id).first()
+        frame = require_resource(session, principal, Frame, req.frame_id)
         if not frame:
             raise HTTPException(status_code=404, detail="Frame not found")
 
+        job = require_resource(session, principal, LabelingJob, req.job_id)
+        video = require_resource(session, principal, Video, frame.video_id)
+        if (job.video_id and job.video_id != frame.video_id) or (job.project_id and job.project_id != video.project_id):
+            raise HTTPException(status_code=400, detail="Frame does not belong to the requested dataset")
+        invalidate_current_export(session, job.id)
         ann = Annotation(
-            frame_id=req.frame_id,
-            job_id=req.job_id,
+            frame_id=frame.id,
+            job_id=job.id,
             class_name=req.class_name,
             class_index=req.class_index,
             polygon=req.polygon,

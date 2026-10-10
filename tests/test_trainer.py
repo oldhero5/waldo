@@ -1,5 +1,6 @@
 """Tests for trainer module: dataset_builder, notifiers, metrics_streamer, train_manager."""
 
+import os
 import tempfile
 import zipfile
 from pathlib import Path
@@ -33,6 +34,9 @@ class TestVariants:
         assert len(VARIANTS) >= 10  # at least 10 variants
 
 
+@pytest.mark.skipif(
+    os.environ.get("WALDO_SERVICE_STACK") != "1", reason="Set WALDO_SERVICE_STACK=1 for MinIO integration"
+)
 class TestDatasetBuilder:
     def test_prepare_dataset_dir(self):
         """Test extracting a dataset zip and fixing data.yaml path."""
@@ -65,6 +69,9 @@ class TestDatasetBuilder:
             assert str(result.resolve()) in yaml_content
 
 
+@pytest.mark.skipif(
+    os.environ.get("WALDO_SERVICE_STACK") != "1", reason="Set WALDO_SERVICE_STACK=1 for Redis integration"
+)
 class TestMetricsStreamer:
     def test_publish_and_retrieve(self):
         """Test metrics round-trip through Redis."""

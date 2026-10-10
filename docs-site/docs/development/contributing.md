@@ -8,10 +8,16 @@ sidebar_position: 4
 ## Branch model
 
 - `main` — always shippable
-- `v2/...` — long-lived feature branches for major rewrites
-- `feature/...`, `fix/...` — short-lived topic branches
+- `feat/<feature>` — one short-lived feature or fix
 
-PR target is `main` unless the work is part of an in-flight v2 effort.
+PRs target `main`. A dependent PR can target its prerequisite feature branch;
+document the dependency and retarget it when the prerequisite lands.
+
+The repository's [AGENTS.md](https://github.com/oldhero5/waldo/blob/main/AGENTS.md)
+and [CONTRIBUTING.md](https://github.com/oldhero5/waldo/blob/main/CONTRIBUTING.md)
+define the operating rules: paired design choices, test-first implementation,
+surgical changes, and verified acceptance criteria. Use simple, direct language
+that follows the intent of ASD-STE100 without claiming formal compliance.
 
 ## Commit messages
 
@@ -42,9 +48,20 @@ Conventional-ish but not strict. The first line is a sentence; the body explains
 
 ## Reviewing
 
-PRs need one approving review. Reviewers should check:
+Each PR needs a fresh independent session review and the human owner's approval
+of the exact commit. The owner approves here in the project chat; the PR author
+and owner use the same GitHub account, which cannot approve its own PR on GitHub.
+The orchestrator records the evidence and required `Independent review` and
+`Human approval` statuses. A new head needs new approval. Green CI is not consent
+to merge, publish, or deploy. Every PR includes a human test plan.
+
+Reviewers should check:
 
 - The change does what the description says
 - Tests cover the new behavior
 - No secrets, no commented-out code, no `console.log` / `print` left behind
 - Pre-commit passes locally (CI will catch it otherwise)
+
+Private development videos, labels, and telemetry in `test_data/` stay local and
+are excluded from Git and Docker contexts. Hosted CI uses synthetic fixtures.
+Do not describe the development corpus as a held-out model benchmark.

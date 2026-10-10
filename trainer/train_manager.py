@@ -1,7 +1,9 @@
 """YOLO26 training orchestrator — wraps Ultralytics training API."""
 
+import json
 import logging
 import tempfile
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -164,41 +166,94 @@ def run_training(celery_task, run_id: str) -> dict:
             dataset_dir = prepare_dataset_dir(dataset_key, tmpdir)
             data_yaml = str(dataset_dir / "data.yaml")
 
-            # Validate dataset is non-empty
-            train_imgs = list((dataset_dir / "images" / "train").glob("*"))
-            train_labels = list((dataset_dir / "labels" / "train").glob("*.txt"))
-            non_empty_labels = [l for l in train_labels if l.stat().st_size > 0]
-            if not train_imgs:
-                raise ValueError(f"Dataset has no training images (expected in {dataset_dir / 'images' / 'train'})")
-            if not non_empty_labels:
-                raise ValueError(
-                    f"Dataset has {len(train_imgs)} images but no label files with annotations. "
-                    f"This usually means all annotations were filtered out during conversion. "
-                    f"Check that your labeled objects are large enough (min_area=100px²)."
-                )
+            # Source-group validation cannot be manufactured from adjacent
+            # frames of a single video.
+            manifest_path = dataset_dir / "manifest.json"
+            if manifest_path.exists():
+                manifest = json.loads(manifest_path.read_text())
+                if manifest.get("split_strategy") == "group":
+                    groups = {
+                        sample.get("group_id") for sample in manifest.get("samples", []) if sample.get("group_id")
+                    }
+                    if len(groups) < 2:
+                        raise ValueError(
+                            "At least two independent source groups are required for held-out validation; "
+                            "add another source video and export the dataset again."
+                        )
+
+            # Classification uses class directories as labels and takes the
+            # dataset root, while other tasks use numeric labels and data.yaml.
+            classification_names = None
+            training_data = data_yaml
+            if run.task_type == "classify":
+                classes_by_split = {}
+                for split, description in (("train", "training"), ("val", "validation")):
+                    class_dirs = [path for path in (dataset_dir / split).glob("*") if path.is_dir()]
+                    if not class_dirs:
+                        raise ValueError(
+                            f"Classification dataset has no non-empty {description} images; "
+                            "add sources and export the dataset again."
+                        )
+                    for directory in class_dirs:
+                        if not any(
+                            path.is_file()
+                            and path.suffix.lower() in (".jpg", ".jpeg", ".png")
+                            and path.stat().st_size > 0
+                            for path in directory.rglob("*")
+                        ):
+                            raise ValueError(
+                                f"Classification class '{directory.name}' has no non-empty "
+                                f"{description} images in {split}; add sources and export the dataset again."
+                            )
+                    classes_by_split[split] = {directory.name for directory in class_dirs}
+                if classes_by_split["train"] != classes_by_split["val"]:
+                    raise ValueError(
+                        "Classification class directories differ between train and val; "
+                        "add sources and export the dataset again."
+                    )
+                # Ultralytics derives classification indices from sorted folder
+                # names, independently of the export's original YAML order.
+                classification_names = sorted(classes_by_split["train"])
+                training_data = str(dataset_dir)
+            else:
+                train_imgs = list((dataset_dir / "images" / "train").glob("*"))
+                train_labels = list((dataset_dir / "labels" / "train").glob("*.txt"))
+                non_empty_labels = [l for l in train_labels if l.stat().st_size > 0]
+                if not train_imgs:
+                    raise ValueError(f"Dataset has no training images (expected in {dataset_dir / 'images' / 'train'})")
+                if not non_empty_labels:
+                    raise ValueError(
+                        f"Dataset has {len(train_imgs)} images but no label files with annotations. "
+                        f"This usually means all annotations were filtered out during conversion. "
+                        f"Check that your labeled objects are large enough (min_area=100px²)."
+                    )
 
             # Phase 2: Load model (pretrained or from checkpoint)
             variant = run.model_variant
             all_hp = {**DEFAULT_HYPERPARAMS, **(run.hyperparameters or {})}
             resume_from = all_hp.pop("resume_from", None)
+            auto_resume = False
 
             if resume_from:
-                # Fine-tune from an existing model's weights
+                # An explicit checkpoint must belong to this run's project.
+                try:
+                    checkpoint_id = uuid.UUID(str(resume_from))
+                except (ValueError, TypeError, AttributeError) as error:
+                    raise ValueError("resume_from must be a model registry UUID") from error
+                entry = session.query(ModelRegistry).filter_by(id=checkpoint_id).first()
+                if entry is None or not entry.weights_minio_key:
+                    raise ValueError("Requested resume checkpoint is unavailable")
+                if run.project_id is None or entry.project_id != run.project_id:
+                    raise ValueError("Resume checkpoint must belong to the training run's project")
                 checkpoint_path = tmpdir / "checkpoint.pt"
-                entry = session.query(ModelRegistry).filter_by(id=resume_from).first()
-                if entry and entry.weights_minio_key:
-                    download_file(entry.weights_minio_key, checkpoint_path)
-                    logger.info("Resuming from checkpoint: %s (%s)", entry.name, resume_from)
-                    model = YOLO(str(checkpoint_path))
-                else:
-                    logger.warning("resume_from model %s not found, using pretrained", resume_from)
-                    model = YOLO(VARIANTS.get(variant, f"{variant}.pt"))
+                download_file(entry.weights_minio_key, checkpoint_path)
+                logger.info("Resuming from checkpoint: %s (%s)", entry.name, resume_from)
+                model = YOLO(str(checkpoint_path))
             else:
                 weights = VARIANTS.get(variant, f"{variant}.pt")
 
                 # --- auto-resume from last.pt if a prior run was interrupted ---
                 # Determine the canonical output directory for this run.
-                auto_resume = False
                 run_train_dir = Path(f"/tmp/waldo-runs/{run_id}/train/weights")  # noqa: S108
                 last_pt = run_train_dir / "last.pt"
                 epoch_current = getattr(run, "epoch_current", 0) or 0
@@ -265,7 +320,7 @@ def run_training(celery_task, run_id: str) -> dict:
             train_dir.mkdir(parents=True, exist_ok=True)
 
             train_kwargs: dict = dict(
-                data=data_yaml,
+                data=training_data,
                 epochs=hp["epochs"],
                 imgsz=hp["imgsz"],
                 batch=hp["batch"],
@@ -304,15 +359,16 @@ def run_training(celery_task, run_id: str) -> dict:
             if best_weights.exists():
                 upload_file(weights_key, best_weights)
             elif last_weights.exists():
-                upload_file(weights_key, last_weights)
                 weights_key = f"models/{run.id}/last.pt"
+                upload_file(weights_key, last_weights)
 
-            # Read class names from data.yaml
+            # Classification follows the provider's folder-derived class order.
+            # Numeric-label tasks retain the class indices from data.yaml.
             import yaml
 
-            class_names_list = None
+            class_names_list = classification_names
             data_yaml_path = Path(data_yaml)
-            if data_yaml_path.exists():
+            if classification_names is None and data_yaml_path.exists():
                 with open(data_yaml_path) as f:
                     data_cfg = yaml.safe_load(f)
                 names = data_cfg.get("names")

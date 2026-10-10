@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { useAuth } from "../contexts/AuthContext";
+import { useAuth } from "../contexts/authState";
 
 export default function RegisterPage() {
   const [email, setEmail] = useState("");
@@ -18,8 +18,8 @@ export default function RegisterPage() {
     try {
       await register(email, password, displayName);
       navigate("/");
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError((err instanceof Error ? err.message : "Sign-in failed"));
     } finally {
       setLoading(false);
     }
@@ -92,7 +92,7 @@ export default function RegisterPage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-2.5 rounded-lg text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 transition-colors"
+            className="w-full py-2.5 rounded-lg text-sm font-medium  bg-accent text-on-accent hover:bg-accent-hover disabled:opacity-50 transition-colors"
           >
             {loading ? "Creating account..." : "Create account"}
           </button>

@@ -36,8 +36,8 @@ export default function UploadPage() {
           setUploadProgress({ done: files.length, total: files.length });
           navigate(`/collections`);
         }
-      } catch (e: any) {
-        setError(e.message || "Upload failed");
+      } catch (e: unknown) {
+        setError((e instanceof Error ? e.message : "Request failed") || "Upload failed");
       } finally {
         setUploading(false);
         setUploadProgress(null);
@@ -140,7 +140,7 @@ export default function UploadPage() {
               <label
                 htmlFor="file-input"
                 className="inline-block px-6 py-2 text-white rounded-lg cursor-pointer"
-                style={{ backgroundColor: "var(--accent)" }}
+                style={{ backgroundColor: "var(--accent)", color: "var(--text-on-accent)" }}
               >
                 Choose Files
               </label>

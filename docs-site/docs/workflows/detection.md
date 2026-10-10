@@ -7,35 +7,18 @@ sidebar_position: 2
 
 Source: [`lib/workflow_blocks/detection.py`](https://github.com/oldhero5/waldo/blob/main/lib/workflow_blocks/detection.py)
 
-These blocks run object detection or segmentation models against input images.
+The registered `detection` block runs YOLO inference against one input image. SAM segmentation and SAM video tracking are not registered workflow blocks.
 
 ## YOLO Detection
 
-Runs a YOLO26 model (the active one from the registry, or a specific version) against an input image and emits bounding boxes.
+Uses the shared inference engine's current model. For a specific registry model, use the separate `model_select` block in `platform.py`, configured with `model_id` and `confidence`.
 
 **Inputs:** `image: ndarray (H, W, 3)`
-**Outputs:** `detections: list[Detection]`
-**Params:**
-- `model_id` — model registry UUID, or `"active"` for the default
+**Outputs:** `detections: list[Detection]`, original `image`
+
+**Config:**
+
 - `confidence` — minimum confidence (default `0.25`)
-- `iou` — NMS IoU threshold (default `0.45`)
-- `classes` — optional class allowlist
+- `class_filter` — optional class-name allowlist
 
-## SAM Segmentation
-
-Runs SAM 3 against an image with a text or visual prompt, returns masks.
-
-**Inputs:** `image`, optional `prompt_text` or `prompt_box`
-**Outputs:** `masks: list[Mask]`
-**Params:**
-- `prompts` — list of text prompts
-- `threshold` — mask confidence cutoff
-- `resolution` — input resize before inference
-
-## SAM Video Track
-
-Runs SAM 3 against a stream of frames and tracks instances across them.
-
-**Inputs:** `frames: iterator[ndarray]`
-**Outputs:** `tracks: list[Track]`
-**Params:** prompts, tracking confidence, max gap frames
+Detections contain class name/index, confidence, and pixel xyxy boxes; segmentation models may also produce masks. This block performs image prediction and does not assign temporal track identities. The block does not expose `iou` or `model_id` configuration.

@@ -2,16 +2,16 @@
 
 from typing import Any
 
-import httpx
+from langchain_core.messages import HumanMessage, SystemMessage
 
-from lib.config import settings
+from lib.agent.providers import ProviderError, create_chat_model, get_config
 from lib.workflow_blocks.base import BlockBase, BlockResult, Port
 
 
 class LLMBlock(BlockBase):
     name = "llm"
-    display_name = "LLM (Ollama)"
-    description = "Run a text prompt through a local LLM via Ollama. Can analyze detection results, generate reports, or make decisions."
+    display_name = "Text LLM"
+    description = "Run a text prompt through the workspace-configured provider. Can analyze detection results, generate reports, or make decisions."
     category = "ai"
     input_ports = [
         Port("prompt", "text", "Text prompt or template"),
@@ -24,7 +24,7 @@ class LLMBlock(BlockBase):
     def execute(self, inputs: dict[str, Any]) -> BlockResult:
         prompt = inputs.get("prompt", "")
         context = inputs.get("context", None)
-        model = self.config.get("model", settings.ollama_model)
+        model = self.config.get("model") or None
         system_prompt = self.config.get("system_prompt", "You are a helpful computer vision assistant.")
 
         # Build the full prompt with context
@@ -32,32 +32,33 @@ class LLMBlock(BlockBase):
         if context is not None:
             full_prompt = f"{prompt}\n\nContext: {context}"
 
-        # Call Ollama
+        principal = getattr(self, "execution_principal", None)
+        workspace_id = str(principal.workspace_id) if principal else None
+        if principal is not None:
+            from lib.db import SessionLocal
+            from lib.workflow_blocks.platform import _execution_principal
+
+            with SessionLocal() as session:
+                _execution_principal(self, session)
+        config = getattr(self, "provider_config", None) or get_config(workspace_id)
         try:
-            response = httpx.post(
-                f"{settings.ollama_url}/api/generate",
-                json={
-                    "model": model,
-                    "prompt": full_prompt,
-                    "system": system_prompt,
-                    "stream": False,
-                },
-                timeout=60.0,
+            response = create_chat_model(workspace_id=workspace_id, model=model, config=config).invoke(
+                [SystemMessage(content=system_prompt), HumanMessage(content=full_prompt)]
             )
-            response.raise_for_status()
-            result = response.json()
-            text = result.get("response", "")
-        except Exception as e:
-            text = f"LLM error: {e}"
+        except ProviderError:
+            raise
+        except Exception:
+            raise ProviderError("Text provider request failed or timed out; check server configuration") from None
+        text = response.content if isinstance(response.content, str) else str(response.content)
 
         return BlockResult(
             outputs={"response": text},
-            metadata={"model": model, "prompt_length": len(full_prompt)},
+            metadata={"model": model or config.model, "provider": config.provider, "prompt_length": len(full_prompt)},
         )
 
     def _config_schema(self) -> dict:
         return {
-            "model": {"type": "string", "default": "llama3.2", "label": "Ollama model"},
+            "model": {"type": "string", "default": "", "label": "Configured model (blank uses workspace default)"},
             "system_prompt": {
                 "type": "text",
                 "default": "You are a helpful computer vision assistant.",

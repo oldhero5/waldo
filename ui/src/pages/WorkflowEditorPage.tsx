@@ -2,7 +2,7 @@
  * Visual workflow editor — Pretext-inspired editorial design.
  * Block palette with warm cards, React Flow canvas, config panel.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ReactFlow,
   Background,
@@ -13,24 +13,18 @@ import {
   useEdgesState,
   addEdge,
   type Connection,
+  type Edge,
   type NodeTypes,
   BackgroundVariant,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { Play, Loader2, Trash2, ChevronDown, ChevronRight, Cpu, Scissors, Filter, MessageSquare, ArrowDownToLine, Eye, GitBranch, Scan, Rocket, Save, Cloud } from "lucide-react";
+import { Link, useParams } from "react-router-dom";
+import { authFetch } from "../api";
+import type { BlockSchema, WorkflowGraph, WorkflowNode, WorkflowRunResult, SavedWorkflowDetail } from "../lib/workflowTypes";
 import BlockNode from "../components/workflow/BlockNode";
 
 const BASE = "/api/v1";
-
-interface BlockSchema {
-  name: string;
-  display_name: string;
-  description: string;
-  category: string;
-  inputs: { name: string; type: string; description: string; required: boolean }[];
-  outputs: { name: string; type: string; description: string }[];
-  config_schema: Record<string, any>;
-}
 
 const nodeTypes: NodeTypes = { block: BlockNode };
 
@@ -46,78 +40,93 @@ const CATEGORY_META: Record<string, { color: string; icon: typeof Cpu; label: st
   general: { color: "#6b7280", icon: Filter, label: "General" },
 };
 
-let nodeId = 0;
-const getId = () => `node_${++nodeId}`;
-
 export default function WorkflowEditorPage() {
-  const [nodes, setNodes, onNodesChange] = useNodesState<any>([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState<any>([]);
+  const { workflowId } = useParams<{ workflowId: string }>();
+  // Route identity owns the complete editor session, including drafts and in-flight requests.
+  return <WorkflowEditor key={workflowId || "new"} workflowId={workflowId} />;
+}
+
+function WorkflowEditor({ workflowId }: { workflowId?: string }) {
+  const [nodes, setNodes, onNodesChange] = useNodesState<WorkflowNode>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [blocks, setBlocks] = useState<BlockSchema[]>([]);
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
-  const [runResult, setRunResult] = useState<any>(null);
+  const [runResult, setRunResult] = useState<WorkflowRunResult | null>(null);
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
   const [deployInfo, setDeployInfo] = useState<{ url: string; curl: string } | null>(null);
+  const [savedWorkflow, setSavedWorkflow] = useState<SavedWorkflowDetail | null>(null);
+  const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
+  const [loadError, setLoadError] = useState("");
+  const saveRequest = useRef<AbortController | null>(null);
+  const runRequest = useRef<AbortController | null>(null);
+
+  useEffect(() => () => {
+    saveRequest.current?.abort();
+    runRequest.current?.abort();
+  }, []);
 
   useEffect(() => {
-    fetch(`${BASE}/workflows/blocks`)
-      .then((r) => r.json())
-      .then((d) => {
-        const blockList = d.blocks || [];
-        setBlocks(blockList);
-
-        // Load template if coming from templates page
-        const templateJson = sessionStorage.getItem("waldo_workflow_template");
-        if (templateJson) {
-          sessionStorage.removeItem("waldo_workflow_template");
-          try {
-            const template = JSON.parse(templateJson);
-            const graph = template.graph;
-            if (graph?.nodes && graph?.edges) {
-              // Convert template nodes to React Flow format
-              const blockMap: Record<string, BlockSchema> = {};
-              for (const b of blockList) blockMap[b.name] = b;
-
-              const rfNodes = graph.nodes.map((n: any) => {
-                const schema = blockMap[n.type];
-                const catMeta = CATEGORY_META[schema?.category || "general"] || CATEGORY_META.general;
-                return {
-                  id: n.id,
-                  type: "block",
-                  position: n.position || { x: 0, y: 0 },
-                  data: {
-                    label: schema?.display_name || n.type,
-                    blockType: n.type,
-                    category: schema?.category || "general",
-                    color: catMeta.color,
-                    inputs: schema?.inputs || [],
-                    outputs: schema?.outputs || [],
-                    config: n.config || {},
-                    configSchema: schema?.config_schema || {},
-                  },
-                };
-              });
-
-              const rfEdges = graph.edges.map((e: any, i: number) => ({
-                id: `e${i}`,
-                source: e.source,
-                sourceHandle: e.sourceHandle || e.source_port,
-                target: e.target,
-                targetHandle: e.targetHandle || e.target_port,
-                animated: true,
-                style: { stroke: "var(--accent)", strokeWidth: 2 },
-              }));
-
-              setNodes(rfNodes);
-              setEdges(rfEdges);
-              nodeId = Math.max(...graph.nodes.map((n: any) => parseInt(n.id.replace("n", "")) || 0), 0);
-            }
-          } catch { /* invalid template JSON */ }
+    const controller = new AbortController();
+    let active = true;
+    const read = async (url: string) => {
+      const response = await authFetch(url, { signal: controller.signal });
+      const data = await response.json();
+      if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : "Could not load workflow");
+      return data;
+    };
+    const load = async () => {
+      try {
+        const [catalog, saved]: [{ blocks: BlockSchema[] }, SavedWorkflowDetail | null] = await Promise.all([
+          read(`${BASE}/workflows/blocks`),
+          workflowId ? read(`${BASE}/workflows/saved/${encodeURIComponent(workflowId)}`) : Promise.resolve(null),
+        ]);
+        if (!active || controller.signal.aborted) return;
+        const blockList = catalog.blocks;
+        let graph = saved?.graph;
+        if (!workflowId) {
+          const templateJson = sessionStorage.getItem("waldo_workflow_template");
+          if (templateJson) {
+            const template: { graph: WorkflowGraph } = JSON.parse(templateJson);
+            graph = template.graph;
+            sessionStorage.removeItem("waldo_workflow_template");
+          }
         }
-      })
-      .catch(() => {});
-  }, []); // eslint-disable-line
+        const blockMap = new Map(blockList.map((block) => [block.name, block]));
+        const loadedNodes: WorkflowNode[] = (graph?.nodes || []).map((node, i) => {
+          const schema = blockMap.get(node.type);
+          const category = schema?.category || "general";
+          return {
+            id: node.id, type: "block", position: node.position || { x: 300, y: 80 + i * 100 },
+            data: {
+              label: schema?.display_name || node.type, blockType: node.type, category,
+              color: (CATEGORY_META[category] || CATEGORY_META.general).color,
+              inputs: schema?.inputs || [], outputs: schema?.outputs || [],
+              config: node.config || {}, configSchema: schema?.config_schema || {},
+            },
+          };
+        });
+        const loadedEdges: Edge[] = (graph?.edges || []).map((edge, i) => ({
+          id: `e${i}`, source: edge.source, target: edge.target,
+          sourceHandle: edge.sourceHandle || edge.source_port,
+          targetHandle: edge.targetHandle || edge.target_port,
+          animated: true, style: { stroke: "var(--accent)", strokeWidth: 2 },
+        }));
+        setBlocks(blockList);
+        setNodes(loadedNodes);
+        setEdges(loadedEdges);
+        setSavedWorkflow(saved);
+        setLoadState("ready");
+      } catch (error) {
+        if (!active || controller.signal.aborted) return;
+        setLoadError(error instanceof Error ? error.message : "Could not load workflow");
+        setLoadState("error");
+      }
+    };
+    void load();
+    return () => { active = false; controller.abort(); };
+  }, [workflowId, setNodes, setEdges]);
 
   const onConnect = useCallback(
     (params: Connection) => setEdges((eds) => addEdge({
@@ -130,7 +139,11 @@ export default function WorkflowEditorPage() {
 
   const addBlock = useCallback(
     (block: BlockSchema) => {
-      const id = getId();
+      // randomUUID is unavailable on non-loopback HTTP origins.
+      const randomId = typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, "0")).join("");
+      const id = `node_${randomId}`;
       const catMeta = CATEGORY_META[block.category] || CATEGORY_META.general;
       setNodes((nds) => [...nds, {
         id,
@@ -153,38 +166,82 @@ export default function WorkflowEditorPage() {
 
   const deleteSelected = useCallback(() => {
     if (!selectedNode) return;
-    setNodes((nds) => nds.filter((n: any) => n.id !== selectedNode));
-    setEdges((eds) => eds.filter((e: any) => e.source !== selectedNode && e.target !== selectedNode));
+    setNodes((nds) => nds.filter((n) => n.id !== selectedNode));
+    setEdges((eds) => eds.filter((e) => e.source !== selectedNode && e.target !== selectedNode));
     setSelectedNode(null);
   }, [selectedNode, setNodes, setEdges]);
 
   const runWorkflow = useCallback(async () => {
+    if (runRequest.current) return;
+    const controller = new AbortController();
+    runRequest.current = controller;
     setRunning(true);
     setRunResult(null);
     try {
-      const graph = {
-        nodes: nodes.map((n: any) => ({ id: n.id, type: n.data.blockType, config: n.data.config || {} })),
-        edges: edges.map((e: any) => ({
+      const graph: WorkflowGraph = {
+        nodes: nodes.map((n) => ({ id: n.id, type: n.data.blockType, config: n.data.config || {} })),
+        edges: edges.map((e) => ({
           source: e.source, source_port: e.sourceHandle || "output",
           target: e.target, target_port: e.targetHandle || "input",
         })),
       };
-      const res = await fetch(`${BASE}/workflows/run`, {
-        method: "POST",
+      const res = await authFetch(`${BASE}/workflows/run`, {
+        method: "POST", signal: controller.signal,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ graph }),
       });
-      setRunResult(await res.json());
-    } catch (e: any) {
-      setRunResult({ errors: [e.message] });
+      const data = await res.json();
+      if (controller.signal.aborted) return;
+      if (!res.ok) throw new Error(typeof data.detail === "string" ? data.detail : "Workflow request failed");
+      setRunResult(data);
+    } catch (e) {
+      if (!controller.signal.aborted) setRunResult({ errors: [e instanceof Error ? e.message : "Workflow request failed"] });
     } finally {
-      setRunning(false);
+      if (!controller.signal.aborted) { runRequest.current = null; setRunning(false); }
     }
   }, [nodes, edges]);
 
+  const saveWorkflow = async () => {
+    if (saveRequest.current) return;
+    const name = savedWorkflow?.name || prompt("Workflow name:", "My Workflow");
+    if (!name) return;
+    const controller = new AbortController();
+    saveRequest.current = controller;
+    setSaving(true);
+    setRunResult(null);
+    setDeployInfo(null);
+    const graph: WorkflowGraph = {
+      nodes: nodes.map((node) => ({ id: node.id, type: node.data.blockType, config: node.data.config, position: node.position })),
+      edges: edges.map((edge) => ({ source: edge.source, source_port: edge.sourceHandle || "output", target: edge.target, target_port: edge.targetHandle || "input" })),
+    };
+    try {
+      const response = await authFetch(savedWorkflow ? `${BASE}/workflows/saved/${encodeURIComponent(savedWorkflow.slug)}` : `${BASE}/workflows`, {
+        method: savedWorkflow ? "PUT" : "POST", signal: controller.signal,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, description: savedWorkflow?.description || "", graph }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : "Could not save workflow");
+      if (controller.signal.aborted) return;
+      const saved: SavedWorkflowDetail = { ...data, graph };
+      // Remember successful creation before deploying: a failed deployment retry must update this record.
+      setSavedWorkflow(saved);
+      const deployResponse = await authFetch(`${BASE}/workflows/saved/${encodeURIComponent(saved.slug)}/deploy`, {
+        method: "POST", signal: controller.signal,
+      });
+      const deployed = await deployResponse.json();
+      if (!deployResponse.ok) throw new Error(typeof deployed.detail === "string" ? deployed.detail : "Workflow saved, but deployment failed");
+      if (!controller.signal.aborted) setDeployInfo({ url: deployed.endpoint, curl: deployed.curl });
+    } catch (error) {
+      if (!controller.signal.aborted) setRunResult({ errors: [error instanceof Error ? error.message : "Could not save workflow"] });
+    } finally {
+      if (!controller.signal.aborted) { saveRequest.current = null; setSaving(false); }
+    }
+  };
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if ((e.key === "Delete" || e.key === "Backspace") && !(e.target instanceof HTMLInputElement)) deleteSelected();
+      if ((e.key === "Delete" || e.key === "Backspace") && !(e.target instanceof HTMLInputElement) && !(e.target instanceof HTMLTextAreaElement) && !(e.target instanceof HTMLElement && e.target.isContentEditable)) deleteSelected();
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
@@ -198,7 +255,16 @@ export default function WorkflowEditorPage() {
     });
   };
 
-  const selectedNodeData = nodes.find((n: any) => n.id === selectedNode)?.data;
+  if (loadState !== "ready") {
+    return (
+      <div className="p-6">
+        {loadState === "loading" ? <p role="status">Loading workflow...</p> : <p role="alert" style={{ color: "var(--danger)" }}>{loadError}</p>}
+        <Link to="/workflows" className="inline-block mt-3 underline text-sm">Back to workflows</Link>
+      </div>
+    );
+  }
+
+  const selectedNodeData = nodes.find((n) => n.id === selectedNode)?.data;
 
   // Group blocks by category
   const grouped = blocks.reduce<Record<string, BlockSchema[]>>((acc, b) => {
@@ -323,7 +389,7 @@ export default function WorkflowEditorPage() {
           />
           <MiniMap
             style={{ backgroundColor: "var(--bg-surface)", border: "1px solid var(--border-subtle)", borderRadius: 16, opacity: 0.9 }}
-            nodeColor={(n: any) => n.data?.color || "#6b7280"}
+            nodeColor={(n) => typeof n.data.color === "string" ? n.data.color : "#6b7280"}
             maskColor="var(--bg-page)"
           />
 
@@ -343,38 +409,15 @@ export default function WorkflowEditorPage() {
 
           {/* Toolbar */}
           <Panel position="top-right">
-            <div className="flex gap-2">
+            <div className="flex gap-2 items-center">
+              {savedWorkflow && <span className="text-sm mr-2" style={{ color: "var(--text-secondary)" }}>{savedWorkflow.name}</span>}
               {selectedNode && (
                 <button onClick={deleteSelected} className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium surface" style={{ color: "var(--danger)" }}>
                   <Trash2 size={13} /> Delete
                 </button>
               )}
               <button
-                onClick={async () => {
-                  const name = prompt("Workflow name:", "My Workflow");
-                  if (!name) return;
-                  setSaving(true);
-                  try {
-                    const graph = {
-                      nodes: nodes.map((n: any) => ({ id: n.id, type: n.data.blockType, config: n.data.config || {} })),
-                      edges: edges.map((e: any) => ({ source: e.source, source_port: e.sourceHandle || "output", target: e.target, target_port: e.targetHandle || "input" })),
-                    };
-                    const res = await fetch(`${BASE}/workflows`, {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ name, graph }),
-                    });
-                    if (res.ok) {
-                      const data = await res.json();
-                      // Deploy immediately
-                      const deployRes = await fetch(`${BASE}/workflows/saved/${data.slug}/deploy`, { method: "POST" });
-                      if (deployRes.ok) {
-                        const deploy = await deployRes.json();
-                        setDeployInfo({ url: deploy.endpoint, curl: deploy.curl });
-                      }
-                    }
-                  } finally { setSaving(false); }
-                }}
+                onClick={saveWorkflow}
                 disabled={saving || nodes.length === 0}
                 className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-medium surface"
                 style={{ color: "var(--text-primary)" }}
@@ -385,7 +428,7 @@ export default function WorkflowEditorPage() {
               <button
                 onClick={runWorkflow}
                 disabled={running || nodes.length === 0}
-                className="flex items-center gap-1.5 px-5 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700 disabled:opacity-40 transition-all"
+                className="flex items-center gap-1.5 px-5 py-2.5 bg-accent text-on-accent rounded-xl text-sm font-semibold hover:bg-accent-hover disabled:opacity-40 transition-all"
                 style={{ boxShadow: "0 4px 16px rgb(37 99 235 / 0.3)" }}
               >
                 {running ? <Loader2 size={15} className="animate-spin" /> : <Play size={15} />}
@@ -424,10 +467,10 @@ export default function WorkflowEditorPage() {
           {runResult && (
             <Panel position="bottom-center">
               <div className="surface p-4 max-w-lg max-h-52 overflow-y-auto" style={{ borderRadius: 20 }}>
-                {runResult.errors?.length > 0 ? (
+                {(runResult.errors?.length ?? 0) > 0 ? (
                   <div>
                     <p className="eyebrow mb-2" style={{ color: "var(--danger)" }}>Errors</p>
-                    {runResult.errors.map((e: string, i: number) => (
+                    {runResult.errors?.map((e: string, i: number) => (
                       <p key={i} className="text-xs mb-1" style={{ color: "var(--danger)" }}>{e}</p>
                     ))}
                   </div>
@@ -439,7 +482,7 @@ export default function WorkflowEditorPage() {
                     </pre>
                     {runResult.metadata && Object.keys(runResult.metadata).length > 0 && (
                       <div className="mt-3 pt-2 flex flex-wrap gap-2" style={{ borderTop: "1px solid var(--border-subtle)" }}>
-                        {Object.entries(runResult.metadata).map(([nid, meta]: [string, any]) => (
+                        {Object.entries(runResult.metadata).map(([nid, meta]) => (
                           <span key={nid} className="text-[10px] px-2 py-1 rounded-lg" style={{ backgroundColor: "var(--bg-inset)", fontFamily: "var(--font-mono)", color: "var(--text-secondary)" }}>
                             {meta.block_type} {meta.elapsed_ms}ms
                           </span>
@@ -480,7 +523,7 @@ export default function WorkflowEditorPage() {
             {selectedNodeData.inputs?.length > 0 && (
               <div>
                 <p className="eyebrow mb-2">Inputs</p>
-                {selectedNodeData.inputs.map((p: any) => (
+                {selectedNodeData.inputs.map((p) => (
                   <div key={p.name} className="flex items-center gap-2 mb-1">
                     <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: selectedNodeData.color }} />
                     <span className="text-xs" style={{ fontFamily: "var(--font-mono)", color: "var(--text-secondary)" }}>{p.name}</span>
@@ -492,7 +535,7 @@ export default function WorkflowEditorPage() {
             {selectedNodeData.outputs?.length > 0 && (
               <div>
                 <p className="eyebrow mb-2">Outputs</p>
-                {selectedNodeData.outputs.map((p: any) => (
+                {selectedNodeData.outputs.map((p) => (
                   <div key={p.name} className="flex items-center gap-2 mb-1">
                     <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: selectedNodeData.color, opacity: 0.6 }} />
                     <span className="text-xs" style={{ fontFamily: "var(--font-mono)", color: "var(--text-secondary)" }}>{p.name}</span>
@@ -506,17 +549,18 @@ export default function WorkflowEditorPage() {
             {Object.keys(selectedNodeData.configSchema || {}).length > 0 && (
               <div>
                 <p className="eyebrow mb-2">Configuration</p>
-                {Object.entries(selectedNodeData.configSchema).map(([key, schema]: [string, any]) => (
-                  <div key={key} className="mb-3">
-                    <label className="text-[10px] block mb-1" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-mono)" }}>
+                {Object.entries(selectedNodeData.configSchema).map(([key, schema]) => (
+                  <div key={`${selectedNode}:${key}`} className="mb-3">
+                    <label htmlFor={`config-${selectedNode}-${key}`} className="text-[10px] block mb-1" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-mono)" }}>
                       {schema.label || key}
                     </label>
                     {schema.type === "text" ? (
                       <textarea
-                        defaultValue={schema.default ?? ""}
+                        id={`config-${selectedNode}-${key}`}
+                        value={String(selectedNodeData.config[key] ?? schema.default ?? "")}
                         rows={3}
                         onChange={(e) => {
-                          setNodes((nds: any) => nds.map((n: any) =>
+                          setNodes((nds) => nds.map((n) =>
                             n.id === selectedNode ? { ...n, data: { ...n.data, config: { ...n.data.config, [key]: e.target.value } } } : n
                           ));
                         }}
@@ -525,10 +569,11 @@ export default function WorkflowEditorPage() {
                       />
                     ) : (
                       <input
+                        id={`config-${selectedNode}-${key}`}
                         type={schema.type === "number" ? "number" : "text"}
-                        defaultValue={schema.default ?? ""}
+                        value={String(selectedNodeData.config[key] ?? schema.default ?? "")}
                         onChange={(e) => {
-                          setNodes((nds: any) => nds.map((n: any) =>
+                          setNodes((nds) => nds.map((n) =>
                             n.id === selectedNode ? { ...n, data: { ...n.data, config: { ...n.data.config, [key]: schema.type === "number" ? Number(e.target.value) : e.target.value } } } : n
                           ));
                         }}

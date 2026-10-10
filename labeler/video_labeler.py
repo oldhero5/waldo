@@ -1,12 +1,14 @@
 """Video-native labeling pipeline using SAM3.1 MLX.
 
-Processes videos directly without frame extraction. Uses backbone caching and
-object tracking for efficient multi-object detection across video frames.
+Processes videos directly without frame extraction. Shares each frame's backbone
+across prompts and tracks objects across sampled video frames.
 Streams detections to Redis for live UI updates.
 """
 
+import copy
 import json
 import logging
+import math
 import tempfile
 from pathlib import Path
 
@@ -14,10 +16,13 @@ import cv2
 import numpy as np
 from PIL import Image
 
+from labeler.errors import RetryableLabelingError, is_retryable
 from labeler.pipeline import _update_job
 from lib.config import settings
+from lib.dataset_evidence import invalidate_current_export
 from lib.db import Annotation, Frame, LabelingJob, SessionLocal, Video
 from lib.storage import download_file, upload_file
+from lib.video_timing import frame_timing, probe_frame_timing
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +133,7 @@ def _result_to_detections(result, W: int, H: int, prompts: list[str]) -> list[di
             contours, _ = cv2.findContours(mask_u8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             if contours:
                 largest = max(contours, key=cv2.contourArea)
-                if cv2.contourArea(largest) > 50:
+                if cv2.contourArea(largest) > 0:
                     eps = 0.001 * cv2.arcLength(largest, True)
                     approx = cv2.approxPolyDP(largest, eps, True)
                     if len(approx) >= 3:
@@ -157,19 +162,17 @@ def process_video_native(
     prompts: list[str],
     threshold: float = 0.35,
     detect_every: int = 30,
-    backbone_every: int = 4,
     resolution: int = 1008,
+    *,
+    sample_fps: float | None = None,
 ) -> list[dict]:
-    """Process a video with SAM3.1 MLX — detect-only with aggressive frame skip.
+    """Assess sampled source frames with fresh image features for each frame.
 
-    Runs DETR detection every `detect_every` frames with backbone caching.
-    SimpleTracker maintains object IDs across detections via IoU matching.
-
-    With detect_every=30 on a 4320-frame video:
-    - 144 DETR calls × ~150ms = 22s
-    - 144 frame reads × ~3ms = 0.4s
-    - 144 preprocess × ~20ms = 3s
-    - Total: ~25-30s per video
+    A provided sample FPS determines the source-frame stride; otherwise the
+    legacy explicit stride is used. Every sampled frame is returned, including
+    negative frames, so callers can report the assessed timestamps. Time is
+    taken from source presentation timestamps when available; otherwise each
+    result explicitly identifies its frame-index/FPS approximation.
     """
     import mlx.core as mx
     from mlx_vlm.generate import wired_limit
@@ -178,71 +181,70 @@ def process_video_native(
 
     from labeler.sam3_optimized import detect_with_backbone_fast as _detect_with_backbone
 
+    if sample_fps is not None and (not math.isfinite(sample_fps) or sample_fps <= 0):
+        raise ValueError("sample_fps must be a positive finite number")
+    if detect_every < 1:
+        raise ValueError("detect_every must be positive")
     predictor = _get_predictor(threshold, resolution)
-
+    timings = probe_frame_timing(video_path)
     cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        raise RuntimeError(f"Cannot open video: {video_path}")
-
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    fps = cap.get(cv2.CAP_PROP_FPS) or 24.0
-    W = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    H = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-
-    tracker = SimpleTracker()
-    backbone_cache = None
-    encoder_cache = {}
-    detect_count = 0
     results = []
-
-    with wired_limit(predictor.model):
-        for fi in range(total_frames):
-            ret, frame_bgr = cap.read()
-            if not ret:
-                break
-
-            if fi % detect_every != 0:
-                continue
-
-            frame_pil = Image.fromarray(cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB))
-            inputs = predictor.processor.preprocess_image(frame_pil)
-            pixel_values = mx.array(inputs["pixel_values"])
-
-            if detect_count % backbone_every == 0 or backbone_cache is None:
-                backbone_cache = _get_backbone_features(predictor.model, pixel_values)
-                encoder_cache.clear()
-
-            result = _detect_with_backbone(
-                predictor,
-                backbone_cache,
-                prompts,
-                frame_pil.size,
-                threshold,
-                encoder_cache=encoder_cache,
-            )
-            result = tracker.update(result)
-            detect_count += 1
-
-            if len(result.scores) > 0:
+    try:
+        if not cap.isOpened():
+            raise RuntimeError(f"Cannot open video: {video_path}")
+        # OpenCV can estimate frame count from duration * FPS for VFR sources.
+        total_frames = len(timings) if timings else int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        width, height = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        if total_frames <= 0 or not math.isfinite(fps) or fps <= 0 or width <= 0 or height <= 0:
+            raise ValueError(f"Invalid video metadata: {video_path}")
+        stride = max(1, int(round(fps / sample_fps))) if sample_fps is not None else detect_every
+        tracker = SimpleTracker()
+        with wired_limit(predictor.model):
+            for frame_index in range(total_frames):
+                decoded, image = cap.read()
+                if not decoded:
+                    raise RuntimeError(
+                        f"Decode stopped at source frame {frame_index} of {total_frames}; "
+                        f"cannot verify complete source coverage: {video_path}"
+                    )
+                if frame_index % stride:
+                    continue
+                height, width = image.shape[:2]
+                timestamp_s, duration_s, method = frame_timing(frame_index, fps, timings)
+                frame = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+                inputs = predictor.processor.preprocess_image(frame)
+                pixels = mx.array(inputs["pixel_values"])
+                backbone = _get_backbone_features(predictor.model, pixels)
+                result = _detect_with_backbone(predictor, backbone, prompts, frame.size, threshold, encoder_cache={})
+                result = tracker.update(result)
                 results.append(
                     {
-                        "frame_idx": fi,
-                        "timestamp_s": fi / fps,
-                        "width": W,
-                        "height": H,
-                        "detections": _result_to_detections(result, W, H, prompts),
+                        "frame_idx": frame_index,
+                        "timestamp_s": timestamp_s,
+                        "frame_duration_s": duration_s,
+                        "timestamp_method": method,
+                        "source_width": width,
+                        "source_height": height,
+                        "width": width,
+                        "height": height,
+                        "source_fps": fps,
+                        "sampling_stride": stride,
+                        "detections": _result_to_detections(result, width, height, prompts),
                     }
                 )
-
-    cap.release()
-    total_dets = sum(len(r["detections"]) for r in results)
+            if cap.read()[0]:
+                raise RuntimeError(
+                    f"Decoded frames exceed the expected source frame count of {total_frames}; "
+                    f"cannot verify complete source coverage: {video_path}"
+                )
+    finally:
+        cap.release()
     logger.info(
-        "Processed %s: %d frames, %d detects, %d result frames, %d detections",
-        video_path,
-        total_frames,
-        detect_count,
+        "Assessed %d sampled frames in %s; %d sightings",
         len(results),
-        total_dets,
+        video_path,
+        sum(len(result["detections"]) for result in results),
     )
     return results
 
@@ -285,6 +287,7 @@ def _run_playground_pytorch(
         video_path = str(Path(tmp) / "video.mp4")
         download_file(minio_key, video_path)
 
+        timings = probe_frame_timing(video_path)
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
             raise RuntimeError(f"Cannot open video {minio_key}")
@@ -301,7 +304,13 @@ def _run_playground_pytorch(
             if end_idx <= start_idx:
                 end_idx = min(total_frames, start_idx + 1)
             stride = max(1, int(round(fps / max(0.1, sample_fps))))
-            indices = list(range(start_idx, end_idx, stride))
+            indices = (
+                [i for i, timing in enumerate(timings) if start_sec <= timing.timestamp_s < start_sec + duration_sec][
+                    ::stride
+                ]
+                if timings
+                else list(range(start_idx, end_idx, stride))
+            )
             # PyTorch path is slower than MLX — cap tighter to stay under the
             # synchronous HTTP timeout for the /label/preview endpoint.
             if len(indices) > 40:
@@ -325,8 +334,17 @@ def _run_playground_pytorch(
             if not ret:
                 continue
             frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+            H, W = frame_rgb.shape[:2]
+            timestamp_s, duration_s, method = frame_timing(idx, fps, timings)
             pil_frames.append(Image.fromarray(frame_rgb))
-            frame_meta.append({"frame_index": idx, "timestamp_s": idx / fps})
+            frame_meta.append(
+                {
+                    "frame_index": idx,
+                    "timestamp_s": timestamp_s,
+                    "frame_duration_s": duration_s,
+                    "timestamp_method": method,
+                }
+            )
         cap.release()
 
     if not pil_frames:
@@ -439,6 +457,10 @@ def _run_playground_pytorch(
             {
                 "frame_index": meta["frame_index"],
                 "timestamp_s": meta["timestamp_s"],
+                "frame_duration_s": meta["frame_duration_s"],
+                "timestamp_method": meta["timestamp_method"],
+                "source_width": W,
+                "source_height": H,
                 "width": W,
                 "height": H,
                 "image_b64": image_b64,
@@ -546,6 +568,7 @@ def run_playground(
         video_path = str(Path(tmp) / "video.mp4")
         download_file(minio_key, video_path)
 
+        timings = probe_frame_timing(video_path)
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
             raise RuntimeError(f"Cannot open video {minio_key}")
@@ -564,7 +587,13 @@ def run_playground(
             if end_idx <= start_idx:
                 end_idx = min(total_frames, start_idx + 1)
             stride = max(1, int(round(fps / max(0.1, sample_fps))))
-            indices = list(range(start_idx, end_idx, stride))
+            indices = (
+                [i for i, timing in enumerate(timings) if start_sec <= timing.timestamp_s < start_sec + duration_sec][
+                    ::stride
+                ]
+                if timings
+                else list(range(start_idx, end_idx, stride))
+            )
             # Cap so we don't DOS the worker — at sample_fps=4, 16s ≈ 64 frames.
             if len(indices) > 120:
                 indices = indices[:120]
@@ -588,6 +617,8 @@ def run_playground(
                 if not ret:
                     continue
                 frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+                H, W = frame_rgb.shape[:2]
+                timestamp_s, duration_s, method = frame_timing(idx, fps, timings)
                 frame_pil = Image.fromarray(frame_rgb)
 
                 inputs = predictor.processor.preprocess_image(frame_pil)
@@ -619,7 +650,11 @@ def run_playground(
                 frames_out.append(
                     {
                         "frame_index": idx,
-                        "timestamp_s": idx / fps,
+                        "timestamp_s": timestamp_s,
+                        "frame_duration_s": duration_s,
+                        "timestamp_method": method,
+                        "source_width": W,
+                        "source_height": H,
                         "width": W,
                         "height": H,
                         "image_b64": image_b64,
@@ -665,224 +700,285 @@ def run_playground(
     }
 
 
-def run_video_labeling_pipeline(celery_task, job_id: str) -> dict:
-    """Main labeling pipeline — processes videos natively with SAM3.1.
+def _replace_native_observations(session, job, video, video_path, frame_results, tmpdir, prompt_to_class, class_names):
+    """Replace one video's sightings in this run; caller commits only on success."""
+    source_frames = session.query(Frame.id).filter_by(video_id=video.id)
+    session.query(Annotation).filter(
+        Annotation.job_id == job.id,
+        Annotation.frame_id.in_(source_frames),
+    ).delete(synchronize_session=False)
+    observations = []
+    cap = cv2.VideoCapture(str(video_path))
+    try:
+        if not cap.isOpened():
+            raise RuntimeError(f"Cannot reopen video: {video.id}")
+        for result in frame_results:
+            if not result["detections"]:
+                continue
+            frame_index = result["frame_idx"]
+            key = f"frames/{job.id}/{video.id}_{frame_index:06d}.jpg"
+            # Run-specific keys avoid conflating extraction ordinals with
+            # source decode indices from other pipelines/jobs.
+            frame = session.query(Frame).filter_by(video_id=video.id, minio_key=key).first()
+            if frame is None:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
+                decoded, image = cap.read()
+                if not decoded:
+                    raise RuntimeError(f"Cannot read evidence source frame {frame_index} in video {video.id}")
+                image_path = tmpdir / f"frame_{video.id}_{frame_index}.jpg"
+                if not cv2.imwrite(str(image_path), image):
+                    raise OSError(f"Cannot write evidence frame: {image_path}")
+                upload_file(key, image_path)
+                image_path.unlink(missing_ok=True)
+                frame = Frame(
+                    video_id=video.id,
+                    frame_number=frame_index,
+                    timestamp_s=result["timestamp_s"],
+                    minio_key=key,
+                    width=result["width"],
+                    height=result["height"],
+                )
+                session.add(frame)
+                session.flush()
+            live = []
+            for detection in result["detections"]:
+                label = prompt_to_class.get(detection["label"], detection["label"])
+                if label not in class_names:
+                    raise ValueError(f"Unknown detection label: {label}")
+                box = detection.get("bbox")
+                if box is None or len(box) != 4:
+                    raise ValueError("Detection lacks a valid source box")
+                x1, y1, x2, y2 = box
+                width, height = result["width"], result["height"]
+                if width <= 0 or height <= 0:
+                    raise ValueError("Invalid evidence dimensions")
+                track_id = detection.get("track_id")
+                annotation = Annotation(
+                    frame_id=frame.id,
+                    job_id=job.id,
+                    class_name=label,
+                    class_index=class_names.index(label),
+                    polygon=detection.get("polygon") or [],
+                    bbox=[
+                        float((x1 + x2) / 2 / width),
+                        float((y1 + y2) / 2 / height),
+                        float((x2 - x1) / width),
+                        float((y2 - y1) / height),
+                    ],
+                    confidence=float(detection["score"]),
+                    status="pending",
+                    track_id=int(track_id) if track_id is not None else None,
+                )
+                session.add(annotation)
+                observations.append(annotation)
+                live.append({"class": label, "confidence": annotation.confidence, "track_id": track_id})
+            _publish_detection(str(job.id), video.filename, frame_index, live)
+        return observations
+    finally:
+        cap.release()
 
-    Progress tracked by video (not frame). Detections streamed to Redis.
+
+def run_video_labeling_pipeline(celery_task, job_id: str) -> dict:
+    """Store every sampled sighting and report failed clips explicitly.
+
+    Track identity is local to this job/video, not a physical-asset identity.
+    Each clip records source PTS or its explicit frame-index/FPS approximation.
+    Retries reuse completed clip transactions, including subsequent review edits.
     """
     session = SessionLocal()
     try:
         job = session.query(LabelingJob).filter_by(id=job_id).one()
+        if getattr(job, "status", None) == "completed":
+            summary = job.processing_summary or {}
+            result = {"status": "completed", "processing_summary": summary}
+            if isinstance(summary.get("videos"), list):
+                entries = summary["videos"]
+                completed = [entry for entry in entries if entry["status"] == "completed"]
+                result.update(
+                    videos_processed=len(completed),
+                    videos_failed=sum(entry["status"] == "failed" for entry in entries),
+                    annotations_created=sum(entry.get("observations", 0) for entry in completed),
+                )
+            return result
         class_prompts = job.class_prompts or [{"name": job.text_prompt, "prompt": job.text_prompt}]
-        # Build flat prompt list and reverse map: prompt_str → class_name
-        prompts = []
-        prompt_to_class: dict[str, str] = {}
-        class_names = []
-        for cp in class_prompts:
-            name = cp["name"]
+        prompts, prompt_to_class, class_names = [], {}, []
+        for config in class_prompts:
+            name = config["name"]
             if name not in class_names:
                 class_names.append(name)
-            # Support both "prompt" (single) and "prompts" (list) formats
-            aliases = cp.get("prompts") or [cp.get("prompt", name)]
-            for alias in aliases:
+            for alias in config.get("prompts") or [config.get("prompt", name)]:
                 if alias not in prompt_to_class:
                     prompts.append(alias)
                     prompt_to_class[alias] = name
-
-        # Get videos
+        threshold = getattr(job, "score_threshold", None)
+        if threshold is None:
+            threshold = settings.sam3_score_threshold
+        sample_fps = getattr(job, "sample_fps", None)
+        summary = (
+            copy.deepcopy(job.processing_summary)
+            if job.processing_summary
+            else {
+                "backend": "mlx-image-iou-tracker",
+                "coverage": "sampled",
+                "timestamp_method": "per_frame_source_pts_or_explicit_fps_approximation",
+                "score_threshold": threshold,
+                "requested_sample_fps": sample_fps,
+                "decode_gap_assessment": "early_decode_stop_fails_clip",
+                "videos": [],
+            }
+        )
+        for key, value in (("score_threshold", threshold), ("requested_sample_fps", sample_fps)):
+            if key in summary and summary[key] != value:
+                raise ValueError(f"Retry configuration differs from recorded {key}; start a new labeling job")
         if job.project_id and not job.video_id:
             videos = session.query(Video).filter_by(project_id=job.project_id).all()
         elif job.video_id:
             videos = [session.query(Video).filter_by(id=job.video_id).one()]
         else:
-            _update_job(session, job, status="failed", error_message="No videos to process")
-            return {"status": "failed"}
-
-        _update_job(session, job, status="labeling", total_frames=len(videos), processed_frames=0, progress=0.0)
+            videos = []
+        completed = {entry["video_id"]: entry for entry in summary.get("videos", []) if entry["status"] == "completed"}
+        for video in videos:
+            if str(video.id) not in completed:
+                source_frames = session.query(Frame.id).filter_by(video_id=video.id)
+                existing = (
+                    session.query(Annotation.id)
+                    .filter(Annotation.job_id == job.id, Annotation.frame_id.in_(source_frames))
+                    .first()
+                )
+                if existing is not None:
+                    raise ValueError(
+                        "Existing observations lack a committed clip completion record; start a new labeling job"
+                    )
+        summary["videos"] = [completed[str(video.id)] for video in videos if str(video.id) in completed]
+        videos_processed = len(summary["videos"])
+        observations_count = sum(entry.get("observations", 0) for entry in summary["videos"])
+        frames_processed = sum(entry.get("sampled_frames", 0) for entry in summary["videos"])
+        _update_job(
+            session,
+            job,
+            status="labeling",
+            total_frames=frames_processed,
+            processed_frames=frames_processed,
+            progress=videos_processed / len(videos) if videos else 0.0,
+            processing_summary=summary,
+            error_message=None,
+        )
         celery_task.update_state(state="LABELING")
-
-        all_annotations = []
-        video_times: list[float] = []  # seconds per video for ETA calc
-        import time as _time
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tmpdir = Path(tmpdir)
-
-            for vid_idx, video in enumerate(videos):
-                vid_start = _time.perf_counter()
-                video_path = tmpdir / video.filename
-                download_file(video.minio_key, video_path)
-
-                # Calculate ETA from running average
-                avg_s = sum(video_times) / max(1, len(video_times)) if video_times else 0
-                remaining = len(videos) - vid_idx
-                eta_s = remaining * avg_s if avg_s > 0 else 0
-
-                # Store avg in Redis for the overview API to read
-                if avg_s > 0:
-                    try:
-                        r = _get_redis()
-                        r.set(f"waldo:labeling:avg:{job_id}", str(round(avg_s, 1)), ex=3600)
-                    except Exception:
-                        pass
-
-                _publish_progress(
-                    job_id,
-                    vid_idx,
-                    len(videos),
-                    video.filename,
-                    avg_seconds=avg_s,
-                    eta_seconds=eta_s,
-                    annotations_so_far=len(all_annotations),
-                )
-
-                try:
-                    frame_results = process_video_native(
-                        str(video_path),
-                        prompts,
-                        threshold=0.35,
-                    )
-                except Exception as e:
-                    logger.warning("Failed to process %s: %s", video.filename, e)
+        with tempfile.TemporaryDirectory() as directory:
+            tmpdir = Path(directory)
+            for video in videos:
+                if str(video.id) in completed:
                     continue
-
-                # Deduplicate by track_id — keep best detection per tracked object
-                # Each unique track_id = one real-world object across the video
-                best_by_track: dict[int, dict] = {}  # track_id -> best detection info
-                for fr in frame_results:
-                    for det in fr["detections"]:
-                        if not det.get("polygon"):
-                            continue
-                        tid = det.get("track_id", -1)
-                        if tid is None:
-                            tid = -1
-                        existing_best = best_by_track.get(tid)
-                        if existing_best is None or det["score"] > existing_best["score"]:
-                            best_by_track[tid] = {
-                                **det,
-                                "frame_idx": fr["frame_idx"],
-                                "timestamp_s": fr["timestamp_s"],
-                                "width": fr["width"],
-                                "height": fr["height"],
-                            }
-
-                unique_objects = list(best_by_track.values())
-                logger.info(
-                    "Video %s: %d total detections → %d unique tracked objects",
-                    video.filename,
-                    sum(len(fr["detections"]) for fr in frame_results),
-                    len(unique_objects),
-                )
-
-                # Create frame + annotation for each unique tracked object
-                live_dets = []
-                for det in unique_objects:
-                    # Get or create frame for this detection's best frame
-                    existing_frame = (
-                        session.query(Frame).filter_by(video_id=video.id, frame_number=det["frame_idx"]).first()
+                video_path = tmpdir / f"{video.id}_{Path(video.filename).name}"
+                entry = {"video_id": str(video.id), "status": "failed"}
+                try:
+                    download_file(video.minio_key, video_path)
+                    results = process_video_native(str(video_path), prompts, threshold=threshold, sample_fps=sample_fps)
+                    invalidate_current_export(session, job.id)
+                    annotations = _replace_native_observations(
+                        session,
+                        job,
+                        video,
+                        video_path,
+                        results,
+                        tmpdir,
+                        prompt_to_class,
+                        class_names,
                     )
-
-                    if not existing_frame:
-                        cap = cv2.VideoCapture(str(video_path))
-                        cap.set(cv2.CAP_PROP_POS_FRAMES, det["frame_idx"])
-                        ret, frame_bgr = cap.read()
-                        cap.release()
-
-                        if not ret:
-                            continue
-
-                        frame_path = tmpdir / f"frame_{video.id}_{det['frame_idx']}.jpg"
-                        cv2.imwrite(str(frame_path), frame_bgr)
-                        minio_key = f"frames/{job_id}/{video.id}_{det['frame_idx']:06d}.jpg"
-                        upload_file(minio_key, frame_path)
-                        frame_path.unlink(missing_ok=True)
-
-                        db_frame = Frame(
-                            video_id=video.id,
-                            frame_number=det["frame_idx"],
-                            timestamp_s=det["timestamp_s"],
-                            minio_key=minio_key,
-                            width=det["width"],
-                            height=det["height"],
-                        )
-                        session.add(db_frame)
-                        session.flush()
-                        frame_id = db_frame.id
-                    else:
-                        frame_id = existing_frame.id
-
-                    # Map label (prompt string) to class name via reverse map
-                    label = det["label"]
-                    mapped_name = prompt_to_class.get(label, label)
-                    class_idx = class_names.index(mapped_name) if mapped_name in class_names else 0
-                    label = mapped_name
-
-                    ann = Annotation(
-                        frame_id=frame_id,
-                        job_id=job.id,
-                        class_name=label,
-                        class_index=class_idx,
-                        polygon=det["polygon"],
-                        bbox=det["bbox"],
-                        confidence=det["score"],
-                        status="pending",
-                    )
-                    session.add(ann)
-                    all_annotations.append(ann)
-
-                    live_dets.append(
+                    entry.update(
                         {
-                            "class": label,
-                            "confidence": det["score"],
-                            "track_id": det.get("track_id"),
+                            "status": "completed",
+                            "sampled_frames": len(results),
+                            "observations": len(annotations),
+                            "assessed_timestamps_s": [result["timestamp_s"] for result in results],
+                            "assessed_source_frame_indices": [result["frame_idx"] for result in results],
+                            "source_fps": results[0].get("source_fps") if results else None,
+                            "sampling_stride": results[0].get("sampling_stride") if results else None,
+                            "timestamp_method": results[0].get("timestamp_method") if results else None,
                         }
                     )
-
-                # Stream unique detections to UI
-                if live_dets:
-                    _publish_detection(job_id, video.filename, 0, live_dets)
-
-                session.commit()
-
-                # Track timing
-                vid_elapsed = _time.perf_counter() - vid_start
-                video_times.append(vid_elapsed)
-
-                # Update progress
-                _update_job(
-                    session,
-                    job,
-                    processed_frames=vid_idx + 1,
-                    progress=(vid_idx + 1) / len(videos),
+                    next_summary = {**summary, "videos": [*summary["videos"], entry]}
+                    # Completion metadata and its observations must commit in
+                    # one transaction; otherwise redelivery cannot reuse them.
+                    _update_job(
+                        session,
+                        job,
+                        processed_frames=frames_processed + len(results),
+                        total_frames=frames_processed + len(results),
+                        progress=(videos_processed + 1) / len(videos),
+                        processing_summary=next_summary,
+                        result_minio_key=None,
+                    )
+                    summary = next_summary
+                    observations_count += len(annotations)
+                    videos_processed += 1
+                    frames_processed += len(results)
+                except Exception as error:
+                    session.rollback()
+                    entry = {"video_id": str(video.id), "status": "failed", "error": str(error)}
+                    logger.exception("Video %s failed during labeling/evidence storage", video.id)
+                    if is_retryable(error):
+                        entry["status"] = "retrying"
+                        summary["videos"].append(entry)
+                        _update_job(
+                            session,
+                            job,
+                            status="retrying",
+                            processing_summary=summary,
+                            processed_frames=frames_processed,
+                            total_frames=frames_processed,
+                            error_message=str(error),
+                        )
+                        raise RetryableLabelingError(str(error)) from error
+                finally:
+                    video_path.unlink(missing_ok=True)
+                if entry["status"] != "completed":
+                    summary["videos"].append(entry)
+                    _update_job(
+                        session,
+                        job,
+                        processed_frames=frames_processed,
+                        total_frames=frames_processed,
+                        progress=videos_processed / len(videos),
+                        processing_summary=dict(summary),
+                    )
+                _publish_progress(
+                    job_id, videos_processed, len(videos), video.filename, annotations_so_far=observations_count
                 )
-
-                # Clean up video file to save disk
-                video_path.unlink(missing_ok=True)
-
-            # Final status
-            _update_job(
-                session,
-                job,
-                status="completed",
-                total_frames=len(videos),
-                processed_frames=len(videos),
-                progress=1.0,
-            )
-
-            _publish_progress(job_id, len(videos), len(videos), "done")
-
-            return {
-                "status": "completed",
-                "videos_processed": len(videos),
-                "annotations_created": len(all_annotations),
-            }
-
-    except Exception as e:
+        failures = [entry for entry in summary["videos"] if entry["status"] == "failed"]
+        status = "completed" if videos and not failures else "partial" if videos_processed else "failed"
+        error_message = "; ".join(f"{entry['video_id']}: {entry['error']}" for entry in failures) or (
+            "No videos to process" if not videos else None
+        )
+        _update_job(
+            session,
+            job,
+            status=status,
+            error_message=error_message,
+            processing_summary=dict(summary),
+            processed_frames=frames_processed,
+            total_frames=frames_processed,
+            progress=videos_processed / len(videos) if videos else 0.0,
+        )
+        return {
+            "status": status,
+            "videos_processed": videos_processed,
+            "videos_failed": len(failures),
+            "annotations_created": observations_count,
+            "processing_summary": summary,
+        }
+    except Exception as error:
+        session.rollback()
         logger.exception("Video labeling pipeline failed")
+        retryable = is_retryable(error)
         try:
-            _update_job(session, job, status="failed", error_message=str(e)[:500])
+            _update_job(session, job, status="retrying" if retryable else "failed", error_message=str(error))
         except Exception:
             pass
-        return {"status": "failed", "error": str(e)}
+        if retryable:
+            if isinstance(error, RetryableLabelingError):
+                raise
+            raise RetryableLabelingError(str(error)) from error
+        return {"status": "failed", "error": str(error)}
     finally:
         session.close()

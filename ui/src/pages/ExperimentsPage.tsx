@@ -74,8 +74,8 @@ export default function ExperimentsPage() {
       await deleteTrainingRun(runId);
       queryClient.invalidateQueries({ queryKey: ["training-runs"] });
       if (expandedId === runId) setExpandedId(null);
-    } catch (e: any) {
-      alert(e.message);
+    } catch (e: unknown) {
+      alert((e instanceof Error ? e.message : "Request failed"));
     }
   };
 
@@ -630,7 +630,7 @@ export default function ExperimentsPage() {
                       <Link
                         to={`/train/${run.run_id}`}
                         className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg text-white"
-                        style={{ backgroundColor: "var(--accent)" }}
+                        style={{ backgroundColor: "var(--accent)", color: "var(--text-on-accent)" }}
                       >
                         {run.status === "training" ? "Monitor" : "View Curves"}
                       </Link>
@@ -678,7 +678,7 @@ export default function ExperimentsPage() {
               <p className="text-sm mb-4" style={{ color: "var(--text-muted)" }}>
                 Train a model from a dataset to start tracking experiments.
               </p>
-              <Link to="/datasets" className="px-4 py-2 text-white rounded-lg text-sm inline-block" style={{ backgroundColor: "var(--accent)" }}>
+              <Link to="/datasets" className="px-4 py-2 text-white rounded-lg text-sm inline-block" style={{ backgroundColor: "var(--accent)", color: "var(--text-on-accent)" }}>
                 Go to Datasets
               </Link>
             </div>

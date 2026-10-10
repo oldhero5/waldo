@@ -4,6 +4,7 @@ import { ImageIcon, Loader2, Trash2, VideoIcon, X, ZoomIn } from "lucide-react";
 import {
   deleteComparison,
   getComparisonResult,
+  InferenceStatusError,
   listComparisons,
   saveComparison,
   startComparison,
@@ -12,6 +13,7 @@ import {
   type FrameResultOut,
   type ModelOut,
 } from "../../api";
+import { assessedFrameAt, compatibleSourceSize, seekDecodedVideo } from "../../lib/videoPresentation";
 import { drawDetections } from "./shared";
 import { TrackTimeline } from "./TrackTimeline";
 
@@ -38,7 +40,7 @@ export function CompareDemo({ confThreshold, models }: { confThreshold: number; 
   const [fullscreen, setFullscreen] = useState<"A" | "B" | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [, setVideoReady] = useState(false);
+  const [videoReady, setVideoReady] = useState(false);
   const canvasARef = useRef<HTMLCanvasElement>(null);
   const canvasBRef = useRef<HTMLCanvasElement>(null);
   const fullscreenCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -47,6 +49,8 @@ export function CompareDemo({ confThreshold, models }: { confThreshold: number; 
   const emptySet = useRef(new Set<string>()).current;
   const playTimerRef = useRef<number | null>(null);
   const playIdxRef = useRef(0);
+  const comparisonRevision = useRef({ value: 0 });
+  const seekRequest = useRef<AbortController | null>(null);
   const canvasDims = useRef<{ w: number; h: number } | null>(null);
 
   const queryClient = useQueryClient();
@@ -66,28 +70,17 @@ export function CompareDemo({ confThreshold, models }: { confThreshold: number; 
     if (!frA.length && !frB.length) return { timeline: [], timelineDetsA: [], timelineDetsB: [], totalFrames: 0 };
 
     const tsSet = new Set<number>();
-    for (const f of frA) tsSet.add(Math.round(f.timestamp_s * 1000) / 1000);
-    for (const f of frB) tsSet.add(Math.round(f.timestamp_s * 1000) / 1000);
+    for (const f of frA) tsSet.add(f.timestamp_s);
+    for (const f of frB) tsSet.add(f.timestamp_s);
     const sorted = Array.from(tsSet).sort((a, b) => a - b);
-
-    const findClosest = (frames: FrameResultOut[], ts: number): number => {
-      if (!frames.length) return -1;
-      let lo = 0, hi = frames.length - 1;
-      while (lo < hi) {
-        const mid = (lo + hi) >> 1;
-        if (frames[mid].timestamp_s < ts) lo = mid + 1; else hi = mid;
-      }
-      if (lo > 0 && Math.abs(frames[lo - 1].timestamp_s - ts) < Math.abs(frames[lo].timestamp_s - ts)) lo--;
-      return lo;
-    };
 
     const tl = sorted.map((ts) => ({ timestamp_s: ts }));
     const dA: DetectionOut[][] = sorted.map((ts) => {
-      const idx = findClosest(frA, ts);
+      const idx = assessedFrameAt(frA, ts);
       return idx >= 0 ? frA[idx].detections : [];
     });
     const dB: DetectionOut[][] = sorted.map((ts) => {
-      const idx = findClosest(frB, ts);
+      const idx = assessedFrameAt(frB, ts);
       return idx >= 0 ? frB[idx].detections : [];
     });
 
@@ -101,7 +94,7 @@ export function CompareDemo({ confThreshold, models }: { confThreshold: number; 
 
   const drawFrame = useCallback((idx: number) => {
     const video = videoRef.current;
-    if (!video || !video.videoWidth) return;
+    if (!video || !video.videoWidth || video.seeking || video.readyState < 2) return;
     const vw = video.videoWidth, vh = video.videoHeight;
 
     if (!canvasDims.current) {
@@ -111,7 +104,7 @@ export function CompareDemo({ confThreshold, models }: { confThreshold: number; 
     }
     const { w, h } = canvasDims.current;
 
-    for (const [canvasRef, dets] of [[canvasARef, timelineDetsA[idx] || []], [canvasBRef, timelineDetsB[idx] || []]] as const) {
+    for (const [canvasRef, dets, source] of [[canvasARef, timelineDetsA[idx] || [], resultA?.frames], [canvasBRef, timelineDetsB[idx] || [], resultB?.frames]] as const) {
       const canvas = canvasRef.current;
       if (!canvas) continue;
       if (canvas.width !== w || canvas.height !== h) {
@@ -120,15 +113,21 @@ export function CompareDemo({ confThreshold, models }: { confThreshold: number; 
       }
       const ctx = canvas.getContext("2d")!;
       ctx.drawImage(video, 0, 0, w, h);
-      drawDetections(ctx, dets, confThreshold, w, h, vw, vh);
+      const frameIndex = source ? assessedFrameAt(source, timeline[idx]?.timestamp_s) : -1;
+      const frame = source?.[frameIndex];
+      if (frame && compatibleSourceSize(frame, vw, vh)) drawDetections(ctx, dets, confThreshold, w, h, frame.source_width || vw, frame.source_height || vh);
     }
-  }, [confThreshold, timelineDetsA, timelineDetsB]);
+  }, [confThreshold, timelineDetsA, timelineDetsB, resultA, resultB, timeline]);
+
+  useEffect(() => {
+    if (videoReady && isVideo) drawFrame(currentFrame);
+  }, [videoReady, isVideo, drawFrame, currentFrame]);
 
   const drawImageResult = useCallback((canvasRef: React.RefObject<HTMLCanvasElement | null>, dets: DetectionOut[]) => {
     const canvas = canvasRef.current;
     const img = imgRef.current;
     if (!canvas || !img || !img.naturalWidth) return;
-    if (canvas.width !== img.naturalWidth) { canvas.width = img.naturalWidth; canvas.height = img.naturalHeight; }
+    if (canvas.width !== img.naturalWidth || canvas.height !== img.naturalHeight) { canvas.width = img.naturalWidth; canvas.height = img.naturalHeight; }
     const ctx = canvas.getContext("2d")!;
     ctx.drawImage(img, 0, 0);
     drawDetections(ctx, dets, confThreshold, img.naturalWidth, img.naturalHeight, img.naturalWidth, img.naturalHeight);
@@ -139,57 +138,70 @@ export function CompareDemo({ confThreshold, models }: { confThreshold: number; 
     if (!isVideo && resultB) drawImageResult(canvasBRef, resultB.dets);
   }, [resultA, resultB, drawImageResult, isVideo, confThreshold]);
 
-  const seekToFrame = useCallback((idx: number) => {
-    setCurrentFrame(idx);
-    const entry = timeline[idx];
-    if (!entry) return;
-    const video = videoRef.current;
-    if (!video) return;
-    video.currentTime = entry.timestamp_s;
-    const draw = () => drawFrame(idx);
-    video.addEventListener("seeked", draw, { once: true });
-    setTimeout(draw, 80);
-  }, [timeline, drawFrame]);
-
   const stopPlayback = useCallback(() => {
     if (playTimerRef.current != null) { clearTimeout(playTimerRef.current); playTimerRef.current = null; }
+    seekRequest.current?.abort();
     setPlaying(false);
   }, []);
+
+  const seekTimestamp = useCallback((idx: number) => {
+    const timestamp = timeline[idx].timestamp_s;
+    const source = [...(resultA?.frames || []), ...(resultB?.frames || [])].find((frame) => Math.abs(frame.timestamp_s - timestamp) < 0.001);
+    return timestamp + Math.min(source?.frame_duration_s ? source.frame_duration_s / 4 : 0.001, 0.005);
+  }, [timeline, resultA, resultB]);
+
+  const sourceTimestamp = useCallback((idx: number) => {
+    const timestamp = timeline[idx].timestamp_s;
+    const source = [...(resultA?.frames || []), ...(resultB?.frames || [])].find((frame) =>
+      Math.abs(frame.timestamp_s - timestamp) < 0.001 && (!frame.timestamp_method || frame.timestamp_method === "source_pts"));
+    return source ? timestamp : null;
+  }, [timeline, resultA, resultB]);
+
+  const seekToFrame = useCallback(async (idx: number) => {
+    stopPlayback();
+    const video = videoRef.current;
+    if (!video || !timeline[idx]) return;
+    const controller = new AbortController();
+    seekRequest.current = controller;
+    try {
+      await seekDecodedVideo(video, seekTimestamp(idx), controller.signal, sourceTimestamp(idx));
+      if (controller.signal.aborted) return;
+      setCurrentFrame(idx);
+      drawFrame(idx);
+    } catch (error) {
+      if (!controller.signal.aborted) setError(error instanceof Error ? error.message : "Video seek failed");
+    }
+  }, [timeline, drawFrame, seekTimestamp, sourceTimestamp, stopPlayback]);
 
   const handlePlayPause = useCallback(() => {
     if (!isVideo || totalFrames < 2) return;
     if (playing) { stopPlayback(); return; }
-
+    stopPlayback();
+    const controller = new AbortController();
+    seekRequest.current = controller;
     setPlaying(true);
     playIdxRef.current = currentFrame;
-
-    const avgGapMs = totalFrames >= 2
-      ? ((timeline[totalFrames - 1].timestamp_s - timeline[0].timestamp_s) / (totalFrames - 1)) * 1000
-      : 200;
-    const gapMs = Math.max(60, Math.min(avgGapMs, 1000));
-
-    const step = () => {
+    const step = async () => {
       const next = playIdxRef.current + 1;
-      if (next >= totalFrames) { stopPlayback(); return; }
-      playIdxRef.current = next;
-      setCurrentFrame(next);
-
       const video = videoRef.current;
-      const entry = timeline[next];
-      if (!video || !entry) { stopPlayback(); return; }
-      video.currentTime = entry.timestamp_s;
-
-      const onReady = () => {
+      if (controller.signal.aborted) return;
+      if (next >= totalFrames || !video) { stopPlayback(); return; }
+      try {
+        await seekDecodedVideo(video, seekTimestamp(next), controller.signal, sourceTimestamp(next));
+        if (controller.signal.aborted) return;
+        playIdxRef.current = next;
+        setCurrentFrame(next);
         drawFrame(next);
-        playTimerRef.current = window.setTimeout(step, gapMs);
-      };
-      video.addEventListener("seeked", onReady, { once: true });
-      setTimeout(onReady, 80);
+        const gapMs = next + 1 < totalFrames ? (timeline[next + 1].timestamp_s - timeline[next].timestamp_s) * 1000 : 0;
+        playTimerRef.current = window.setTimeout(step, Math.max(0, gapMs));
+      } catch (error) {
+        if (!controller.signal.aborted) { stopPlayback(); setError(error instanceof Error ? error.message : "Video seek failed"); }
+      }
     };
     playTimerRef.current = window.setTimeout(step, 0);
-  }, [isVideo, totalFrames, playing, currentFrame, timeline, stopPlayback, drawFrame]);
+  }, [isVideo, totalFrames, playing, currentFrame, timeline, stopPlayback, drawFrame, seekTimestamp, sourceTimestamp]);
 
-  useEffect(() => { return () => { if (playTimerRef.current != null) clearTimeout(playTimerRef.current); }; }, []);
+  useEffect(() => () => { seekRequest.current?.abort(); if (playTimerRef.current != null) clearTimeout(playTimerRef.current); }, []);
 
   const drawFullscreen = useCallback(() => {
     const fsCanvas = fullscreenCanvasRef.current;
@@ -198,23 +210,26 @@ export function CompareDemo({ confThreshold, models }: { confThreshold: number; 
       const img = imgRef.current;
       const dets = fullscreen === "A" ? resultA?.dets : resultB?.dets;
       if (!img || !img.naturalWidth) return;
-      if (fsCanvas.width !== img.naturalWidth) { fsCanvas.width = img.naturalWidth; fsCanvas.height = img.naturalHeight; }
+      if (fsCanvas.width !== img.naturalWidth || fsCanvas.height !== img.naturalHeight) { fsCanvas.width = img.naturalWidth; fsCanvas.height = img.naturalHeight; }
       const ctx = fsCanvas.getContext("2d")!;
       ctx.drawImage(img, 0, 0);
       if (dets) drawDetections(ctx, dets, confThreshold, img.naturalWidth, img.naturalHeight, img.naturalWidth, img.naturalHeight);
     } else {
       const video = videoRef.current;
-      if (!video || !video.videoWidth) return;
+      if (!video || !video.videoWidth || video.seeking || video.readyState < 2) return;
       const vw = video.videoWidth, vh = video.videoHeight;
-      if (fsCanvas.width !== vw) { fsCanvas.width = vw; fsCanvas.height = vh; }
+      if (fsCanvas.width !== vw || fsCanvas.height !== vh) { fsCanvas.width = vw; fsCanvas.height = vh; }
       const ctx = fsCanvas.getContext("2d")!;
       ctx.drawImage(video, 0, 0, vw, vh);
       const dets = fullscreen === "A" ? (timelineDetsA[currentFrame] || []) : (timelineDetsB[currentFrame] || []);
-      drawDetections(ctx, dets, confThreshold, vw, vh, vw, vh);
+      const source = fullscreen === "A" ? resultA?.frames : resultB?.frames;
+      const frameIndex = source ? assessedFrameAt(source, timeline[currentFrame]?.timestamp_s) : -1;
+      const frame = source?.[frameIndex];
+      if (frame && compatibleSourceSize(frame, vw, vh)) drawDetections(ctx, dets, confThreshold, vw, vh, frame.source_width || vw, frame.source_height || vh);
     }
-  }, [fullscreen, resultA, resultB, currentFrame, confThreshold, isVideo, timelineDetsA, timelineDetsB]);
+  }, [fullscreen, resultA, resultB, currentFrame, confThreshold, isVideo, timelineDetsA, timelineDetsB, timeline]);
 
-  useEffect(() => { if (fullscreen) { const t = setTimeout(drawFullscreen, 50); return () => clearTimeout(t); } }, [fullscreen, currentFrame, drawFullscreen]);
+  useEffect(() => { if (fullscreen) drawFullscreen(); }, [fullscreen, currentFrame, drawFullscreen]);
   useEffect(() => {
     if (!fullscreen) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setFullscreen(null); };
@@ -250,8 +265,8 @@ export function CompareDemo({ confThreshold, models }: { confThreshold: number; 
       });
       setSaved(true);
       queryClient.invalidateQueries({ queryKey: ["comparisons"] });
-    } catch (e: any) {
-      console.error(e.message);
+    } catch (e: unknown) {
+      console.error((e instanceof Error ? e.message : "Request failed"));
     } finally {
       setSaving(false);
     }
@@ -274,10 +289,16 @@ export function CompareDemo({ confThreshold, models }: { confThreshold: number; 
   }, []);
 
   useEffect(() => {
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+    const lifetime = comparisonRevision.current;
+    return () => { lifetime.value++; if (pollRef.current) clearInterval(pollRef.current); };
   }, []);
 
   const loadResults = useCallback((data: CompareResultResponse) => {
+    if (data.status === "failed") {
+      setError(data.error || "Comparison processing failed");
+      setLoading(false); setLoadingMsg("");
+      return;
+    }
     if (data.status !== "completed" || !data.results) return;
     const r = data.results;
     setResultA({
@@ -298,30 +319,55 @@ export function CompareDemo({ confThreshold, models }: { confThreshold: number; 
 
   useEffect(() => {
     if (!sessionId || resultA || resultB) return;
+    const revision = comparisonRevision.current.value;
+    const controller = new AbortController();
+    let stopped = false;
     setLoading(true);
     setLoadingMsg("Comparison running in background...");
-
-    pollRef.current = setInterval(async () => {
+    const poll = async () => {
+      let terminal = false;
       try {
-        const data = await getComparisonResult(sessionId);
-        if (data.status === "completed") {
-          if (pollRef.current) clearInterval(pollRef.current);
-          pollRef.current = null;
+        const data = await getComparisonResult(sessionId, controller.signal);
+        if (stopped || revision !== comparisonRevision.current.value) return;
+        if (data.status === "completed" || data.status === "failed") {
+          terminal = true;
           loadResults(data);
           updateSessionId(null);
         }
-      } catch {
-        // ignore
+      } catch (error) {
+        if (stopped || revision !== comparisonRevision.current.value) return;
+        if (error instanceof InferenceStatusError && [401, 403, 404].includes(error.status)) {
+          terminal = true;
+          setError(error.message); setLoading(false); setLoadingMsg("");
+          updateSessionId(null);
+        } else {
+          setLoadingMsg("Connection interrupted; checking comparison status...");
+        }
+      } finally {
+        if (!stopped && !terminal && revision === comparisonRevision.current.value) pollRef.current = setTimeout(poll, 2000);
       }
-    }, 2000);
+    };
+    void poll();
+    return () => {
+      stopped = true; controller.abort();
+      if (pollRef.current) { clearTimeout(pollRef.current); pollRef.current = null; }
+    };
+  }, [sessionId, resultA, resultB, loadResults, updateSessionId]);
 
-    return () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
-  }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const changeFile = (selected: File | null) => {
+    comparisonRevision.current.value++;
+    stopPlayback();
+    if (pollRef.current) clearInterval(pollRef.current);
+    updateSessionId(null);
+    setFile(selected); setResultA(null); setResultB(null); setLoading(false); setCurrentFrame(0);
+  };
 
   const handleCompare = async () => {
     if (!file || !modelA || !modelB) return;
+    const revision = ++comparisonRevision.current.value;
     setLoading(true);
     setError("");
+    stopPlayback();
     setResultA(null);
     setResultB(null);
     setCurrentFrame(0);
@@ -344,27 +390,16 @@ export function CompareDemo({ confThreshold, models }: { confThreshold: number; 
         confThreshold,
         prompts,
       );
+      if (revision !== comparisonRevision.current.value) return;
       updateSessionId(session.session_id);
       sessionStorage.setItem("waldo_compare_meta", JSON.stringify({
         modelA: modelAName, modelB: modelBName, fileName: file.name,
       }));
       setLoadingMsg("Comparison running — you can navigate away. Results will appear when ready.");
 
-      pollRef.current = setInterval(async () => {
-        try {
-          const data = await getComparisonResult(session.session_id);
-          if (data.status === "completed") {
-            if (pollRef.current) clearInterval(pollRef.current);
-            pollRef.current = null;
-            loadResults(data);
-            updateSessionId(null);
-          }
-        } catch {
-          // ignore
-        }
-      }, 2000);
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e: unknown) {
+      if (revision !== comparisonRevision.current.value) return;
+      setError((e instanceof Error ? e.message : "Request failed"));
       setLoading(false);
       setLoadingMsg("");
     }
@@ -410,9 +445,9 @@ export function CompareDemo({ confThreshold, models }: { confThreshold: number; 
           style={{ borderColor: file ? "var(--accent)" : "var(--border-default)", backgroundColor: file ? "color-mix(in srgb, var(--accent) 5%, transparent 95%)" : "transparent" }}
           onDragOver={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = "var(--accent)"; }}
           onDragLeave={(e) => { e.currentTarget.style.borderColor = file ? "var(--accent)" : "var(--border-default)"; }}
-          onDrop={(e) => { e.preventDefault(); setFile(e.dataTransfer.files?.[0] || null); setResultA(null); setResultB(null); }}
+          onDrop={(e) => { e.preventDefault(); changeFile(e.dataTransfer.files?.[0] || null); }}
         >
-          <input type="file" accept="image/*,video/*" className="hidden" onChange={(e) => { setFile(e.target.files?.[0] || null); setResultA(null); setResultB(null); }} />
+          <input type="file" accept="image/*,video/*" className="hidden" onChange={(e) => { changeFile(e.target.files?.[0] || null); }} />
           {file ? (
             <div className="flex items-center gap-3">
               {isVideo ? <VideoIcon size={20} style={{ color: "var(--accent)" }} /> : <ImageIcon size={20} style={{ color: "var(--accent)" }} />}
@@ -435,10 +470,11 @@ export function CompareDemo({ confThreshold, models }: { confThreshold: number; 
         </label>
       </div>
 
+      {isVideo && totalFrames > 0 && <p className="text-xs mb-2" style={{ color: "var(--text-muted)" }}>Playback steps through assessed frames. Each model shows masks only where it assessed that source frame.</p>}
       <div className="flex items-center gap-3 mb-4">
         {file && modelA && modelB && (
           <button onClick={handleCompare} disabled={loading}
-            className="px-6 py-2.5 text-white rounded-lg text-sm font-medium disabled:opacity-40" style={{ backgroundColor: "var(--accent)" }}>
+            className="px-6 py-2.5 text-white rounded-lg text-sm font-medium disabled:opacity-40" style={{ backgroundColor: "var(--accent)", color: "var(--text-on-accent)" }}>
             {loading ? "Comparing..." : "Compare Models"}
           </button>
         )}
@@ -545,7 +581,7 @@ export function CompareDemo({ confThreshold, models }: { confThreshold: number; 
               <div className="flex items-center gap-2 mb-2">
                 <button onClick={handlePlayPause}
                   className="px-3 py-1.5 text-white rounded-lg text-sm min-w-[70px] font-medium"
-                  style={{ backgroundColor: "var(--accent)" }}>
+                  style={{ backgroundColor: "var(--accent)", color: "var(--text-on-accent)" }}>
                   {playing ? "Pause" : "Play"}
                 </button>
                 <button onClick={() => seekToFrame(Math.max(0, currentFrame - 1))} disabled={currentFrame === 0}
@@ -706,16 +742,16 @@ export function CompareDemo({ confThreshold, models }: { confThreshold: number; 
                 const fsAllClasses = fullscreen === "A" ? allClassesA : allClassesB;
                 return (
                   <TrackTimeline frames={fsTlFrames} currentFrame={currentFrame} confThreshold={confThreshold}
-                    classFilter={fsAllClasses} onSeek={(i) => { seekToFrame(i); setTimeout(drawFullscreen, 160); }} flaggedSet={emptySet} />
+                    classFilter={fsAllClasses} onSeek={seekToFrame} flaggedSet={emptySet} />
                 );
               })()}
               <div className="flex items-center gap-2 mt-2">
                 <button onClick={(e) => { e.stopPropagation(); handlePlayPause(); }}
-                  className="px-3 py-1.5 text-white rounded-lg text-sm min-w-[70px] font-medium bg-blue-600">
+                  className="px-3 py-1.5  rounded-lg text-sm min-w-[70px] font-medium bg-accent text-on-accent">
                   {playing ? "Pause" : "Play"}
                 </button>
                 <input type="range" min={0} max={totalFrames - 1} value={currentFrame}
-                  onInput={(e) => { e.stopPropagation(); stopPlayback(); seekToFrame(Number((e.target as HTMLInputElement).value)); drawFullscreen(); }}
+                  onInput={(e) => { e.stopPropagation(); stopPlayback(); seekToFrame(Number((e.target as HTMLInputElement).value)); }}
                   onChange={() => {}}
                   className="flex-1 h-2 appearance-none rounded-full cursor-pointer bg-gray-700
                     [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4

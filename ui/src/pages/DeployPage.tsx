@@ -1,7 +1,7 @@
 /**
  * Deploy page — endpoints, testing, model registry, and monitoring.
  *
- * The five tabs each live in pages/deploy/*.tsx. The previous "API" tab was
+ * The four tabs each live in pages/deploy/*.tsx. The previous "API" tab was
  * folded into the Reference section of EndpointsTab to remove duplication.
  */
 import { useQuery } from "@tanstack/react-query";

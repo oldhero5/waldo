@@ -20,6 +20,7 @@ Waldo ships a [pre-commit](https://pre-commit.com/) configuration that runs secu
 | `ruff` (lint + format) | Python lint + format |
 | `eslint` | UI lint |
 | `prettier` | UI format |
+| `tsc` | Type-check the referenced UI projects with `tsc -b` |
 | `hadolint` | Dockerfile lint |
 | `yamllint` | YAML lint |
 | `shellcheck` | Shell script lint |
@@ -33,7 +34,7 @@ uv run pre-commit install            # set up the git hook
 uv run pre-commit run --all-files    # initial run on the whole repo
 ```
 
-After `pre-commit install`, every `git commit` runs the relevant hooks against staged files. Failures abort the commit; many hooks auto-fix and re-stage.
+After `pre-commit install`, every `git commit` runs the relevant hooks against staged files. Failures abort the commit; formatting hooks can modify files, which must be reviewed and staged again. UI hooks strip the repository's `ui/` prefix before running inside that directory.
 
 ## Install (Docker — Linux/Windows)
 
@@ -61,4 +62,7 @@ Don't. If a hook is wrong, fix the hook config so the next commit doesn't have t
 
 ## CI
 
-CI runs the same hook set via `pre-commit run --all-files`. The `hadolint-docker` hook is skipped in CI (no docker-in-docker) — lint Dockerfiles locally before pushing.
+The checked-in CI workflow runs Ruff lint and format checks, migrations,
+pytest, UI lint and the UI build (including TypeScript project checks), and Gitleaks. It does not run the
+entire pre-commit configuration. Run `pre-commit run --all-files` locally for
+the additional frontend formatting, Dockerfile, YAML, and shell checks.

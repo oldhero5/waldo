@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle } from "lucide-react";
 import { listModels, type ServeStatus } from "../../api";
@@ -10,7 +10,7 @@ import { CompareDemo } from "./CompareDemo";
 export function TestTab({ status }: { status: ServeStatus | undefined }) {
   const [mode, setMode] = useState<"image" | "video" | "compare">("image");
   const [confThreshold, setConfThreshold] = useState(0.25);
-  const [checkedClasses, setCheckedClasses] = useState<Set<string>>(new Set());
+  const [selection, setSelection] = useState<{ key: string; classes: Set<string> } | null>(null);
   const [classSearch, setClassSearch] = useState("");
   const { data: models } = useQuery({
     queryKey: ["models"],
@@ -18,33 +18,18 @@ export function TestTab({ status }: { status: ServeStatus | undefined }) {
     refetchIntervalInBackground: false,
   });
 
-  const classKey = status?.class_names?.join(",") || "";
-  useEffect(() => {
-    if (status?.class_names && checkedClasses.size === 0) {
-      setCheckedClasses(new Set(status.class_names));
-    }
-  }, [classKey]); // eslint-disable-line react-hooks/exhaustive-deps
-
+  const allClasses = status?.class_names ?? [];
+  const classKey = JSON.stringify([status?.model_id, allClasses]);
+  // A new model starts with every class selected; explicit empty selection survives polling.
+  const checkedClasses = selection?.key === classKey ? selection.classes : new Set(allClasses);
+  const setCheckedClasses = (classes: Set<string>) => setSelection({ key: classKey, classes });
   const toggleClass = (cls: string) => {
-    setCheckedClasses((prev) => {
-      const next = new Set(prev);
-      if (next.has(cls)) next.delete(cls);
-      else next.add(cls);
-      return next;
-    });
+    const next = new Set(checkedClasses);
+    if (next.has(cls)) next.delete(cls); else next.add(cls);
+    setCheckedClasses(next);
   };
-
-  const allClasses = status?.class_names || [];
-  const classFilterArr = useMemo(
-    () => allClasses.length > 0 ? allClasses.filter((c) => checkedClasses.has(c)) : [],
-    [allClasses, checkedClasses],
-  );
-
-  const filteredClasses = useMemo(() => {
-    if (!classSearch) return allClasses;
-    const q = classSearch.toLowerCase();
-    return allClasses.filter((c) => c.toLowerCase().includes(q));
-  }, [allClasses, classSearch]);
+  const classFilterArr = allClasses.filter((c) => checkedClasses.has(c));
+  const filteredClasses = allClasses.filter((c) => c.toLowerCase().includes(classSearch.toLowerCase()));
 
   const showSearch = allClasses.length > 12;
 

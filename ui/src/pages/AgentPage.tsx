@@ -52,6 +52,7 @@ export default function AgentPage() {
   const [streamText, setStreamText] = useState("");
   const [streamTools, setStreamTools] = useState<ToolEvent[]>([]);
   const [models, setModels] = useState<AgentModel[]>([]);
+  const [provider, setProvider] = useState("configured provider");
   const [selectedModel, setSelectedModel] = useState("");
   const [allowActions, setAllowActions] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -59,7 +60,7 @@ export default function AgentPage() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  // Fetch available local models on mount.
+  // Fetch only models allowed by the configured workspace provider.
   useEffect(() => {
     fetch("/api/v1/agent/models", {
       headers: localStorage.getItem("waldo_token")
@@ -68,6 +69,7 @@ export default function AgentPage() {
     })
       .then((r) => (r.ok ? r.json() : { models: [], default: "" }))
       .then((d) => {
+        setProvider(d.provider || d.models?.[0]?.backend || "configured provider");
         setModels(d.models || []);
         setSelectedModel(d.default || (d.models || [])[0]?.name || "");
       })
@@ -277,7 +279,7 @@ export default function AgentPage() {
             <button
               onClick={() => sendMessage(input)}
               disabled={!input.trim() || streaming}
-              className="p-2.5 rounded-xl bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 transition-colors shrink-0"
+              className="p-2.5 rounded-xl bg-accent text-on-accent hover:bg-accent-hover disabled:opacity-40 transition-colors shrink-0"
             >
               <Send size={16} />
             </button>
@@ -316,7 +318,7 @@ export default function AgentPage() {
               </label>
             </div>
             <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>
-              Local Ollama · Data stays on your machine
+              {["openai", "anthropic", "openrouter"].includes(provider) ? `${provider} · Chat and tool text are sent to this cloud provider` : `${provider} · Uses the server-configured endpoint`}
             </p>
           </div>
         </div>
@@ -356,7 +358,7 @@ function MessageBubble({ message: msg }: { message: Message }) {
           className="rounded-2xl px-4 py-3 text-sm leading-relaxed"
           style={{
             backgroundColor: msg.role === "user" ? "var(--accent)" : "var(--bg-surface)",
-            color: msg.role === "user" ? "white" : "var(--text-primary)",
+            color: msg.role === "user" ? "var(--text-on-accent)" : "var(--text-primary)",
             border: msg.role === "assistant" ? "1px solid var(--border-subtle)" : "none",
           }}
         >

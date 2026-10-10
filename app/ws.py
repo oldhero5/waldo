@@ -11,9 +11,13 @@ import json
 import logging
 
 import redis.asyncio as aioredis
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.security import HTTPAuthorizationCredentials
 
+from lib.auth import get_current_user
+from lib.authorization import get_principal, require_resource, require_scope, require_task_owner, resolve_workspace
 from lib.config import settings
+from lib.db import SessionLocal, TrainingRun
 from lib.redis_serde import unpack as msgpack_unpack
 from trainer.metrics_streamer import CHANNEL_PREFIX, get_latest_metrics
 
@@ -81,7 +85,7 @@ async def _stream_channel(websocket: WebSocket, channel: str) -> None:
                     logger.warning("ws: dropped malformed message on %s", channel)
                     continue
                 await websocket.send_json(data)
-                if data.get("status") in ("completed", "failed"):
+                if data.get("status") in ("completed", "partial", "failed"):
                     break
 
             # Best-effort disconnect check — don't block the pubsub loop
@@ -108,13 +112,49 @@ async def _stream_channel(websocket: WebSocket, channel: str) -> None:
             logger.debug("ws: client close %s failed: %s", channel, e)
 
 
+async def _authorize_socket(websocket: WebSocket, resource_id: str, *, training: bool = False) -> bool:
+    protocols = [part.strip() for part in websocket.headers.get("sec-websocket-protocol", "").split(",")]
+    token = next((part[7:] for part in protocols if part.startswith("bearer.")), None)
+    authorization = websocket.headers.get("authorization", "")
+    if authorization.lower().startswith("bearer "):
+        token = authorization[7:]
+    if not token:
+        await websocket.close(code=1008)
+        return False
+    request = Request({"type": "http", "method": "GET", "path": "/ws", "headers": []})
+    session = SessionLocal()
+    try:
+        user = await get_current_user(request, HTTPAuthorizationCredentials(scheme="Bearer", credentials=token))
+        identity = get_principal(request, user)
+        principal = resolve_workspace(session, identity, websocket.query_params.get("workspace_id"))
+        require_scope(principal.identity, "read")
+        if training:
+            require_resource(session, principal, TrainingRun, resource_id)
+        else:
+            require_task_owner(resource_id, principal)
+    except HTTPException:
+        await websocket.close(code=1008)
+        return False
+    finally:
+        session.close()
+    return True
+
+
 @router.websocket("/ws/training/{run_id}")
 async def training_metrics_ws(websocket: WebSocket, run_id: str):
-    await websocket.accept()
+    if not await _authorize_socket(websocket, run_id, training=True):
+        return
+    await websocket.accept(
+        subprotocol="waldo"
+        if "waldo" in [part.strip() for part in websocket.headers.get("sec-websocket-protocol", "").split(",")]
+        else None
+    )
 
     latest = get_latest_metrics(run_id)
     if latest:
         await websocket.send_json(latest)
+        if latest.get("status") in ("completed", "partial", "failed"):
+            return
 
     await _stream_channel(websocket, f"{CHANNEL_PREFIX}{run_id}")
 
@@ -122,5 +162,11 @@ async def training_metrics_ws(websocket: WebSocket, run_id: str):
 @router.websocket("/ws/predict/{session_id}")
 async def predict_ws(websocket: WebSocket, session_id: str):
     """Stream per-frame prediction results from a video inference task."""
-    await websocket.accept()
+    if not await _authorize_socket(websocket, session_id):
+        return
+    await websocket.accept(
+        subprotocol="waldo"
+        if "waldo" in [part.strip() for part in websocket.headers.get("sec-websocket-protocol", "").split(",")]
+        else None
+    )
     await _stream_channel(websocket, f"{PREDICT_CHANNEL_PREFIX}{session_id}")

@@ -5,18 +5,18 @@ sidebar_position: 1
 
 # Docker Deployment
 
-Docker is the **only** supported runtime for Waldo. Everything else in this section is a flavor of Docker on a specific OS.
+Docker Compose runs infrastructure and the API. Linux workers also run in containers; `make up` on macOS starts native workers for Apple MLX/MPS access.
 
-## Two published images
+## Image tags
 
-Waldo is published to Docker Hub at [`oldhero5/waldo`](https://hub.docker.com/r/oldhero5/waldo). One image runs all three roles (app, labeler, trainer); the role is selected at runtime via the `WALDO_ROLE` environment variable.
+Compose references Docker Hub images at [`oldhero5/waldo`](https://hub.docker.com/r/oldhero5/waldo). Each image supports three roles (app, labeler, trainer), selected via `WALDO_ROLE`.
 
 | Tag | Base | When to use |
 | --- | --- | --- |
-| `oldhero5/waldo:latest` | `python:3.11-slim` | App container, Apple Silicon, Linux/CPU workers |
-| `oldhero5/waldo:cuda`   | `nvidia/cuda:12.4.0-devel-ubuntu22.04` + `torch+cu124` | NVIDIA GPU labeler / trainer |
+| `oldhero5/waldo:latest` | `python:3.11-slim` | App container and Linux/CPU workers |
+| `oldhero5/waldo:cuda` | `nvidia/cuda:13.0.3-runtime-ubuntu24.04`; torch/torchvision installed from `cu130` wheel index | NVIDIA GPU labeler / trainer |
 
-Why two tags and not one? Carrying CUDA into every image would push the CPU/Apple footprint to ~14 GB unnecessarily. Two tags keep the CPU image at ~6.5 GB.
+The CUDA runtime and explicit torch wheel source both use the CUDA 13.0 family; torch/torchvision versions are pinned. The image and host driver still need qualification on the target GPU before release. The base tag is listed in [NVIDIA supported tags](https://gitlab.com/nvidia/container-images/cuda/-/blob/master/doc/supported-tags.md).
 
 The compose file picks the right tag per service:
 
@@ -34,13 +34,23 @@ Override either tag with `WALDO_TAG`/`WALDO_CUDA_TAG` if you need to pin a speci
 - **Linux / WSL2 with `nvidia-smi` on `$PATH`** → `nvidia` profile, runs `make up-linux`: pulls `:cuda` and starts the GPU workers.
 - **Linux / WSL2 without an NVIDIA GPU** → `cpu` profile, runs `make up-linux` against the CPU image.
 
-Override at any time with `make up PROFILE=nvidia` (or `cpu`, or `apple`). There is no local image build in any of these paths — see the build override below.
+On Linux, override detection with `make up PROFILE=nvidia` (or `cpu`). On macOS, `make up` selects `up-mac` regardless of profile. These startup paths pull images; see the build override below for local image builds.
 
-The `video_labeler.run_playground` helper and the `label_video` task branch on `platform.system()` at runtime, so the same image ships to both backends. `mlx` and `mlx-vlm` are listed under the `labeler` dependency group with `platform_system=='Darwin'` markers, so the published Linux image skips them automatically.
+Labeling dispatch selects native MLX only when the host/device supports it; project shape no longer selects the backend. Darwin dependency markers exclude `mlx` and `mlx-vlm` from Linux installs.
 
 ## docker-compose.yml
 
-The default compose file at the repo root brings up the full stack from the published images:
+The Compose file brings up infrastructure and the selected worker profile. Add
+`--profile local-chat` to include Ollama. `make up` retains local chat by default;
+`make up CHAT_PROFILE=` omits it. `AGENT_MODEL` is the canonical model setting; the
+old `WALDO_AGENT_MODEL` value is no longer used by the model download container.
+The API does not wait for Ollama, and liveness does not imply model readiness.
+
+For an external Ollama server inside Compose, set `OLLAMA_COMPOSE_URL`. Service
+credentials use the same `POSTGRES_*` and `MINIO_*` variables as the application.
+Changing these values does not rotate credentials in an existing database volume.
+
+Basic commands:
 
 ```bash
 docker compose --profile cpu pull          # or: --profile nvidia / --profile apple
@@ -74,9 +84,9 @@ The override builds `Dockerfile` (CPU) and/or `Dockerfile.cuda` (GPU) locally an
 | `postgres` | 5432 | `postgres:16-alpine` | internal |
 | `redis` | 6379 | `redis:7-alpine` | internal |
 | `minio` | 9000 (S3) / 9001 (console) | `minio/minio` | `/minio/health/live` |
-| `ollama` | 11434 | `ollama/ollama` | `ollama list` |
+| `ollama` (`local-chat`) | 11434 | `ollama/ollama` | `ollama list` |
 
-MinIO is bound to `127.0.0.1` by default — the dev-default `minioadmin/minioadmin` credentials should never be reachable from the LAN. The console is at <http://127.0.0.1:9001> and the S3 API at <http://127.0.0.1:9000>. Set `MINIO_BIND=0.0.0.0` in `.env` if you need to reach it from another machine on your LAN.
+Postgres, Redis, Ollama and MinIO are bound to `127.0.0.1` by default — the dev-default `minioadmin/minioadmin` credentials should never be reachable from the LAN. Open the [console](http://127.0.0.1:9001) or [S3 API](http://127.0.0.1:9000) locally. Set `MINIO_BIND=0.0.0.0` in `.env` if you need to reach it from another machine on your LAN.
 
 ## Profiles
 
@@ -85,10 +95,10 @@ The compose file uses Docker Compose profiles to route services to the right har
 ```bash
 docker compose --profile nvidia up -d   # Linux/WSL + NVIDIA GPU (pulls :cuda)
 docker compose --profile cpu    up -d   # Linux/WSL without a GPU (pulls :latest)
-docker compose --profile apple  up -d   # Apple Silicon (alias of `cpu`, retained for one release)
+make up                               # macOS: containers + native workers
 ```
 
-The `apple` and `cpu` profiles activate the same `waldo-labeler` / `waldo-trainer` services — `apple` is kept as an alias so existing `make up PROFILE=apple` invocations don't break. New users on Linux/WSL should prefer `cpu`; the alias will be removed in a future release.
+The `apple` and `cpu` Compose profiles activate the same Linux worker containers. Selecting `apple` directly does not enable MLX/MPS; use `make up` on macOS for native workers.
 
 ## Volumes
 
@@ -102,8 +112,7 @@ The `apple` and `cpu` profiles activate the same `waldo-labeler` / `waldo-traine
 Back the database up with:
 
 ```bash
-docker run --rm -v waldo_pgdata:/data -v $(pwd):/backup alpine \
-    tar czf /backup/db.tgz -C /data .
+docker compose exec -T postgres pg_dump -U waldo -d waldo -Fc > waldo-db.dump
 ```
 
 ## Updating
@@ -114,14 +123,14 @@ docker compose --profile <cpu|nvidia|apple> pull
 docker compose --profile <cpu|nvidia|apple> up -d
 ```
 
-Migrations run automatically on `waldo-app` startup via Alembic. There is no separate `--build` step — the image is published.
+Migrations run automatically on `waldo-app` startup via Alembic. Before upgrading existing data, read [legacy ownership recovery](../architecture/security#upgrading-legacy-ownership). There is no separate `--build` step — the image is published.
 
 ## Image internals
 
 Both `Dockerfile` and `Dockerfile.cuda` use a multi-stage layout:
 
 1. **`ui-builder`** (node:20-alpine) — `npm ci` + `npm run build`, dropping the SPA into `/app/static`.
-2. **`runtime`** (slim or nvidia/cuda) — installs ffmpeg + Python deps via `uv sync`, copies all source trees (`lib/`, `app/`, `labeler/`, `trainer/`, `alembic/`), pulls the built UI from stage 1, and finally runs `uv sync` again to install the project itself into the venv (so `lib`, `app`, etc. are importable).
+2. **`runtime`** (slim or nvidia/cuda) — installs ffmpeg and Python dependencies, copies source trees and the built UI, and installs the project into the venv. The CPU image uses frozen `uv sync`; the CUDA image separately installs torch/torchvision from the `cu130` index and finishes with `uv pip install --no-deps -e .`.
 
 The `WALDO_ROLE` environment variable picks which process runs at startup:
 
