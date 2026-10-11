@@ -225,6 +225,26 @@ test("row Inspect selects its finding in the saved frame", async ({ page }) => {
   );
   await expect(page.getByRole("region", { name: "Source playback" })).toContainText("person");
 });
+for (const shortcut of ["accept", "close", "navigate"] as const)
+  test(`row Inspect enables ${shortcut} keyboard shortcut immediately`, async ({ page }) => {
+    const state = await setup(page);
+    await inspect(page, "a");
+    await atTime(page, 0.6);
+    if (shortcut === "accept") {
+      await page.keyboard.press("a");
+      await expect.poll(() => state.changes).toEqual(["a"]);
+    } else if (shortcut === "close") {
+      await page.keyboard.press("Escape");
+      await expect(
+        page.getByRole("button", { name: "Close annotation editor", exact: true }),
+      ).toHaveCount(0);
+    } else {
+      await page.keyboard.press("ArrowRight");
+      await atTime(page, 1.2);
+      await page.keyboard.press("ArrowLeft");
+      await atTime(page, 0.6);
+    }
+  });
 for (const [time, method, label, seek] of [
   [0, "source_pts", "Recorded time", 0],
   [0.6, "frame_index/fps", "Approximate time", 0.6],
@@ -352,6 +372,7 @@ test("player keyboard input leaves annotation review unchanged at narrow width",
   await source(page).focus();
   await source(page).press("a");
   await source(page).press("ArrowRight");
+  await source(page).press("Escape");
   expect(state.changes).toEqual([]);
   await expect(
     page.getByRole("button", { name: "Close annotation editor", exact: true }),
@@ -364,6 +385,29 @@ test("player keyboard input leaves annotation review unchanged at narrow width",
       path: `${process.env.WALDO_SCREENSHOT_DIR}/synthetic-inspector-narrow.png`,
     });
   }
+});
+
+test("source renewal leaves the annotation input focused", async ({ page }) => {
+  const state = await setup(page);
+  await inspect(page, "a");
+  await atTime(page, 0.6);
+  await page.getByRole("button", { name: "Annotate", exact: true }).click();
+  await page
+    .locator("canvas")
+    .last()
+    .click({ position: { x: 200, y: 200 } });
+  await page.locator("select").last().selectOption("");
+  const input = page.getByPlaceholder("New class name", { exact: true });
+  await input.press("a");
+  await input.press("ArrowRight");
+  await input.press("Escape");
+  await expect(input).toHaveValue("a");
+  expect(state.changes).toEqual([]);
+  await source(page).dispatchEvent("error");
+  await expect(source(page)).toHaveAttribute("src", "/source/clip-a?generation=2");
+  await atTime(page, 0.6);
+  await expect(input).toBeFocused();
+  await expect(page.getByText("1 point", { exact: true })).toBeVisible();
 });
 
 test("nonfinite time is invalid and does not seek", async ({ page }) => {
@@ -463,9 +507,17 @@ test("malformed source timeline does not silently clamp the finding", async ({ p
   await setup(page, [finding("a", "clip-a", 0.6)], "malformed");
   await inspect(page, "a");
   await expect(source(page)).toHaveJSProperty("videoWidth", 320);
-  await expect(page.getByRole("region", { name: "Source playback" })).toContainText(
-    /Timing mapping unavailable|browser could not seek/,
-  );
+  // Decoder versions may normalize this edit-list offset or require abstention.
+  // Successful navigation must reach the independently specified synthetic frame.
+  await expect
+    .poll(async () => {
+      const warning = await page.getByRole("region", { name: "Source playback" }).innerText();
+      if (/Timing mapping unavailable|browser could not seek/.test(warning)) return "manual";
+      const x = await decodedX(page);
+      const seeking = await source(page).evaluate((video: HTMLVideoElement) => video.seeking);
+      return !seeking && x >= 88 && x <= 96 ? "decoded finding" : "waiting";
+    })
+    .not.toBe("waiting");
 });
 test("explicit finding selection owns Accept after hovering another polygon", async ({ page }) => {
   const state = await setup(page, [
