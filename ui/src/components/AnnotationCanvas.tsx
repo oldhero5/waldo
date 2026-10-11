@@ -70,6 +70,9 @@ export default function AnnotationCanvas({
   const { user, token } = useAuth();
   const { url: mediaUrl, onLoad: mediaOnLoad, onError: mediaOnError, loading: mediaLoading, error: mediaError, retry: mediaRetry } = useRenewableFrame(frameId, imageUrl);
 
+  // Move keyboard review into the inspector without stealing focus on media renewal.
+  useEffect(() => { canvasRef.current?.focus(); }, []);
+
   // A capability refresh does not reset unsaved annotation work.
   useEffect(() => {
     setZoom(1);
@@ -543,6 +546,8 @@ export default function AnnotationCanvas({
       <div className="flex-1 min-h-[300px] relative overflow-hidden">
         <canvas
           ref={canvasRef}
+          tabIndex={-1}
+          aria-label="Saved frame annotation canvas"
           className="absolute inset-0 w-full h-full"
           style={{ cursor: mode === "annotate" ? "crosshair" : dragging.current ? "grabbing" : hoveredId ? "pointer" : "grab" }}
           onMouseDown={handleMouseDown}

@@ -170,7 +170,10 @@ measured detection accuracy. Private media and detailed reports remain local.
 
 The nonzero-start fixtures disproved the original assumption that a browser seek
 could always use saved seconds directly. A malformed fixture also exposed a
-misleading seekable range. Sol `source_design`, the implementer and root chose
+misleading seekable range in some browser loads. Other loads navigated that same
+fixture correctly, with the expected decoded pixels. Its test therefore requires
+correct decoded navigation or an explicit manual-playback warning.
+Sol `source_design`, the implementer and root chose
 the guarded initial-position mapping above. It uses the browser timeline
 without changing saved source times. Unsupported or inconsistent metadata leaves
 navigation manual rather than guessing a frame.
