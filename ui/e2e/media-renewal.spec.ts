@@ -168,7 +168,8 @@ for (const preview of ["pending", "completed", "switched"] as const) {
     await page.mouse.move(rect.x + rect.width / 2 + 32, rect.y + rect.height / 2 + 16);
     await page.mouse.up();
     await page.getByRole("button", { name: "Annotate", exact: true }).click();
-    await page.clock.pauseAt(new Date());
+    // pauseAt cannot rewind; keep its target ahead of the 30-second smoke-test limit.
+    await page.clock.pauseAt(new Date(Date.now() + 31_000));
     const point = { x: rect.width / 2 + 32, y: rect.height / 2 + 16 };
     await canvas.click({ position: point });
     await expect(page.getByText("1 point", { exact: true })).toBeVisible();
