@@ -28,14 +28,16 @@ def uploaded_video(client):
 
 
 @pytest.fixture
-def completed_job(client, uploaded_video):
+def completed_job(client, uploaded_video, worker_harness):
     """Create and wait for a labeling job to complete. Returns job_id.
 
-    Requires a running labeler Celery worker. When no worker is processing
-    the queue (e.g. in CI without the full stack), the job stays in
-    'pending' forever — skip the dependent test instead of failing.
+    The required worker mode fails within the polling bound when no worker
+    consumes the job. Optional local service runs retain the old skip.
     """
     import time
+
+    if worker_harness is not None:
+        worker_harness.start()
 
     resp = client.post(
         "/api/v1/label",
@@ -55,11 +57,14 @@ def completed_job(client, uploaded_video):
             break
         time.sleep(1)
     if status["status"] not in ("completed", "failed"):
-        pytest.skip("No labeler worker is processing jobs (set up the full stack to run this test)")
+        message = f"No labeler worker completed job {job_id} within 30s: {status}"
+        if os.environ.get("WALDO_WORKER_INTEGRATION") == "1":
+            pytest.fail(message)
+        pytest.skip(message)
     assert status["status"] == "completed"
-    if not status.get("result_url"):
-        exported = client.post(f"/api/v1/jobs/{job_id}/export", json={"format": "segment"})
-        assert exported.status_code == 200
+    assert status.get("result_url") is None
+    exported = client.post(f"/api/v1/jobs/{job_id}/export", json={"format": "segment"})
+    assert exported.status_code == 200, exported.text
     return job_id
 
 
@@ -150,7 +155,7 @@ class TestTrainAPI:
         )
         assert resp.status_code == 404
 
-    def test_start_training(self, client, completed_job):
+    def test_start_training_only_queues_a_run(self, client, completed_job):
         resp = client.post(
             "/api/v1/train",
             json={
@@ -184,9 +189,12 @@ class TestTrainAPI:
         )
         assert resp.status_code == 404
 
-    def test_label_with_detect_task(self, client, uploaded_video):
+    def test_label_with_detect_task(self, client, uploaded_video, worker_harness):
         """Test labeling with detection task type."""
         import time
+
+        if worker_harness is not None:
+            worker_harness.start()
 
         resp = client.post(
             "/api/v1/label",
@@ -206,5 +214,8 @@ class TestTrainAPI:
                 break
             time.sleep(1)
         if status["status"] not in ("completed", "failed"):
-            pytest.skip("No labeler worker is processing jobs (set up the full stack to run this test)")
+            message = f"No labeler worker completed job {job_id} within 30s: {status}"
+            if os.environ.get("WALDO_WORKER_INTEGRATION") == "1":
+                pytest.fail(message)
+            pytest.skip(message)
         assert status["status"] == "completed"

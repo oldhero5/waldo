@@ -35,8 +35,9 @@ schema. A release pipeline alone would package an unqualified worker flow.
 Adding the schema first would increase the behavior that needs qualification.
 This reorders the work; it does not cancel the accepted assessment design.
 
-This PR changes rules and plans only. It does not implement these waves, enable
-publishing, migrate secrets, or deploy an application release.
+PR #21 established these rules and plans. It merged on October 10, 2026 as
+`f40e20828cfcdbe37c35042f137539ea7dff0f45`. Wave 1 starts from that commit.
+Publishing remains disabled. This wave does not migrate secrets or deploy a release.
 
 ```mermaid
 flowchart TD
@@ -77,7 +78,8 @@ Branch: `feat/worker-integration`.
 Inspect and change only the needed parts of `.github/workflows/test.yml`,
 `tests/conftest.py`, `tests/test_api_extended.py`, `tests/test_e2e.py`, and
 `tests/test_e2e_full.py`. Add `tests/test_worker_integration.py` for the bounded
-service test. Reuse the production task entry points in `lib/tasks.py`; do not
+service test and `tests/worker_integration_worker.py` for its test-only bootstrap.
+Reuse the production task entry points in `lib/tasks.py`; do not
 add a test bypass to public request handling. Update the testing guide.
 
 The test consumes synthetic video through the real API, Redis queue, and a
@@ -86,20 +88,21 @@ only the inference boundary in that test process with deterministic detections,
 empty results, or errors. Never run the service test against the user's database.
 This qualifies orchestration; a separate trusted hardware run qualifies models.
 
-- [ ] Agree with a Sol buddy on the smallest test-only inference fixture and
+- [x] Agree with a Sol buddy on the smallest test-only inference fixture and
   record source identity, frame times, geometry units, null meaning, and cleanup.
-- [ ] Write failing cases for a missing worker, worker timeout, inference failure,
+- [x] Write failing cases for a missing worker, worker timeout, inference failure,
   and explicit review/export. Required missing services must fail, not skip.
 - [ ] Start disposable services and a real worker in CI. Prove upload → labeling
   → review edit → explicit export → authorized download. Inspect saved geometry,
   source IDs, and archive contents, not only HTTP success codes.
-- [ ] Prove an empty result stays empty; a failed job cannot become completed;
+- [x] Prove an empty result stays empty; a failed job cannot become completed;
   retry after a committed clip preserves human edits and does not duplicate rows.
   Test a controlled worker restart. Do not claim general crash recovery or
   exactly-once execution from one restart case.
-- [ ] Repair live-test assumptions: request a reviewed export, and use separate
-  synthetic source groups for training. Do not make copies of one clip stand in
-  for independent validation. Keep real training in the opt-in hardware suite.
+- [x] Repair live-test assumptions: request a reviewed export, and use two
+  explicit known-positive sources for the opt-in training suite. Do not make
+  copies of one clip stand in for independent validation. Keep synthetic fixtures
+  in deterministic CI and real training in the opt-in hardware suite.
 - [ ] Run the new test and affected regressions on the disposable stack, then
   the required CI suites. Publish separate results for deterministic orchestration
   and any real-model test. Required worker cases must have zero skips.
@@ -116,6 +119,93 @@ Record the code SHA and limits. Keep private evidence local.
 **Rollback:** Revert this wave's test/runner changes. If a product defect needs a
 fix, record its own regression and rollback in this PR before expanding its scope.
 Do not remove a required check just to make a failing run green.
+
+### Wave 1 implementation decisions
+
+The orchestrator and Sol buddy `/root/worker_design` chose a test-only bootstrap
+that replaces `labeler.text_labeler.get_engine` in a separate Linux worker.
+Production task dispatch, queue delivery, decoding, transactions, storage and
+review/export stay unchanged. An in-process ASGI client exercises API routes;
+it does not qualify HTTP transport. Each case has its own queue and worker.
+Services use a disposable database and bucket. Tests fail when the enabled
+worker suite lacks its required service settings.
+
+Synthetic clips are 160 × 120 pixels, 15 frames at 5 frames per second. Masks are
+Boolean arrays; boxes use source-pixel `xyxy` coordinates and a fixed score of
+0.9. Saved geometry uses normalized coordinates. The Linux extraction path uses
+resampled frame ordinals and FPS-derived seconds, not native source-frame proof.
+Unknown track and geographic values stay unknown. Unique source IDs separate
+test records; the suite makes no object-location or model-accuracy claim.
+
+The orchestrator and Sol `/root/worker_e2e` rejected an assumption that an
+arbitrary synthetic clip will produce a positive real-model result. The opt-in
+full workflow instead requires two explicit local clips with detectable objects.
+It checks distinct content, source IDs and disjoint export groups. This proves a
+functional split contract, not independent scenes or a frozen holdout.
+
+The local test runner uses a fresh Docker network, disposable PostgreSQL, Redis
+and MinIO, and tracked source files only. It does not mount private `test_data/`
+or environment files. The user's application stack stays separate. A cached
+container supplies Linux dependencies; this run does not qualify a release image.
+
+### Wave 1 local hardware evidence
+
+On October 10, 2026, a separate native Celery worker completed a generated
+320 × 240, four-frame clip on an Apple M2 Max. The application source was
+`f40e20828cfcdbe37c35042f137539ea7dff0f45`; this wave changes tests and docs only.
+The run used cached `mlx-community/sam3.1-bf16` checkpoint
+`a992e302ea9b0f03f41dfd93414a4fd0e818f65b`, MLX 0.31.2 and mlx-vlm 0.5.0,
+with network model downloads disabled.
+
+The prompt was `red square`, threshold 0.35, source rate 4 frames per second,
+and sample rate 2 frames per second. The `mlx-image-iou-tracker` backend assessed
+two frames, retained two sightings and reported `source_pts` timing. The job
+completed without automatic export. Elapsed time, including worker startup and
+API submission, was 13.53 seconds. Peak sampled worker resident memory was
+1,507,262,464 bytes; this does not measure all GPU memory.
+
+Direct container-address attempts stalled before inference because of local
+network routing. The completed run used disposable Redis and MinIO on loopback
+ports and an explicit IPv4 address for libpq. No application code was changed
+for this transport workaround. Logs and the generated clip stay local.
+
+This small run verifies native task dispatch and inference. It does not qualify
+physical-camera detection, long videos, CUDA, full model training, or the live
+HTTP suites. Deterministic Linux tests provide the separate review/export and
+retry evidence. Current-head CI and owner approval remain separate gates for the
+feature PR.
+
+The final local Linux suite recorded 737 passes, zero failures and 10 skips in
+183.34 seconds. The skips were eight Apple MLX/MPS cases and two opt-in live
+workflows. All required worker cases ran. The first full attempt failed one
+existing release test because the cached runner lacked `jq`; installing it in
+that disposable runner resolved the failure. Python lint, format checks and the
+documentation build passed. Fresh review caught and closed two test gaps:
+required mode now fails for a missing fixture, and restart must report a clean
+Celery exit. These results do not replace current-head hosted CI or owner review.
+
+### CI reliability correction
+
+The first PR #22 browser run repeated the clock setup failure seen in PR #21:
+95 cases passed, and one failed before its preview assertions. The host timestamp
+passed to `pauseAt` could already be behind the running browser clock. Sol
+`/root/worker_impl` and the orchestrator compared another unchanged rerun with a
+small test-only repair. We chose the repair because a repeatable gate must not
+depend on winning that race.
+
+This extends the wave to the pause target in `ui/e2e/media-renewal.spec.ts` and
+the stale scope note in `.github/scripts/test-summary.py`. The pause target is
+31 seconds ahead of the host clock, beyond the configured 30-second smoke-test limit.
+The three affected preview cases have no earlier virtual-clock advance. Their
+assertions and the production UI stay unchanged. The focused cases and full
+browser suite must pass before fresh review of the new head. The CI summary must
+describe the required worker tests and keep real-model qualification separate.
+
+The repaired clock passed the three focused cases. A full local run with one
+worker exited successfully with 96 passes and zero skips. An earlier four-worker
+run reported 96 passes but hung during shutdown and was interrupted with exit
+code 130; it is not a clean pass. Hosted CI must still verify normal parallel
+execution. The UI build, targeted lint and 18 CI report tests also passed.
 
 ## Wave 2: qualify Docker Hub releases
 
