@@ -19,22 +19,31 @@ feeds from a directory of known cameras is a different future workflow.
 
 ## Next delivery waves
 
+**October 11 update:** PR #22 qualified the queued worker checks and merged as
+`4b189ff`. The next feature is source-video inspection in Review: filter saved
+findings by clip and class, then open the original footage at the saved time
+beside its annotation frame. This comes before Docker Hub qualification. The
+feature uses existing saved annotations; durable empty-frame assessment storage
+remains a later change. See the [feature plan](https://github.com/oldhero5/waldo/blob/main/docs/plans/2026-10-11-source-video-inspection.md).
+
 The [current delivery plan](https://github.com/oldhero5/waldo/blob/main/docs/plans/2026-10-10-next-waves.md)
-sets the order below. The later architecture packages remain a backlog; they do
-not change this order. Each wave needs its own feature branch, acceptance tests,
+records the worker, release and assessment requirements. Each wave needs its own
+feature branch, acceptance tests,
 fresh independent review, and owner approval of the exact commit.
 
-1. **Verify queued work.** Run a real worker against disposable services. Prove
-   upload, labeling, review, export, failure, and retry behavior. Required worker
-   timeouts must fail the check. Controlled inference tests do not qualify models.
-2. **Build the guarded Docker Hub release path.** Test the same CPU and CUDA
+1. **Queued worker checks: merged.** PR #22 exercises upload, labeling, review,
+   export, failure and retry against disposable services. Required worker
+   timeouts fail the check. Controlled inference tests do not qualify models.
+2. **Inspect saved findings in source video.** Add source playback and clip/class
+   filters to Review. Preserve unknown timing and sampled coverage.
+3. **Build the guarded Docker Hub release path.** Test the same CPU and CUDA
    image artifacts that will be published. Record digests, security results,
    approval, deployment checks, and recovery steps for a partial publication.
-3. **Store durable native assessments.** Retain source times and completed empty
+4. **Store durable native assessments.** Retain source times and completed empty
    assessments across restarts. Missing coverage must stay unknown.
 
-Worker and release checks come before the new schema so the next evidence
-feature has a tested delivery path. Camera-model comparison, localization, map
+The source inspector needs no new schema. Release checks precede later schema
+work. Camera-model comparison, localization, map
 search, and bounded agent tools follow. Desktop and System 1 work remain on hold.
 
 ## What is solid enough to build on

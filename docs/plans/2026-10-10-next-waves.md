@@ -20,6 +20,12 @@ and [architecture roadmap](../../docs-site/docs/architecture/roadmap.md).
 
 ## Starting point and decision
 
+**October 11 update:** PR #22 merged as
+`4b189ff339e2aaaba36350174cb045d8ec63b5fa`. The owner moved a visible product
+feature ahead of release machinery: [inspect saved detections in their source
+video](2026-10-11-source-video-inspection.md). This supersedes the order below;
+the release and assessment requirements still apply to their later waves.
+
 [PR #20](https://github.com/oldhero5/waldo/pull/20) merged on October 10, 2026
 as `edb935cd1e314b1af53e7b0e15847c6d37a24ae6`. It is closed. Its reviewed head
 was `3fa46e6e821c3df059d42a61bca8976cc03178eb`. Its

@@ -39,6 +39,27 @@ Route: `/review/:jobId` — Source: [`ui/src/pages/ReviewPage.tsx`](https://gith
 
 The review canvas shows each frame in the labeling job with overlaid boxes. Accept, reject, edit, or redraw — every action PATCHes back to the API and updates the dataset that downstream training will consume.
 
+### Inspect the original video
+
+Filter saved findings by source clip and class, then select **Inspect** on a
+finding. The inspector keeps its saved frame and review controls beside the
+original video. Use the video controls to watch the surrounding event. This
+opens stored evidence; it does not run the model again.
+
+Source timestamps seek to the recorded time. FPS-derived timestamps are labeled
+approximate. Unknown or invalid times do not trigger a seek. A saved frame mask
+stays on the frame; it is not extended across moving video. Sampled results do
+not establish full-video coverage or an object's geographic position.
+
+Some containers expose a different browser timeline. The player checks that it
+can map the saved time into that timeline and verifies the seek. If timing is
+inconsistent or unavailable, it explains the limit and leaves playback manual.
+
+If a playback link expires, the player makes one automatic renewal attempt.
+If playback still fails, use its retry control. The saved frame and annotation
+editor remain available. Image-only sources have no video. Browser codec
+support still applies, including for HEVC recordings.
+
 ![Review page (labeled dashcam frames)](/img/screenshots/review.jpg)
 
 <Demo
