@@ -346,6 +346,25 @@ export async function listAnnotations(
   return res.json();
 }
 
+export interface SavedSource {
+  id: string;
+  filename: string;
+  duration_s: number | null;
+  has_source_video: boolean;
+}
+
+export async function listSavedSources(jobId: string): Promise<SavedSource[]> {
+  const res = await authFetch(`${BASE}/jobs/${jobId}/sources`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function getSourcePlayback(jobId: string, videoId: string): Promise<{ video_id: string; url: string }> {
+  const res = await authFetch(`${BASE}/jobs/${jobId}/sources/${videoId}/playback`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
 export async function updateAnnotation(
   annotationId: string,
   update: Partial<{ status: string; polygon: number[]; bbox: number[]; class_name: string }>
