@@ -34,6 +34,8 @@ from lib.workflow_blocks.logic import ConditionalBlock
 @pytest.fixture
 def db(monkeypatch):
     engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    # SQLite gives literal UUID columns numeric affinity, which can corrupt UUID hex strings.
+    monkeypatch.setattr(engine.dialect.type_compiler_instance, "visit_UUID", lambda type_, **kw: "CHAR(32)")
     Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     monkeypatch.setattr(api, "SessionLocal", factory)
@@ -87,6 +89,33 @@ def db(monkeypatch):
             principal=principal,
         )
     engine.dispose()
+
+
+@pytest.mark.parametrize(
+    "identifier",
+    [
+        "12345678-1234-4234-8234-123456789012",
+        "1234567e-1234-4234-8234-123456789012",
+    ],
+    ids=["numeric-hex", "exponent-hex"],
+)
+def test_sqlite_workflow_uuid_round_trip_preserves_identity(db, identifier):
+    workflow_id = UUID(identifier)
+    graph = {"nodes": [], "edges": []}
+    record = SavedWorkflow(
+        id=workflow_id, name="UUID round trip", slug="uuid-round-trip", workspace_id=db.own.id, graph=graph
+    )
+    db.session.add(record)
+    db.session.commit()
+    stored_id, storage_type = (
+        db.session.connection().exec_driver_sql("SELECT id, typeof(id) FROM saved_workflows").one()
+    )
+    assert storage_type == "text"
+    assert stored_id == workflow_id.hex
+    db.session.expire_all()
+    loaded = db.session.get(SavedWorkflow, workflow_id)
+    assert loaded.id == workflow_id
+    assert loaded.graph == graph
 
 
 class Source(BlockBase):
