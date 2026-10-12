@@ -224,3 +224,29 @@ writes, restores both prior channels, and retries the same immutable pair.
 The markers test transport and recovery; they contain no Waldo runtime or GPU code.
 Ruff, shell syntax, Actionlint, UI build, documentation build, and whitespace
 checks passed. Hosted CI and fresh independent review must also pass on the PR head.
+
+## Review and hosted CI corrections
+
+The independent review found that the CUDA probe counted Ultralytics warmup
+output as measured output. Warmup uses uninitialized memory. The probe now
+completes initialization, clears its observations, and measures a separate
+prediction on the fixed image. Regression tests reject nonfinite measured
+output while allowing nonfinite warmup output. These tests emulate hardware
+reporting; they do not qualify a GPU.
+
+Hosted CI also exposed three test defects. The CUDA regression needed to emulate
+the cuDNN version query on Linux. An existing browser fixture matched both job
+status and model status with one suffix, and clicked Home before Settings loaded.
+It now matches the exact job endpoint and waits for visible Settings content.
+All account-isolation assertions remain.
+
+An existing workflow test used PostgreSQL's UUID declaration in SQLite. SQLite
+gave that declaration numeric affinity, so some valid UUID strings became floats
+and failed on reload. The orchestrator and Sol diagnostic agent chose an
+engine-local test compiler correction to use text storage. Selecting alphabetic
+test IDs would only hide the defect. Numeric and exponent-shaped UUIDs must round
+trip unchanged. Production PostgreSQL types and application code stay unchanged.
+
+These bounded fixture corrections are needed for reliable CI evidence in this
+wave. They do not add product features, increase timeouts, or remove assertions.
+Each correction must pass local checks, current-head CI and independent review.

@@ -34,6 +34,7 @@ def probe_harness(tmp_path, monkeypatch):
     monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
     monkeypatch.setattr(torch.cuda, "synchronize", lambda: None)
     monkeypatch.setattr(torch.cuda, "get_device_name", lambda index: "emulated CUDA flags on CPU")
+    monkeypatch.setattr(torch.backends.cudnn, "version", lambda: 0)
     monkeypatch.setattr(torch.Tensor, "is_cuda", property(lambda tensor: True))
     monkeypatch.setattr(probe.subprocess, "check_output", lambda *args, **kwargs: "emulated driver")
     for name in ("RELEASE_ROOT_DIGEST", "RELEASE_RUNNABLE_DIGEST", "RELEASE_ARCHIVE_SHA256", "GITHUB_SHA"):
@@ -101,6 +102,7 @@ def test_nonfinite_backend_warmup_does_not_reject_finite_fixed_image_pass(probe_
     report = probe_harness(finite_measured=True)
     assert report["finite_outputs"] is True
     assert report["cuda_forward"] is True and report["cuda_parameters"] is True
+    assert report["cudnn"] == 0  # Emulated reporting must not depend on host hardware.
     assert report["detection_count"] == 0 and report["elapsed_seconds"] > 0
     assert report["input_sha256"] == hashlib.sha256(np.zeros((640, 640, 3), dtype=np.uint8).tobytes()).hexdigest()
 
