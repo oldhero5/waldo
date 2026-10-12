@@ -62,7 +62,13 @@ def run(weights):
     adapter = InferenceEngine()
     adapter.model = model
     adapter._half = True
+    # Initialize the production backend before measuring the fixed input.
+    # Ultralytics warmup uses torch.empty; its arbitrary values are not evidence
+    # about this image's outputs. Keep only the separate measured forward pass.
+    adapter.predict_image(image, conf=0.25)
     torch.cuda.synchronize()
+    observed.clear()
+    finite_forwards.clear()
     started = time.perf_counter()
     detections = adapter.predict_image(image, conf=0.25)
     torch.cuda.synchronize()
