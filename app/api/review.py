@@ -21,7 +21,7 @@ from lib.authorization import (
 )
 from lib.config import settings
 from lib.dataset_evidence import assessed_frame_count, invalidate_current_export, publish_current_export
-from lib.db import Annotation, Frame, LabelingJob, SessionLocal
+from lib.db import Annotation, Frame, LabelingJob, SessionLocal, Video
 from lib.storage import delete_object, download_file, get_download_url, upload_file
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
@@ -98,6 +98,62 @@ class AnnotationUpdate(BaseModel):
     bbox: list | None = None
     class_name: str | None = None
     class_index: int | None = None
+
+
+class SavedSourceOut(BaseModel):
+    id: str
+    filename: str
+    duration_s: float | None
+    has_source_video: bool
+
+
+class SourcePlaybackOut(BaseModel):
+    video_id: str
+    url: str
+
+
+def _saved_sources(session, principal, job_id):
+    annotations = scope_resources(session.query(Annotation.frame_id), Annotation, principal).filter(
+        Annotation.job_id == job_id
+    )
+    return (
+        scope_resources(session.query(Video), Video, principal)
+        .join(Frame, Frame.video_id == Video.id)
+        .filter(Frame.id.in_(annotations))
+        .distinct()
+    )
+
+
+def _has_source_video(video):
+    return bool(video.minio_key) and video.filename != "__standalone_images__"
+
+
+@router.get("/jobs/{job_id}/sources", response_model=list[SavedSourceOut])
+def list_saved_sources(job_id: str, principal: WorkspacePrincipal = Depends(get_workspace_principal)):
+    _validate_uuid(job_id, "job_id")
+    with SessionLocal() as session:
+        job = require_resource(session, principal, LabelingJob, job_id)
+        return [
+            SavedSourceOut(
+                id=str(video.id),
+                filename=video.filename,
+                duration_s=video.duration_s,
+                has_source_video=_has_source_video(video),
+            )
+            for video in _saved_sources(session, principal, job.id).order_by(Video.filename, Video.id).all()
+        ]
+
+
+@router.get("/jobs/{job_id}/sources/{video_id}/playback", response_model=SourcePlaybackOut)
+def get_source_playback(job_id: str, video_id: str, principal: WorkspacePrincipal = Depends(get_workspace_principal)):
+    _validate_uuid(job_id, "job_id")
+    _validate_uuid(video_id, "video_id")
+    with SessionLocal() as session:
+        job = require_resource(session, principal, LabelingJob, job_id)
+        video = _saved_sources(session, principal, job.id).filter(Video.id == _uuid.UUID(video_id)).first()
+        if video is None or not _has_source_video(video):
+            raise HTTPException(status_code=404, detail="Source video unavailable")
+        return SourcePlaybackOut(video_id=str(video.id), url=get_download_url(video.minio_key))
 
 
 class JobStats(BaseModel):
