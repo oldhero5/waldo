@@ -3,6 +3,14 @@ set -euo pipefail
 
 # A manual dispatch must target the current main tip. All evidence is checked
 # against that exact commit, immediately before access to Docker Hub secrets.
+if [[ "${GITHUB_EVENT_NAME:-}" != "workflow_dispatch" ]]; then
+  echo "Release evidence requires a manual workflow dispatch." >&2
+  exit 1
+fi
+if [[ "${GITHUB_RUN_ATTEMPT:-}" != "1" ]]; then
+  echo "Start a new candidate or publisher run. Rerun attempts cannot qualify." >&2
+  exit 1
+fi
 if [[ "${GITHUB_REF:-}" != "refs/heads/main" ]]; then
   echo "Release must be dispatched from main." >&2
   exit 1

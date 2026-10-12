@@ -1,0 +1,128 @@
+name: Release — qualify immutable candidates
+
+on:
+  workflow_dispatch:
+    inputs:
+      qualify_cuda:
+        description: "Run actual inference on a provisioned, trusted NVIDIA runner (required for publishing)"
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  checks: read
+  statuses: read
+  actions: read
+
+jobs:
+  verify:
+    name: Verify candidate source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Require current approved main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/check-release.sh
+
+  candidate:
+    name: Qualify ${{ matrix.kind }} candidate
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - kind: cpu
+            dockerfile: Dockerfile
+          - kind: cuda
+            dockerfile: Dockerfile.cuda
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Recheck trusted source before build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/check-release.sh
+      - name: Check estimated build and OCI working space
+        run: python3 .github/scripts/release_artifacts.py space "$RUNNER_TEMP" 40
+      - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+        with:
+          version: v0.25.0
+          driver-opts: image=moby/buildkit@sha256:0039c1d47e8748b5afea56f4e85f14febaf34452bd99d9552d2daa82262b5cc5
+      - name: Install pinned release tools
+        run: bash .github/scripts/install-release-tools.sh "$RUNNER_TEMP/release-tools"
+      - name: Prepare isolated artifact directory
+        run: mkdir -p "$RUNNER_TEMP/candidate"
+      - name: Export one OCI graph with SBOM and provenance; no login or push
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          # Immutable Git context excludes private local folders from the build.
+          context: https://github.com/${{ github.repository }}.git#${{ github.sha }}
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          push: false
+          outputs: type=oci,dest=${{ runner.temp }}/candidate/candidate.oci.tar
+          labels: org.opencontainers.image.revision=${{ github.sha }}
+          provenance: mode=max
+          sbom: generator=docker/buildkit-syft-scanner@sha256:ae4f3b554449e7e25548e7d8ccc029d17357348e30c6e3df01b92bc93654d6a9
+      - name: Scan exact runnable image and qualify CPU runtime
+        env:
+          KIND: ${{ matrix.kind }}
+        run: bash .github/scripts/qualify-candidate.sh "$KIND" "$RUNNER_TEMP/candidate/candidate.oci.tar" "$RUNNER_TEMP/candidate"
+      - name: Retain immutable candidate briefly
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: candidate-${{ matrix.kind }}
+          path: ${{ runner.temp }}/candidate/
+          if-no-files-found: error
+          retention-days: 2
+          compression-level: 0
+      - name: Retain failed scan or runtime evidence without a candidate archive
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: candidate-${{ matrix.kind }}-failure-report
+          path: |
+            ${{ runner.temp }}/candidate/scan.json
+            ${{ runner.temp }}/candidate/scan-version.json
+            ${{ runner.temp }}/candidate/runtime.json
+          if-no-files-found: warn
+          retention-days: 2
+
+  gpu:
+    name: CUDA model qualification
+    needs: [verify, candidate]
+    # No NVIDIA runner exists yet. A skipped job is explicitly rejected by the publisher.
+    if: ${{ inputs.qualify_cuda && vars.WALDO_CUDA_RUNNER_ENABLED == 'true' && github.ref == 'refs/heads/main' }}
+    runs-on: [self-hosted, linux, x64, waldo-cuda]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Recheck main, CI and approvals before trusted hardware use
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/check-release.sh
+      - name: Check estimated CUDA artifact working space
+        run: python3 .github/scripts/release_artifacts.py space "$RUNNER_TEMP" 30
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: candidate-cuda
+          path: ${{ runner.temp }}/cuda-candidate
+      - name: Install pinned release tools
+        run: bash .github/scripts/install-release-tools.sh "$RUNNER_TEMP/release-tools"
+      - name: Actual CUDA forward pass in exact immutable candidate
+        run: bash .github/scripts/qualify-cuda.sh "$RUNNER_TEMP/cuda-candidate" "$RUNNER_TEMP/gpu-report"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: cuda-qualification
+          path: ${{ runner.temp }}/gpu-report/gpu.json
+          if-no-files-found: error
+          retention-days: 2
