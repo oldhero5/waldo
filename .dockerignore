@@ -14,6 +14,7 @@ build
 .waldo-local.env
 .waldo-local
 .worktrees
+.superpowers/
 Target.mp4
 test_data
 **/test_data

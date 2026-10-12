@@ -52,6 +52,7 @@ jobs:
       WALDO_TEST_POSTGRES_URL: postgresql://waldo:waldo@localhost:5432/waldo_worker_test  # pragma: allowlist secret
       WALDO_SERVICE_STACK: "1"
       WALDO_WORKER_INTEGRATION: "1"
+      WALDO_RELEASE_OCI_INTEGRATION: "1"
       REDIS_URL: redis://localhost:6379/0
       MINIO_ENDPOINT: localhost:9000
       MINIO_ACCESS_KEY: minioadmin
@@ -104,6 +105,25 @@ jobs:
       - name: Sync dependencies (frozen)
         run: uv sync --frozen
 
+      - name: Set up pinned Buildx for bounded OCI release contract test
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+        with:
+          version: v0.25.0
+          driver-opts: image=moby/buildkit@sha256:0039c1d47e8748b5afea56f4e85f14febaf34452bd99d9552d2daa82262b5cc5
+
+      - name: Install pinned release tools for local-only OCI test
+        run: bash .github/scripts/install-release-tools.sh "$RUNNER_TEMP/release-tools"
+
+      - name: Check release shell and workflow syntax
+        run: |
+          bash -n .github/scripts/check-release.sh .github/scripts/install-release-tools.sh \
+            .github/scripts/qualify-candidate.sh .github/scripts/qualify-cuda.sh .github/scripts/smoke-published.sh
+          archive="$RUNNER_TEMP/actionlint_1.7.7_linux_amd64.tar.gz"
+          curl -fsSL --retry 3 -o "$archive" https://github.com/rhysd/actionlint/releases/download/v1.7.7/actionlint_1.7.7_linux_amd64.tar.gz
+          printf '%s  %s\n' 023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757 "$archive" | sha256sum --check
+          tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint"
+
       # Compose's minio-init creates this bucket for the runtime stack. The
       # locked MinIO Python SDK does the same here without a second image.
       - name: Create MinIO 'waldo' bucket
@@ -125,11 +145,15 @@ jobs:
       # ── Ruff lint + format ───────────────────────────────────────────────────
       - name: Ruff — lint
         id: ruff_lint
-        run: uv run ruff check .
+        run: |
+          uv run ruff check .
+          uv run ruff check .github/scripts
 
       - name: Ruff — format check
         id: ruff_format
-        run: uv run ruff format --check .
+        run: |
+          uv run ruff format --check .
+          uv run ruff format --check .github/scripts
 
       # ── Database migrations ──────────────────────────────────────────────────
       - name: Run Alembic migrations
