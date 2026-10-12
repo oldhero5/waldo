@@ -155,11 +155,21 @@ no force pushes or deletion. The `release` environment requires owner approval
 and permits only `main`. These remote settings must be checked when the repository
 is copied or recreated; source files alone do not install branch protection.
 
-The legacy release workflow is disabled while this change is reviewed. Before
-re-enabling publishing, the owner must move Docker Hub credentials from repository
-secrets into the protected `release` environment and remove the old repository
-copies. GitHub does not expose saved secret values, so an agent cannot copy them
+The release workflow remains disabled while image qualification is introduced. Before
+re-enabling publishing, the owner must provision `RELEASE_DOCKERHUB_USERNAME` and
+`RELEASE_DOCKERHUB_TOKEN` in the protected `release` environment and remove the
+old repository credential copies. Keep the new names out of repository secrets.
+GitHub does not expose saved secret values, so an agent cannot copy them
 from the API. No existing secret has been deleted or rotated by this change.
+
+The candidate workflow builds CPU and CUDA OCI archives from one reviewed main
+commit. Both images need a successful scan. The CPU image needs the isolated
+HTTP/worker test; the CUDA image needs real inference on a trusted NVIDIA host.
+A skipped GPU job is a release blocker. The publisher must copy the qualified
+artifacts without a rebuild, verify their digests, and record an incomplete pair
+if publication fails. See the [release and recovery guide](docs-site/docs/deployment/docker.md).
+PR CI tests the guards and artifact transport; it does not replace candidate
+qualification. The owner confirmed that no NVIDIA host is available yet.
 
 Publish only reviewed `main` code after required checks and explicit owner
 approval. Do not publish automatically from a feature branch or create a tag as
