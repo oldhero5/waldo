@@ -5,9 +5,12 @@ import {
   getJobStats,
   getJobStatus,
   listAnnotations,
+  listSavedSources,
   updateAnnotation,
   type AnnotationOut,
 } from "../api";
+import SourceVideoPlayer from "../components/SourceVideoPlayer";
+import { findingTime } from "../lib/findingTime";
 import AnnotationCanvas from "../components/AnnotationCanvas";
 import RenewableFrameImage from "../components/RenewableFrameImage";
 import RenewableDownloadLink from "../components/RenewableDownloadLink";
@@ -121,7 +124,7 @@ interface FrameCardProps {
   focusedIdx: number;
   flatAnnotations: AnnotationOut[];
   annotationRefs: React.RefObject<Map<string, HTMLDivElement>>;
-  onInspect: (id: string) => void;
+  onInspect: (frameId: string, annotationId: string) => void;
   onFocus: (idx: number) => void;
   onHover: (id: string | null) => void;
   onReview: (id: string, status: string) => void;
@@ -140,7 +143,7 @@ const LazyFrameCard = React.memo(function LazyFrameCard({
       className="surface overflow-hidden"
       style={{ borderRadius: "var(--radius-lg)" }}
     >
-      <div className="relative group cursor-pointer" onClick={() => first.frame_url && onInspect(frameId)}>
+      <div className="relative group cursor-pointer" onClick={() => first.frame_url && onInspect(frameId, first.id)}>
         <div className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
           <span
             className="flex items-center gap-1 px-2 py-1 text-xs rounded-lg backdrop-blur"
@@ -188,9 +191,7 @@ const LazyFrameCard = React.memo(function LazyFrameCard({
                 <span className="font-medium" style={{ color: "var(--text-primary)" }}>{a.class_name}</span>
                 {a.track_id != null && <span className="text-xs" title={`Local to this job and source video ${a.source_video_id || "unknown"}`}>Track #{a.track_id}</span>}
                 <span className="text-xs" style={{ color: "var(--text-muted)" }}>
-                  {a.timestamp_s != null && Number.isFinite(a.timestamp_s)
-                    ? `${a.timestamp_method === "source_pts" ? "" : "Approx. "}${a.timestamp_s.toFixed(2)}s`
-                    : "Time unknown"}
+                  {findingTime(a).compactLabel}
                 </span>
                 {a.confidence != null && (
                   <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-muted)" }}>
@@ -214,6 +215,7 @@ const LazyFrameCard = React.memo(function LazyFrameCard({
                 </span>
               </span>
               <div className="flex gap-1.5">
+                <button aria-label={`Inspect finding ${a.id}`} onClick={(e) => { e.stopPropagation(); onInspect(frameId, a.id); }} className="px-2.5 py-1 rounded text-xs" style={{ color: "var(--accent)" }}>Inspect</button>
                 <button
                   onClick={(e) => { e.stopPropagation(); onReview(a.id, "accepted"); }}
                   className="px-2.5 py-1 rounded text-xs font-medium transition-colors"
@@ -249,6 +251,9 @@ export default function ReviewPage() {
   const [focusedIdx, setFocusedIdx] = useState(-1);
   const [confFilter, setConfFilter] = useState(0);
   const [statusFilter, setStatusFilter] = useState("all");
+  const [sourceFilter, setSourceFilter] = useState("all");
+  const [classFilter, setClassFilter] = useState("all");
+  const [inspectAnnotationId, setInspectAnnotationId] = useState<string | null>(null);
   const [framePage, setFramePage] = useState(0);
   const [hoveredAnn, setHoveredAnn] = useState<string | null>(null);
   const [inspectFrameId, setInspectFrameId] = useState<string | null>(null);
@@ -273,6 +278,20 @@ export default function ReviewPage() {
     enabled: !!jobId,
   });
 
+  const { data: sources, isError: sourcesError } = useQuery({
+    queryKey: ["savedSources", jobId, job?.status],
+    queryFn: () => listSavedSources(jobId!), enabled: !!jobId, retry: false,
+  });
+  const sourceOptions = useMemo(() => [...new Set(annotations?.map((a) => a.source_video_id).filter((id): id is string => !!id) || [])].sort(), [annotations]);
+  const classOptions = useMemo(() => [...new Set(annotations?.map((a) => a.class_name) || [])].sort(), [annotations]);
+  const inScope = useCallback((a: AnnotationOut) =>
+    (sourceFilter === "all" || a.source_video_id === sourceFilter) &&
+    (classFilter === "all" || a.class_name === classFilter) &&
+    (confFilter === 0 || (a.confidence != null && a.confidence >= confFilter)), [sourceFilter, classFilter, confFilter]);
+  const openInspector = useCallback((frameId: string, annotationId: string) => {
+    setInspectFrameId(frameId); setInspectAnnotationId(annotationId);
+  }, []);
+
   const handleReview = useCallback(async (annotationId: string, status: string) => {
     try {
       await updateAnnotation(annotationId, { status });
@@ -285,7 +304,7 @@ export default function ReviewPage() {
 
   // Filter by confidence + status
   const filtered = useMemo(() => annotations?.filter((a) => {
-    if (confFilter > 0 && (a.confidence == null || a.confidence < confFilter)) return false;
+    if (!inScope(a)) return false;
     if (statusFilter !== "all" && a.status !== statusFilter) return false;
     return true;
   }).sort((left, right) => {
@@ -295,11 +314,11 @@ export default function ReviewPage() {
     const rightTime = right.timestamp_s != null && Number.isFinite(right.timestamp_s) ? right.timestamp_s : Infinity;
     if (leftTime !== rightTime) return leftTime - rightTime;
     return left.frame_id.localeCompare(right.frame_id) || left.id.localeCompare(right.id);
-  }), [annotations, confFilter, statusFilter]);
+  }), [annotations, inScope, statusFilter]);
 
   // Count by status (unfiltered by status, but filtered by confidence)
   const confFiltered = annotations?.filter(
-    (a) => confFilter === 0 || (a.confidence != null && a.confidence >= confFilter)
+    inScope
   );
   const statusCounts = {
     all: confFiltered?.length || 0,
@@ -343,8 +362,8 @@ export default function ReviewPage() {
   }, [filtered, jobId, queryClient]);
 
   const handleBulkRejectLowConf = useCallback(async () => {
-    if (!confFiltered) return;
-    const lowConf = confFiltered.filter(
+    if (!filtered) return;
+    const lowConf = filtered.filter(
       (a) => a.status === "pending" && a.confidence != null && a.confidence < 0.5
     );
     const results = await Promise.allSettled(
@@ -354,7 +373,7 @@ export default function ReviewPage() {
     if (failed > 0) console.error(`${failed} annotation(s) failed to reject`);
     queryClient.invalidateQueries({ queryKey: ["annotations", jobId] });
     queryClient.invalidateQueries({ queryKey: ["stats", jobId] });
-  }, [confFiltered, jobId, queryClient]);
+  }, [filtered, jobId, queryClient]);
 
   // Jump to next pending frame
   const jumpToNextPending = useCallback(() => {
@@ -380,7 +399,7 @@ export default function ReviewPage() {
   // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (inspectFrameId || (e.target instanceof HTMLElement && e.target.closest("input, textarea, select, button, video"))) return;
       if (e.key === "ArrowDown" || e.key === "j") {
         e.preventDefault();
         setFocusedIdx((i) => {
@@ -407,10 +426,11 @@ export default function ReviewPage() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [flatAnnotations, focusedIdx, jumpToNextPending, handleReview]);
+  }, [flatAnnotations, focusedIdx, jumpToNextPending, handleReview, inspectFrameId]);
 
   const acceptedCount = annotations?.filter((a) => a.status === "accepted").length || 0;
-  const pendingCount = annotations?.filter((a) => a.status === "pending").length || 0;
+  const globalPendingCount = annotations?.filter((a) => a.status === "pending").length || 0;
+  const pendingCount = filtered?.filter((a) => a.status === "pending").length || 0;
 
   return (
     <div className="min-h-screen pb-20">
@@ -452,7 +472,7 @@ export default function ReviewPage() {
           <p className="text-sm mb-4" style={{ color: "var(--text-muted)" }}>Track IDs are local to this job and source video; they do not identify physical assets.</p>
         )}
 
-        <div className="flex items-center gap-1 mb-4">
+        <div className="flex flex-wrap items-center gap-1 mb-4">
           {STATUS_FILTERS.map((f) => (
             <button
               key={f.value}
@@ -481,6 +501,18 @@ export default function ReviewPage() {
           )}
         </div>
 
+        {sourcesError && <p role="status" className="text-sm mb-3">Source names could not be loaded. Saved findings remain available.</p>}
+        {annotations && annotations.length >= 10000 && <p role="status" className="text-sm mb-3">Showing the first 10,000 saved findings. Filters and bulk actions apply to these loaded findings.</p>}
+        <div className="flex flex-wrap gap-3 mb-4">
+          <label>Source clip <select aria-label="Source clip" value={sourceFilter} onChange={(e) => { setSourceFilter(e.target.value); setFramePage(0); setFocusedIdx(-1); }} className="surface px-2 py-1 rounded">
+            <option value="all">All sources</option>
+            {sourceOptions.map((id) => <option key={id} value={id}>{sources?.find((source) => source.id === id)?.filename || id}</option>)}
+          </select></label>
+          <label>Class <select aria-label="Class" value={classFilter} onChange={(e) => { setClassFilter(e.target.value); setFramePage(0); setFocusedIdx(-1); }} className="surface px-2 py-1 rounded">
+            <option value="all">All classes</option>
+            {classOptions.map((name) => <option key={name}>{name}</option>)}
+          </select></label>
+        </div>
         {/* Toolbar */}
         <div className="flex flex-wrap items-center gap-3 mb-5 pb-4" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
           <button
@@ -494,7 +526,7 @@ export default function ReviewPage() {
           </button>
           <button
             onClick={handleBulkRejectLowConf}
-            disabled={!annotations?.some((a) => a.status === "pending" && a.confidence != null && a.confidence < 0.5)}
+            disabled={!filtered?.some((a) => a.status === "pending" && a.confidence != null && a.confidence < 0.5)}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm disabled:opacity-40"
             style={{ backgroundColor: "var(--danger-soft)", border: "1px solid var(--danger)", color: "var(--danger)" }}
           >
@@ -513,7 +545,7 @@ export default function ReviewPage() {
           <div className="flex items-center gap-2 ml-auto">
             <label className="eyebrow" style={{ fontSize: 10 }}>Min conf</label>
             <input
-              type="range" min={0} max={1} step={0.05} value={confFilter}
+              aria-label="Minimum confidence" type="range" min={0} max={1} step={0.05} value={confFilter}
               onChange={(e) => { setConfFilter(Number(e.target.value)); setFramePage(0); }}
               className="w-24"
             />
@@ -532,14 +564,12 @@ export default function ReviewPage() {
           </div>
         </div>
 
-        <div className="grid grid-cols-[1fr_280px] gap-6">
+        <div className="grid lg:grid-cols-[1fr_280px] gap-6">
           {/* Annotation grid */}
           <div className="space-y-4">
             {filtered?.length === 0 && (
               <p className="py-8 text-center" style={{ color: "var(--text-muted)" }}>
-                {statusFilter === "pending"
-                  ? "No pending annotations — all reviewed!"
-                  : "No annotations match the current filters."}
+                No annotations match the current filters.
               </p>
             )}
 
@@ -601,7 +631,7 @@ export default function ReviewPage() {
                 focusedIdx={focusedIdx}
                 flatAnnotations={flatAnnotations}
                 annotationRefs={annotationRefs}
-                onInspect={setInspectFrameId}
+                onInspect={openInspector}
                 onFocus={setFocusedIdx}
                 onHover={setHoveredAnn}
                 onReview={handleReview}
@@ -623,8 +653,8 @@ export default function ReviewPage() {
           style={{ backgroundColor: "var(--success)", color: "#fff" }}
         >
           <span className="text-sm">
-            <strong>{acceptedCount}</strong> accepted, <strong>{pendingCount}</strong> remaining to review.
-            {pendingCount === 0 && " All reviewed!"}
+            <strong>{acceptedCount}</strong> accepted, <strong>{globalPendingCount}</strong> remaining to review.
+            {globalPendingCount === 0 && " All reviewed!"}
           </span>
           <Link
             to={`/train/${jobId}`}
@@ -649,6 +679,9 @@ export default function ReviewPage() {
         return (
           <AnnotationCanvas
             imageUrl={frameUrl}
+            initialAnnotationId={inspectAnnotationId}
+            onSelectionChange={setInspectAnnotationId}
+            sourcePanel={<SourceVideoPlayer jobId={jobId!} annotation={frameAnns.find((a) => a.id === inspectAnnotationId) || frameAnns[0]} source={sources?.find((source) => source.id === frameAnns[0].source_video_id)} />}
             frameId={inspectFrameId}
             jobId={jobId!}
             annotations={frameAnns}
@@ -656,8 +689,8 @@ export default function ReviewPage() {
             onAccept={(id) => handleReview(id, "accepted")}
             onReject={(id) => handleReview(id, "rejected")}
             onClose={() => setInspectFrameId(null)}
-            onPrev={currentIdx > 0 ? () => setInspectFrameId(allFrameIds[currentIdx - 1]) : undefined}
-            onNext={currentIdx < allFrameIds.length - 1 ? () => setInspectFrameId(allFrameIds[currentIdx + 1]) : undefined}
+            onPrev={currentIdx > 0 ? () => openInspector(allFrameIds[currentIdx - 1], byFrame.get(allFrameIds[currentIdx - 1])![0].id) : undefined}
+            onNext={currentIdx < allFrameIds.length - 1 ? () => openInspector(allFrameIds[currentIdx + 1], byFrame.get(allFrameIds[currentIdx + 1])![0].id) : undefined}
             onAnnotationCreated={() => {
               queryClient.invalidateQueries({ queryKey: ["annotations", jobId] });
               queryClient.invalidateQueries({ queryKey: ["stats", jobId] });

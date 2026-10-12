@@ -3,7 +3,7 @@
  * - Review mode: accept/reject existing annotations
  * - Annotate mode: click positive/negative points → SAM3 → preview → save
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { AnnotationOut } from "../api";
 import { useRenewableFrame } from "../hooks/useRenewableFrame";
 import { useAuth } from "../contexts/authState";
@@ -22,6 +22,9 @@ interface Props {
   onPrev?: () => void;
   onNext?: () => void;
   onAnnotationCreated?: () => void;
+  initialAnnotationId?: string | null;
+  onSelectionChange?: (id: string) => void;
+  sourcePanel?: ReactNode;
 }
 
 const COLORS = ["#3b82f6", "#ef4444", "#22c55e", "#f59e0b", "#8b5cf6", "#ec4899", "#14b8a6", "#f97316"];
@@ -34,13 +37,13 @@ function classColor(name: string): string {
 interface ClickPoint { x: number; y: number; label: number } // x,y in normalized 0-1
 
 export default function AnnotationCanvas({
-  imageUrl, frameId, jobId, annotations, classes, onAccept, onReject, onClose, onPrev, onNext, onAnnotationCreated,
+  imageUrl, frameId, jobId, annotations, classes, onAccept, onReject, onClose, onPrev, onNext, onAnnotationCreated, initialAnnotationId, onSelectionChange, sourcePanel,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(initialAnnotationId || null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [imgLoaded, setImgLoaded] = useState(false);
   const [showBoxes, setShowBoxes] = useState(true);
@@ -67,6 +70,9 @@ export default function AnnotationCanvas({
   const { user, token } = useAuth();
   const { url: mediaUrl, onLoad: mediaOnLoad, onError: mediaOnError, loading: mediaLoading, error: mediaError, retry: mediaRetry } = useRenewableFrame(frameId, imageUrl);
 
+  // Move keyboard review into the inspector without stealing focus on media renewal.
+  useEffect(() => { canvasRef.current?.focus(); }, []);
+
   // A capability refresh does not reset unsaved annotation work.
   useEffect(() => {
     setZoom(1);
@@ -76,6 +82,9 @@ export default function AnnotationCanvas({
     setClickPoints([]);
     setPreviewPolygon(null);
   }, [frameId, token, user?.id, user?.workspace_id]);
+
+  useEffect(() => { setSelectedId(initialAnnotationId || null); }, [initialAnnotationId, frameId]);
+  useEffect(() => { if (selectedId) onSelectionChange?.(selectedId); }, [selectedId, onSelectionChange]);
 
   useEffect(() => {
     let active = true;
@@ -375,23 +384,23 @@ export default function AnnotationCanvas({
     }
   }, [previewPolygon, selectedClass, newClassName, frameId, jobId, onAnnotationCreated]);
 
-  // Active annotation: hovered > selected > first pending > first
+  // Review actions follow the explicit selection, even when the pointer previews another object.
   const hoveredAnn = annotations.find((a) => a.id === hoveredId);
   const selectedAnn = annotations.find((a) => a.id === selectedId);
   const firstPending = annotations.find((a) => a.status === "pending");
-  const activeAnn = hoveredAnn || selectedAnn || firstPending || annotations[0] || null;
+  const activeAnn = selectedAnn || hoveredAnn || firstPending || annotations[0] || null;
 
   // Auto-highlight active annotation
   useEffect(() => {
     if (mode === "review" && !hoveredId && !selectedId && activeAnn) {
-      setSelectedId(activeAnn.id);
+      setSelectedId(initialAnnotationId && annotations.some((a) => a.id === initialAnnotationId) ? initialAnnotationId : activeAnn.id);
     }
-  }, [mode, hoveredId, selectedId, activeAnn]);
+  }, [mode, hoveredId, selectedId, activeAnn, initialAnnotationId, annotations]);
 
   // Keyboard
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement) return;
+      if (e.target instanceof HTMLElement && e.target.closest("input, textarea, select, button, video, [data-source-panel]")) return;
       if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
@@ -467,8 +476,8 @@ export default function AnnotationCanvas({
   return (
     <div className="fixed inset-0 z-50 bg-gray-950 flex flex-col" onContextMenu={(e) => e.preventDefault()}>
       {/* Toolbar */}
-      <div className="flex items-center justify-between px-4 py-2 bg-gray-900 border-b border-gray-800 shrink-0">
-        <div className="flex items-center gap-1">
+      <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2 bg-gray-900 border-b border-gray-800 shrink-0">
+        <div className="flex flex-wrap items-center gap-1">
           {/* Mode toggle */}
           <button
             onClick={() => { setMode("review"); setClickPoints([]); setPreviewPolygon(null); }}
@@ -532,10 +541,13 @@ export default function AnnotationCanvas({
         </div>
       </div>
 
+      <div className="flex-1 min-h-0 flex flex-col lg:flex-row">
       {/* Main canvas */}
-      <div className="flex-1 relative overflow-hidden">
+      <div className="flex-1 min-h-[300px] relative overflow-hidden">
         <canvas
           ref={canvasRef}
+          tabIndex={-1}
+          aria-label="Saved frame annotation canvas"
           className="absolute inset-0 w-full h-full"
           style={{ cursor: mode === "annotate" ? "crosshair" : dragging.current ? "grabbing" : hoveredId ? "pointer" : "grab" }}
           onMouseDown={handleMouseDown}
@@ -694,6 +706,8 @@ export default function AnnotationCanvas({
             </div>
           )}
         </div>
+      </div>
+      {sourcePanel && <aside data-source-panel className="lg:w-80 lg:shrink-0 max-h-[40vh] lg:max-h-none overflow-y-auto border-t lg:border-t-0 lg:border-l border-gray-800">{sourcePanel}</aside>}
       </div>
     </div>
   );

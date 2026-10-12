@@ -18,6 +18,27 @@ Update an annotation's bbox, class, or accepted state.
 ### `POST /api/v1/annotations/merge-classes`
 Bulk-rename one class to another across a job (e.g. merge `truck` and `lorry`).
 
+## Source video inspection
+
+### `GET /api/v1/jobs/{job_id}/sources`
+
+List the distinct sources linked to saved annotations in this job. Each entry
+contains `id`, `filename`, `duration_s` and `has_source_video`. The list does not
+include playback URLs. Image-only sources remain listed but have no video.
+
+### `GET /api/v1/jobs/{job_id}/sources/{video_id}/playback`
+
+Return `video_id` and a fresh signed `url` for that source. The caller must have
+access to both the job and video, and a saved annotation must link them. An
+unrelated or inaccessible source returns 404, including a clip in the same
+workspace that has no saved finding in this job. Image-only sources return 404.
+The signed download supports byte ranges for browser seeking.
+
+Use the saved annotation's source ID and time to navigate. `source_pts` times
+are relative to container start. Known FPS-derived times are approximate.
+Unknown or invalid timing does not support an automatic seek. This endpoint
+does not run inference, change a review, or establish continuous coverage.
+
 ## Job management
 
 ### `PATCH /api/v1/jobs/{job_id}`

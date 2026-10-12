@@ -54,6 +54,9 @@ Test_Video/
 Target.mp4
 *.mp4
 !tests/fixtures/*.mp4
+!ui/e2e/fixtures/nonzero-start.mp4
+!ui/e2e/fixtures/audio-first.mp4
+!ui/e2e/fixtures/malformed-timing.mp4
 !docs-site/static/img/recordings/*.mp4
 
 # Screenshots (development artifacts)
