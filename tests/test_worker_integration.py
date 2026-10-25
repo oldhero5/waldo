@@ -192,6 +192,7 @@ def test_blocked_worker_times_out_then_completes_after_release(service_client, t
     assert _wait_for_status(service_client, job_id, {"completed"}, timeout_s=60)["processed_frames"] > 0
 
 
+@pytest.mark.parametrize("worker_harness", ["text", "native"], indirect=True)
 def test_partial_retry_keeps_committed_review_and_adds_second_clip_once(service_client, test_clip, worker_harness):
     project = f"worker-retry-{uuid.uuid4().hex}"
     first = _upload(service_client, test_clip, "first.mp4", project)
@@ -267,6 +268,7 @@ def test_partial_retry_keeps_committed_review_and_adds_second_clip_once(service_
         )
 
 
+@pytest.mark.parametrize("worker_harness", ["text", "native"], indirect=True)
 def test_graceful_worker_restart_and_completed_redelivery_preserve_review_export(
     service_client, test_clip, worker_harness
 ):
@@ -307,3 +309,31 @@ def test_graceful_worker_restart_and_completed_redelivery_preserve_review_export
         for item in _annotations(service_client, job_id)
     ] == annotations_before
     assert service_client.get(f"/api/v1/jobs/{job_id}/stats").json() == stats_before
+
+
+@pytest.mark.parametrize("worker_harness", ["native"], indirect=True)
+@pytest.mark.parametrize("mode", ["POS", "EMPTY"])
+def test_native_worker_persists_original_positive_and_empty_samples(service_client, test_clip, worker_harness, mode):
+    (worker_harness.control / "mode").write_text(mode)
+    worker_harness.start()
+    uploaded = _upload(service_client, test_clip, f"native-{mode.lower()}.mp4")
+    job_id = _label(service_client, video_id=uploaded["video_id"])
+    finished = _wait_for_status(service_client, job_id, {"completed"}, timeout_s=60)
+    response = service_client.get(f"/api/v1/jobs/{job_id}/assessments")
+    assert response.status_code == 200, response.text
+    page = response.json()
+    assert page["coverage_status"] == "available"
+    assert len(page["items"]) == finished["processed_frames"] > 0
+    assert {row["detection_count"] for row in page["items"]} == {1 if mode == "POS" else 0}
+    assert {row["timestamp_method"] for row in page["items"]} == {"source_pts"}
+    assert all(row["source_width"] == 160 and row["source_height"] == 120 for row in page["items"])
+    observations = _annotations(service_client, job_id)
+    assert len(observations) == (len(page["items"]) if mode == "POS" else 0)
+    if mode == "EMPTY":
+        assert service_client.get(f"/api/v1/jobs/{job_id}/sources").json() == []
+    else:
+        first = observations[0]
+        assert (
+            service_client.patch(f"/api/v1/annotations/{first['id']}", json={"status": "rejected"}).status_code == 200
+        )
+        assert service_client.get(f"/api/v1/jobs/{job_id}/assessments").json() == page
