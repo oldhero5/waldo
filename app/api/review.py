@@ -1,3 +1,5 @@
+import base64
+import binascii
 import json
 import logging
 import math
@@ -9,7 +11,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query
 from jose import JWTError, jwt
 from pydantic import BaseModel
-from sqlalchemy import distinct, func, or_
+from sqlalchemy import and_, distinct, func, or_, tuple_
 
 from lib.auth import get_current_user
 from lib.authorization import (
@@ -21,7 +23,7 @@ from lib.authorization import (
 )
 from lib.config import settings
 from lib.dataset_evidence import assessed_frame_count, invalidate_current_export, publish_current_export
-from lib.db import Annotation, Frame, LabelingJob, SessionLocal, Video
+from lib.db import Annotation, Frame, LabelingJob, NativeFrameAssessment, SessionLocal, Video
 from lib.storage import delete_object, download_file, get_download_url, upload_file
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
@@ -51,10 +53,12 @@ class AnnotationOut(BaseModel):
     timestamp_method: str = "unknown"
 
 
-def _annotation_timestamp_method(job, frame) -> str:
+def _annotation_timestamp_method(job, frame, durable_methods=None) -> str:
     """Use matching clip provenance; merged runs can make the origin ambiguous."""
     if frame is None:
         return "unknown"
+    if durable_methods and (frame.video_id, frame.frame_number, frame.timestamp_s) in durable_methods:
+        return durable_methods[(frame.video_id, frame.frame_number, frame.timestamp_s)]
     methods = set()
     summaries = [job.processing_summary]
     while summaries:
@@ -90,6 +94,173 @@ def _annotation_timestamp_method(job, frame) -> str:
                 else "unknown"
             )
     return methods.pop() if len(methods) == 1 else "unknown"
+
+
+def _durable_annotation_methods(session, principal, job, frames):
+    """One bounded lookup for a response page; merged runs keep legacy ambiguity."""
+    if not frames or (job.processing_summary or {}).get("merged_runs"):
+        return {}
+    keys = {(frame.video_id, frame.frame_number, frame.timestamp_s) for frame in frames}
+    rows = (
+        scope_resources(session.query(NativeFrameAssessment), NativeFrameAssessment, principal)
+        .filter(
+            NativeFrameAssessment.job_id == job.id,
+            tuple_(
+                NativeFrameAssessment.video_id,
+                NativeFrameAssessment.source_frame_index,
+                NativeFrameAssessment.timestamp_s,
+            ).in_(keys),
+        )
+        .all()
+    )
+    return {(row.video_id, row.source_frame_index, row.timestamp_s): row.timestamp_method for row in rows}
+
+
+class AssessmentOut(BaseModel):
+    id: str
+    source_video_id: str
+    source_frame_index: int
+    timestamp_s: float
+    timestamp_method: str
+    frame_duration_s: float | None
+    source_width: int
+    source_height: int
+    detection_count: int
+
+
+class AssessmentPage(BaseModel):
+    job_id: str
+    coverage_status: str
+    coverage_scope: str = "sampled_native_frames"
+    items: list[AssessmentOut]
+    next_cursor: str | None
+
+
+def _decode_assessment_cursor(cursor, job_id):
+    try:
+        if len(cursor) > 256:
+            raise ValueError("oversized cursor")
+        payload = json.loads(base64.b64decode(cursor + "=" * (-len(cursor) % 4), altchars=b"-_", validate=True))
+        if not isinstance(payload, dict) or set(payload) != {"job_id", "video_id", "source_frame_index"}:
+            raise ValueError("invalid cursor fields")
+        if not isinstance(payload["job_id"], str) or not isinstance(payload["video_id"], str):
+            raise ValueError("invalid UUID")
+        cursor_job, video_id = _uuid.UUID(payload["job_id"]), _uuid.UUID(payload["video_id"])
+        index = payload["source_frame_index"]
+        if cursor_job != job_id or type(index) is not int or not 0 <= index <= 2147483647:
+            raise ValueError("invalid cursor position")
+        return video_id, index
+    except (ValueError, TypeError, AttributeError, UnicodeError, binascii.Error) as error:
+        raise HTTPException(status_code=400, detail="Invalid assessment cursor") from error
+
+
+def _assessment_coverage(job, counts):
+    if not counts:
+        return "unavailable"
+    summary = job.processing_summary
+    if job.status != "completed" or not isinstance(summary, dict) or summary.get("merged_runs"):
+        return "partial"
+    clips = summary.get("videos")
+    if not isinstance(clips, list) or not clips:
+        return "partial"
+    expected = {}
+    for clip in clips:
+        if not isinstance(clip, dict) or clip.get("status") != "completed":
+            return "partial"
+        video_id, count = clip.get("video_id"), clip.get("sampled_frames")
+        if not isinstance(video_id, str):
+            return "partial"
+        try:
+            video_id = str(_uuid.UUID(video_id))
+        except ValueError:
+            return "partial"
+        if (
+            type(clip.get("native_assessment_version")) is not int
+            or clip["native_assessment_version"] != 1
+            or type(count) is not int
+            or count < 0
+            or video_id in expected
+        ):
+            return "partial"
+        expected[video_id] = count
+    return (
+        "available"
+        if all(counts.get(video, 0) == count for video, count in expected.items())
+        and all(video in expected for video in counts)
+        else "partial"
+    )
+
+
+@router.get("/jobs/{job_id}/assessments", response_model=AssessmentPage)
+def list_assessments(
+    job_id: str,
+    limit: int = Query(100, ge=1, le=500),
+    cursor: str | None = Query(None),
+    principal: WorkspacePrincipal = Depends(get_workspace_principal),
+):
+    _validate_uuid(job_id, "job_id")
+    with SessionLocal() as session:
+        job = require_resource(session, principal, LabelingJob, job_id)
+        position = _decode_assessment_cursor(cursor, job.id) if cursor is not None else None
+        query = scope_resources(session.query(NativeFrameAssessment), NativeFrameAssessment, principal).filter(
+            NativeFrameAssessment.job_id == job.id
+        )
+        counts = {
+            str(video): count
+            for video, count in query.with_entities(
+                NativeFrameAssessment.video_id, func.count(NativeFrameAssessment.id)
+            )
+            .group_by(NativeFrameAssessment.video_id)
+            .all()
+        }
+        if position:
+            video, index = position
+            query = query.filter(
+                or_(
+                    NativeFrameAssessment.video_id > video,
+                    and_(NativeFrameAssessment.video_id == video, NativeFrameAssessment.source_frame_index > index),
+                )
+            )
+        rows = (
+            query.order_by(NativeFrameAssessment.video_id, NativeFrameAssessment.source_frame_index)
+            .limit(limit + 1)
+            .all()
+        )
+        next_cursor = None
+        if len(rows) > limit:
+            last = rows[limit - 1]
+            next_cursor = (
+                base64.urlsafe_b64encode(
+                    json.dumps(
+                        {
+                            "job_id": str(job.id),
+                            "video_id": str(last.video_id),
+                            "source_frame_index": last.source_frame_index,
+                        }
+                    ).encode()
+                )
+                .decode()
+                .rstrip("=")
+            )
+        return AssessmentPage(
+            job_id=str(job.id),
+            coverage_status=_assessment_coverage(job, counts),
+            next_cursor=next_cursor,
+            items=[
+                AssessmentOut(
+                    id=str(row.id),
+                    source_video_id=str(row.video_id),
+                    source_frame_index=row.source_frame_index,
+                    timestamp_s=row.timestamp_s,
+                    timestamp_method=row.timestamp_method,
+                    frame_duration_s=row.frame_duration_s,
+                    source_width=row.source_width,
+                    source_height=row.source_height,
+                    detection_count=row.detection_count,
+                )
+                for row in rows[:limit]
+            ],
+        )
 
 
 class AnnotationUpdate(BaseModel):
@@ -207,6 +378,7 @@ def list_annotations(
             frames = scope_resources(session.query(Frame), Frame, principal).filter(Frame.id.in_(frame_ids)).all()
             frames_map = {f.id: f for f in frames}
 
+        durable_methods = _durable_annotation_methods(session, principal, job, frames_map.values())
         results = []
         for ann in annotations:
             frame = frames_map.get(ann.frame_id)
@@ -226,7 +398,7 @@ def list_annotations(
                     track_id=ann.track_id,
                     source_video_id=str(frame.video_id) if frame else None,
                     timestamp_s=frame.timestamp_s if frame else None,
-                    timestamp_method=_annotation_timestamp_method(job, frame),
+                    timestamp_method=_annotation_timestamp_method(job, frame, durable_methods),
                 )
             )
 
@@ -279,7 +451,11 @@ def update_annotation(
             source_video_id=str(frame.video_id) if frame else None,
             timestamp_s=frame.timestamp_s if frame else None,
             timestamp_method=_annotation_timestamp_method(
-                require_resource(session, principal, LabelingJob, ann.job_id), frame
+                require_resource(session, principal, LabelingJob, ann.job_id),
+                frame,
+                _durable_annotation_methods(
+                    session, principal, require_resource(session, principal, LabelingJob, ann.job_id), [frame]
+                ),
             ),
         )
     finally:

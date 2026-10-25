@@ -8,6 +8,15 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.ext.compiler import compiles
+
+
+@compiles(UUID, "sqlite")
+def sqlite_uuid_as_text(type_, compiler, **kwargs):
+    # SQLite treats a literal UUID type as NUMERIC. Scientific-notation UUID
+    # strings must keep their identity, as native PostgreSQL UUID values do.
+    return "CHAR(32)"
 
 
 @pytest.fixture
@@ -118,7 +127,7 @@ def worker_queue(monkeypatch):
 
 
 @pytest.fixture
-def worker_harness(worker_queue, tmp_path):
+def worker_harness(worker_queue, tmp_path, request):
     """Start and stop one real Celery process for this test's queue."""
     if worker_queue is None:
         yield None
@@ -150,6 +159,7 @@ def worker_harness(worker_queue, tmp_path):
         log_offset = log_path.stat().st_size if log_path.exists() else 0
         env = os.environ.copy()
         env["WALDO_TEST_WORKER_CONTROL_DIR"] = str(control)
+        env["WALDO_TEST_NATIVE_MODE"] = "1" if getattr(request, "param", "text") == "native" else "0"
         name = f"waldo-test-{uuid.uuid4().hex[:12]}@%h"
         with log_path.open("ab") as log:
             process = subprocess.Popen(

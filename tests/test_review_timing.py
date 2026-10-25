@@ -100,3 +100,77 @@ def test_review_timing_abstains_for_unassessed_frame_and_conflicting_merged_run(
     }
     session.commit()
     assert client.get(url).json()[0]["timestamp_method"] == "unknown"
+
+
+def test_durable_timing_matches_run_video_index_and_time_and_keeps_merge_ambiguity(resources):
+    from lib import db
+
+    session, client, _, rows = resources
+    own = rows["own"]
+    model = getattr(db, "NativeFrameAssessment", None)
+    assert model is not None, "durable annotation timing is unavailable"
+    row = model(
+        job_id=own["job"].id,
+        video_id=own["video"].id,
+        source_frame_index=0,
+        timestamp_s=0,
+        timestamp_method="source_pts",
+        source_width=40,
+        source_height=40,
+        detection_count=1,
+    )
+    session.add(row)
+    own["job"].processing_summary = None
+    session.commit()
+    url = f"/api/v1/jobs/{own['job'].id}/annotations"
+    assert client.get(url).json()[0]["timestamp_method"] == "source_pts"
+    row.timestamp_s = 1
+    session.commit()
+    assert client.get(url).json()[0]["timestamp_method"] == "unknown"
+    row.timestamp_s = 0
+    own["job"].processing_summary = {"merged_runs": [{"job_id": str(uuid.uuid4())}]}
+    session.commit()
+    assert client.get(url).json()[0]["timestamp_method"] == "unknown"
+
+
+def test_durable_timing_lookup_is_batched_for_annotation_page(resources):
+    from sqlalchemy import event
+
+    from lib.db import NativeFrameAssessment
+
+    session, client, _, rows = resources
+    own = rows["own"]
+    session.add(
+        NativeFrameAssessment(
+            job_id=own["job"].id,
+            video_id=own["video"].id,
+            source_frame_index=0,
+            timestamp_s=0,
+            timestamp_method="source_pts",
+            source_width=40,
+            source_height=40,
+            detection_count=1,
+        )
+    )
+    session.add_all(
+        [
+            Annotation(job_id=own["job"].id, frame_id=own["frame"].id, class_name="reviewed", class_index=0, polygon=[])
+            for _ in range(10)
+        ]
+    )
+    session.commit()
+    queries = []
+
+    def record(connection, cursor, statement, parameters, context, many):
+        if "native_frame_assessments" in statement:
+            queries.append(statement)
+
+    event.listen(session.bind, "before_cursor_execute", record)
+    try:
+        response = client.get(f"/api/v1/jobs/{own['job'].id}/annotations")
+        assert response.status_code == 200
+        assert len(response.json()) == 11
+        assert {row["timestamp_method"] for row in response.json()} == {"source_pts"}
+        assert len(queries) == 1
+    finally:
+        event.remove(session.bind, "before_cursor_execute", record)

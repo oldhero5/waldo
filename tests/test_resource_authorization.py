@@ -712,3 +712,30 @@ def test_changed_annotation_requires_reexport_and_preserves_previous_training_in
     assert own["job"].result_minio_key is not None
     assert own["job"].result_minio_key != own["run"].dataset_minio_key
     assert own["run"].dataset_minio_key == "results/snapshot-before-edit.zip"
+
+
+def test_manual_annotation_keeps_scientific_notation_uuid_as_source_identity(resources):
+    session, client, _, rows = resources
+    own = rows["own"]
+    frame = Frame(
+        id=uuid.UUID("12345678-e123-4234-8123-123456781234"),
+        video_id=own["video"].id,
+        frame_number=1,
+        timestamp_s=0.5,
+        minio_key="frames/numeric-uuid.jpg",
+    )
+    session.add(frame)
+    session.commit()
+    response = client.post(
+        "/api/v1/annotations",
+        json={
+            "job_id": str(own["job"].id),
+            "frame_id": str(frame.id),
+            "class_name": "new",
+            "polygon": [0.1, 0.1, 0.9, 0.1, 0.9, 0.9],
+        },
+    )
+    assert response.status_code == 201, response.text
+    assert session.get(Annotation, uuid.UUID(response.json()["id"])).frame_id == uuid.UUID(
+        "12345678-e123-4234-8123-123456781234"
+    )

@@ -111,7 +111,9 @@ def _record_labeling_retry(task, job_id, error):
     session = None
     try:
         session = SessionLocal()
-        job = session.query(LabelingJob).filter_by(id=job_id).one()
+        job = session.query(LabelingJob).filter_by(id=job_id).populate_existing().with_for_update().one()
+        if job.status == "completed":
+            return
         exhausted = task.request.retries >= task.max_retries
         summary = copy.deepcopy(job.processing_summary)
         if exhausted and summary:
