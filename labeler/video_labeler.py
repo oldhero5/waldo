@@ -904,10 +904,11 @@ def run_video_labeling_pipeline(celery_task, job_id: str) -> dict:
         for video in videos:
             if str(video.id) not in completed:
                 _check_native_orphans(session, job, video)
-        summary["videos"] = [completed[str(video.id)] for video in videos if str(video.id) in completed]
-        videos_processed = len(summary["videos"])
-        observations_count = sum(entry.get("observations", 0) for entry in summary["videos"])
-        frames_processed = sum(entry.get("sampled_frames", 0) for entry in summary["videos"])
+        eligible_video_ids = {str(video.id) for video in videos}
+        # Other deliveries may finalize while this one infers. Keep the last
+        # incomplete clip record until its replacement evidence commits.
+        summary["videos"] = [entry for entry in summary.get("videos", []) if entry["video_id"] in eligible_video_ids]
+        videos_processed, observations_count, frames_processed = _native_counts(summary)
         _update_job(
             session,
             job,
@@ -1051,7 +1052,9 @@ def run_video_labeling_pipeline(celery_task, job_id: str) -> dict:
         summary = copy.deepcopy(job.processing_summary)
         videos_processed, observations_count, frames_processed = _native_counts(summary)
         failures = [entry for entry in summary["videos"] if entry["status"] == "failed"]
-        status = "completed" if videos and not failures else "partial" if videos_processed else "failed"
+        completed_video_ids = {entry["video_id"] for entry in summary["videos"] if entry["status"] == "completed"}
+        all_clips_completed = bool(videos) and completed_video_ids == eligible_video_ids and not failures
+        status = "completed" if all_clips_completed else "partial" if videos_processed else "failed"
         error_message = "; ".join(f"{entry['video_id']}: {entry['error']}" for entry in failures) or (
             "No videos to process" if not videos else None
         )
