@@ -120,7 +120,7 @@ def test_evidence_revision_upgrade_preserves_populated_artifacts_and_database_de
                 ),
                 {"id": training, "project": project, "key": "datasets/immutable/training-snapshot.zip"},
             )
-        command.upgrade(cfg, "head")
+        command.upgrade(cfg, "4e5f6a7b8c9d")
         with scoped.begin() as connection:
             revision = next(
                 c for c in inspect(connection).get_columns("labeling_jobs") if c["name"] == "evidence_revision"
@@ -165,7 +165,7 @@ def test_evidence_revision_upgrade_preserves_populated_artifacts_and_database_de
         command.downgrade(cfg, "3d4e5f6a7b8c")
         with scoped.connect() as connection:
             assert "evidence_revision" not in {c["name"] for c in inspect(connection).get_columns("labeling_jobs")}
-        command.upgrade(cfg, "head")
+        command.upgrade(cfg, "4e5f6a7b8c9d")
         with scoped.connect() as connection:
             assert (
                 connection.scalar(
@@ -204,4 +204,81 @@ def test_alembic_current_is_head_after_upgrade():
             current_heads = ctx.get_current_heads()
         assert head_rev in current_heads, f"DB is at {current_heads} but expected head revision {head_rev}"
     finally:
+        engine.dispose()
+
+
+@requires_postgres
+def test_native_assessment_upgrade_preserves_prior_rows_and_refuses_destructive_downgrade():
+    schema = f"waldo_native_migration_{uuid.uuid4().hex}"
+    engine = sqlalchemy.create_engine(_postgres_dsn())
+    url = sqlalchemy.engine.make_url(_postgres_dsn()).update_query_dict({"options": f"-csearch_path={schema}"})
+    scoped = sqlalchemy.create_engine(url)
+    cfg = Config("alembic.ini")
+    cfg.attributes["database_url"] = url.render_as_string(hide_password=False).replace("%", "%%")
+    project, video, job, frame, annotation, assessment = [str(uuid.uuid4()) for _ in range(6)]
+    try:
+        with engine.begin() as connection:
+            connection.exec_driver_sql(f'CREATE SCHEMA "{schema}"')
+        command.upgrade(cfg, "4e5f6a7b8c9d")
+        with scoped.begin() as connection:
+            connection.execute(
+                sqlalchemy.text("INSERT INTO projects(id,name) VALUES (:id,'native migration')"), {"id": project}
+            )
+            connection.execute(
+                sqlalchemy.text(
+                    "INSERT INTO videos(id,project_id,filename,minio_key) VALUES (:id,:project,'synthetic.mp4','source.mp4')"
+                ),
+                {"id": video, "project": project},
+            )
+            connection.execute(
+                sqlalchemy.text(
+                    "INSERT INTO labeling_jobs(id,project_id,video_id,status,result_minio_key,processing_summary) VALUES (:id,:project,:video,'completed','reviewed.zip',:summary)"
+                ),
+                {
+                    "id": job,
+                    "project": project,
+                    "video": video,
+                    "summary": '{"videos": [{"status": "completed", "sampled_frames": 2}]}',
+                },
+            )
+            connection.execute(
+                sqlalchemy.text(
+                    "INSERT INTO frames(id,video_id,frame_number,timestamp_s,minio_key) VALUES (:id,:video,0,0,'frame.jpg')"
+                ),
+                {"id": frame, "video": video},
+            )
+            connection.execute(
+                sqlalchemy.text(
+                    "INSERT INTO annotations(id,frame_id,job_id,class_name,class_index,polygon,status) VALUES (:id,:frame,:job,'reviewed',0,'[]','accepted')"
+                ),
+                {"id": annotation, "frame": frame, "job": job},
+            )
+        command.upgrade(cfg, "head")
+        with scoped.begin() as connection:
+            assert connection.scalar(sqlalchemy.text("SELECT count(*) FROM native_frame_assessments")) == 0
+            assert (
+                connection.scalar(
+                    sqlalchemy.text("SELECT result_minio_key FROM labeling_jobs WHERE id=:id"), {"id": job}
+                )
+                == "reviewed.zip"
+            )
+            assert (
+                connection.scalar(sqlalchemy.text("SELECT status FROM annotations WHERE id=:id"), {"id": annotation})
+                == "accepted"
+            )
+            connection.execute(
+                sqlalchemy.text(
+                    "INSERT INTO native_frame_assessments(id,job_id,video_id,source_frame_index,timestamp_s,timestamp_method,source_width,source_height,detection_count) VALUES (:id,:job,:video,1,-0.25,'source_pts',40,40,0)"
+                ),
+                {"id": assessment, "job": job, "video": video},
+            )
+        with pytest.raises(RuntimeError, match="retain"):
+            command.downgrade(cfg, "4e5f6a7b8c9d")
+        with scoped.connect() as connection:
+            assert connection.scalar(sqlalchemy.text("SELECT count(*) FROM native_frame_assessments")) == 1
+            assert connection.scalar(sqlalchemy.text("SELECT version_num FROM alembic_version")) == "5f6a7b8c9d0e"
+    finally:
+        scoped.dispose()
+        with engine.begin() as connection:
+            connection.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
         engine.dispose()

@@ -6,6 +6,7 @@ from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
+    CheckConstraint,
     Column,
     DateTime,
     Float,
@@ -13,6 +14,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     create_engine,
     false,
 )
@@ -168,6 +170,38 @@ class LabelingJob(Base):
     project = relationship("Project")
     annotations = relationship("Annotation", back_populates="job")
     parent = relationship("LabelingJob", remote_side=[id], foreign_keys=[parent_id])
+
+
+class NativeFrameAssessment(Base):
+    """Original inference evidence for one sampled native source frame."""
+
+    __tablename__ = "native_frame_assessments"
+    __table_args__ = (
+        UniqueConstraint("job_id", "video_id", "source_frame_index", name="uq_native_assessment_source"),
+        CheckConstraint("source_frame_index >= 0", name="ck_native_assessment_index"),
+        CheckConstraint(
+            "timestamp_s >= -1.7976931348623157e308 AND timestamp_s <= 1.7976931348623157e308",
+            name="ck_native_assessment_time",
+        ),
+        CheckConstraint("timestamp_method IN ('source_pts', 'frame_index/fps')", name="ck_native_assessment_method"),
+        CheckConstraint(
+            "frame_duration_s IS NULL OR (frame_duration_s > 0 AND frame_duration_s <= 1.7976931348623157e308)",
+            name="ck_native_assessment_duration",
+        ),
+        CheckConstraint("source_width > 0 AND source_height > 0", name="ck_native_assessment_dimensions"),
+        CheckConstraint("detection_count >= 0", name="ck_native_assessment_count"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    job_id = Column(UUID(as_uuid=True), ForeignKey("labeling_jobs.id", ondelete="CASCADE"), nullable=False)
+    video_id = Column(UUID(as_uuid=True), ForeignKey("videos.id", ondelete="CASCADE"), nullable=False, index=True)
+    source_frame_index = Column(Integer, nullable=False)
+    timestamp_s = Column(Float(53), nullable=False)
+    timestamp_method = Column(String(32), nullable=False)
+    frame_duration_s = Column(Float(53), nullable=True)
+    source_width = Column(Integer, nullable=False)
+    source_height = Column(Integer, nullable=False)
+    detection_count = Column(Integer, nullable=False)
 
 
 class Annotation(Base):

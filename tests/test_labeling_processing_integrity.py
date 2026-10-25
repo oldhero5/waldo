@@ -231,6 +231,7 @@ def native_run(monkeypatch, sam_stub):
         sample_fps=2,
         task_type="segment",
         processing_summary=None,
+        status="pending",
     )
     videos = [
         SimpleNamespace(id="video-a", filename="a.mp4", minio_key="a"),
@@ -238,6 +239,7 @@ def native_run(monkeypatch, sam_stub):
     ]
     session = MagicMock()
     session.query.return_value.filter_by.return_value.one.return_value = job
+    session.query.return_value.filter_by.return_value.populate_existing.return_value.with_for_update.return_value.one.return_value = job
     session.query.return_value.filter_by.return_value.all.return_value = videos
     session.query.return_value.filter_by.return_value.first.return_value = None
     session.query.return_value.filter.return_value.first.return_value = None
@@ -269,6 +271,7 @@ def _native_frames():
         {
             "frame_idx": index,
             "timestamp_s": index / 30,
+            "timestamp_method": "source_pts",
             "width": 40,
             "height": 40,
             "detections": [
@@ -556,10 +559,12 @@ def test_transient_download_failure_is_retried_then_completes(monkeypatch, tmp_p
         score_threshold=0.2,
         sample_fps=2,
         processing_summary=None,
+        status="pending",
     )
     video = SimpleNamespace(id="video", filename="video.mp4", minio_key="source", frame_count=30)
     session = MagicMock()
     session.query.return_value.filter_by.return_value.one.return_value = job
+    session.query.return_value.filter_by.return_value.populate_existing.return_value.with_for_update.return_value.one.return_value = job
     session.query.return_value.filter_by.return_value.all.return_value = [video]
     session.query.return_value.filter_by.return_value.first.return_value = None
     session.query.return_value.filter.return_value.first.return_value = None
@@ -577,7 +582,16 @@ def test_transient_download_failure_is_retried_then_completes(monkeypatch, tmp_p
         monkeypatch.setattr(
             subject,
             "process_video_native",
-            lambda *a, **k: [{"frame_idx": 0, "timestamp_s": 0, "width": 8, "height": 8, "detections": []}],
+            lambda *a, **k: [
+                {
+                    "frame_idx": 0,
+                    "timestamp_s": 0,
+                    "timestamp_method": "source_pts",
+                    "width": 8,
+                    "height": 8,
+                    "detections": [],
+                }
+            ],
         )
         monkeypatch.setattr(subject, "_replace_native_observations", lambda *a: [])
         runner = subject.run_video_labeling_pipeline
@@ -644,6 +658,7 @@ def test_task_wrapper_marks_retrying_until_operational_retries_exhausted(monkeyp
     job = SimpleNamespace(status="labeling", processing_summary={"videos": [{"status": "retrying"}]})
     session = MagicMock()
     session.query.return_value.filter_by.return_value.one.return_value = job
+    session.query.return_value.filter_by.return_value.populate_existing.return_value.with_for_update.return_value.one.return_value = job
     monkeypatch.setattr(lib.db, "SessionLocal", lambda: session)
     lib.tasks.label_video.push_request(retries=retries, called_directly=True)
     try:

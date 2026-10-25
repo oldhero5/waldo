@@ -42,7 +42,7 @@ def test_migrated_postgres_has_all_mapped_columns(postgres):
     for table in Base.metadata.sorted_tables:
         actual = {c["name"] for c in inspector.get_columns(table.name)}
         assert {c.name for c in table.columns} <= actual, table.name
-    assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "4e5f6a7b8c9d"
+    assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "5f6a7b8c9d0e"
 
 
 def test_real_postgres_workspace_boundary_and_partial_provenance(postgres):

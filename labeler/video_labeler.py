@@ -20,7 +20,7 @@ from labeler.errors import RetryableLabelingError, is_retryable
 from labeler.pipeline import _update_job
 from lib.config import settings
 from lib.dataset_evidence import invalidate_current_export
-from lib.db import Annotation, Frame, LabelingJob, SessionLocal, Video
+from lib.db import Annotation, Frame, LabelingJob, NativeFrameAssessment, SessionLocal, Video
 from lib.storage import download_file, upload_file
 from lib.video_timing import frame_timing, probe_frame_timing
 
@@ -700,82 +700,156 @@ def run_playground(
     }
 
 
-def _replace_native_observations(session, job, video, video_path, frame_results, tmpdir, prompt_to_class, class_names):
-    """Replace one video's sightings in this run; caller commits only on success."""
-    source_frames = session.query(Frame.id).filter_by(video_id=video.id)
-    session.query(Annotation).filter(
-        Annotation.job_id == job.id,
-        Annotation.frame_id.in_(source_frames),
-    ).delete(synchronize_session=False)
-    observations = []
+def _validate_native_results(frame_results):
+    seen = set()
+    for result in frame_results:
+        index = result.get("frame_idx")
+        if type(index) is not int or not 0 <= index <= 2147483647 or index in seen:
+            raise ValueError("Invalid or duplicate native source frame index")
+        seen.add(index)
+        for key in ("width", "height"):
+            value = result.get(key)
+            if type(value) is not int or not 0 < value <= 2147483647:
+                raise ValueError("Invalid native source dimensions")
+        timestamp = result.get("timestamp_s")
+        if isinstance(timestamp, bool) or not isinstance(timestamp, (int, float)) or not math.isfinite(timestamp):
+            raise ValueError("Invalid native timestamp")
+        duration = result.get("frame_duration_s")
+        if duration is not None and (
+            isinstance(duration, bool)
+            or not isinstance(duration, (int, float))
+            or not math.isfinite(duration)
+            or duration <= 0
+        ):
+            raise ValueError("Invalid native frame duration")
+        if result.get("timestamp_method") not in {"source_pts", "frame_index/fps"}:
+            raise ValueError("Invalid native timestamp method")
+        if not isinstance(result.get("detections"), list):
+            raise ValueError("Invalid native detections")
+
+
+def _prepare_native_images(job, video, video_path, frame_results, tmpdir):
+    """Decode and upload positive evidence before taking the commit lock."""
+    positive = [result for result in frame_results if result["detections"]]
+    if not positive:
+        return
     cap = cv2.VideoCapture(str(video_path))
     try:
         if not cap.isOpened():
             raise RuntimeError(f"Cannot reopen video: {video.id}")
-        for result in frame_results:
-            if not result["detections"]:
-                continue
-            frame_index = result["frame_idx"]
-            key = f"frames/{job.id}/{video.id}_{frame_index:06d}.jpg"
-            # Run-specific keys avoid conflating extraction ordinals with
-            # source decode indices from other pipelines/jobs.
-            frame = session.query(Frame).filter_by(video_id=video.id, minio_key=key).first()
-            if frame is None:
-                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
-                decoded, image = cap.read()
-                if not decoded:
-                    raise RuntimeError(f"Cannot read evidence source frame {frame_index} in video {video.id}")
-                image_path = tmpdir / f"frame_{video.id}_{frame_index}.jpg"
-                if not cv2.imwrite(str(image_path), image):
-                    raise OSError(f"Cannot write evidence frame: {image_path}")
-                upload_file(key, image_path)
-                image_path.unlink(missing_ok=True)
-                frame = Frame(
-                    video_id=video.id,
-                    frame_number=frame_index,
-                    timestamp_s=result["timestamp_s"],
-                    minio_key=key,
-                    width=result["width"],
-                    height=result["height"],
-                )
-                session.add(frame)
-                session.flush()
-            live = []
-            for detection in result["detections"]:
-                label = prompt_to_class.get(detection["label"], detection["label"])
-                if label not in class_names:
-                    raise ValueError(f"Unknown detection label: {label}")
-                box = detection.get("bbox")
-                if box is None or len(box) != 4:
-                    raise ValueError("Detection lacks a valid source box")
-                x1, y1, x2, y2 = box
-                width, height = result["width"], result["height"]
-                if width <= 0 or height <= 0:
-                    raise ValueError("Invalid evidence dimensions")
-                track_id = detection.get("track_id")
-                annotation = Annotation(
-                    frame_id=frame.id,
-                    job_id=job.id,
-                    class_name=label,
-                    class_index=class_names.index(label),
-                    polygon=detection.get("polygon") or [],
-                    bbox=[
-                        float((x1 + x2) / 2 / width),
-                        float((y1 + y2) / 2 / height),
-                        float((x2 - x1) / width),
-                        float((y2 - y1) / height),
-                    ],
-                    confidence=float(detection["score"]),
-                    status="pending",
-                    track_id=int(track_id) if track_id is not None else None,
-                )
-                session.add(annotation)
-                observations.append(annotation)
-                live.append({"class": label, "confidence": annotation.confidence, "track_id": track_id})
-            _publish_detection(str(job.id), video.filename, frame_index, live)
-        return observations
+        for result in positive:
+            index = result["frame_idx"]
+            cap.set(cv2.CAP_PROP_POS_FRAMES, index)
+            decoded, image = cap.read()
+            if not decoded:
+                raise RuntimeError(f"Cannot read evidence source frame {index} in video {video.id}")
+            image_path = tmpdir / f"frame_{video.id}_{index}.jpg"
+            if not cv2.imwrite(str(image_path), image):
+                raise OSError(f"Cannot write evidence frame: {image_path}")
+            upload_file(f"frames/{job.id}/{video.id}_{index:06d}.jpg", image_path)
+            image_path.unlink(missing_ok=True)
     finally:
         cap.release()
+
+
+def _replace_native_observations(session, job, video, video_path, frame_results, tmpdir, prompt_to_class, class_names):
+    """Persist one clip after the locked completion and orphan-evidence checks."""
+    observations = []
+    for result in frame_results:
+        frame_index = result["frame_idx"]
+        session.add(
+            NativeFrameAssessment(
+                job_id=job.id,
+                video_id=video.id,
+                source_frame_index=frame_index,
+                timestamp_s=result["timestamp_s"],
+                timestamp_method=result["timestamp_method"],
+                frame_duration_s=result.get("frame_duration_s"),
+                source_width=result["width"],
+                source_height=result["height"],
+                detection_count=len(result["detections"]),
+            )
+        )
+        if not result["detections"]:
+            continue
+        frame = Frame(
+            video_id=video.id,
+            frame_number=frame_index,
+            timestamp_s=result["timestamp_s"],
+            minio_key=f"frames/{job.id}/{video.id}_{frame_index:06d}.jpg",
+            width=result["width"],
+            height=result["height"],
+        )
+        session.add(frame)
+        session.flush()
+        for detection in result["detections"]:
+            label = prompt_to_class.get(detection["label"], detection["label"])
+            if label not in class_names:
+                raise ValueError(f"Unknown detection label: {label}")
+            box = detection.get("bbox")
+            if box is None or len(box) != 4:
+                raise ValueError("Detection lacks a valid source box")
+            x1, y1, x2, y2 = box
+            width, height = result["width"], result["height"]
+            if width <= 0 or height <= 0:
+                raise ValueError("Invalid evidence dimensions")
+            track_id = detection.get("track_id")
+            annotation = Annotation(
+                frame_id=frame.id,
+                job_id=job.id,
+                class_name=label,
+                class_index=class_names.index(label),
+                polygon=detection.get("polygon") or [],
+                bbox=[
+                    float((x1 + x2) / 2 / width),
+                    float((y1 + y2) / 2 / height),
+                    float((x2 - x1) / width),
+                    float((y2 - y1) / height),
+                ],
+                confidence=float(detection["score"]),
+                status="pending",
+                track_id=int(track_id) if track_id is not None else None,
+            )
+            session.add(annotation)
+            observations.append(annotation)
+    return observations
+
+
+def _lock_native_job(session, job_id):
+    return session.query(LabelingJob).filter_by(id=job_id).populate_existing().with_for_update().one()
+
+
+def _native_completed_result(job):
+    summary = job.processing_summary or {}
+    result = {"status": "completed", "processing_summary": summary}
+    if isinstance(summary.get("videos"), list):
+        entries = summary["videos"]
+        completed = [entry for entry in entries if entry["status"] == "completed"]
+        result.update(
+            videos_processed=len(completed),
+            videos_failed=sum(entry["status"] == "failed" for entry in entries),
+            annotations_created=sum(entry.get("observations", 0) for entry in completed),
+        )
+    return result
+
+
+def _native_counts(summary):
+    completed = [entry for entry in summary.get("videos", []) if entry["status"] == "completed"]
+    return (
+        len(completed),
+        sum(entry.get("observations", 0) for entry in completed),
+        sum(entry.get("sampled_frames", 0) for entry in completed),
+    )
+
+
+def _check_native_orphans(session, job, video):
+    source_frames = session.query(Frame.id).filter_by(video_id=video.id)
+    observations = (
+        session.query(Annotation.id).filter(Annotation.job_id == job.id, Annotation.frame_id.in_(source_frames)).first()
+    )
+    assessments = session.query(NativeFrameAssessment.id).filter_by(job_id=job.id, video_id=video.id).first()
+    if observations is not None or assessments is not None:
+        raise ValueError("Existing evidence lacks a committed clip completion record; start a new labeling job")
 
 
 def run_video_labeling_pipeline(celery_task, job_id: str) -> dict:
@@ -787,19 +861,9 @@ def run_video_labeling_pipeline(celery_task, job_id: str) -> dict:
     """
     session = SessionLocal()
     try:
-        job = session.query(LabelingJob).filter_by(id=job_id).one()
-        if getattr(job, "status", None) == "completed":
-            summary = job.processing_summary or {}
-            result = {"status": "completed", "processing_summary": summary}
-            if isinstance(summary.get("videos"), list):
-                entries = summary["videos"]
-                completed = [entry for entry in entries if entry["status"] == "completed"]
-                result.update(
-                    videos_processed=len(completed),
-                    videos_failed=sum(entry["status"] == "failed" for entry in entries),
-                    annotations_created=sum(entry.get("observations", 0) for entry in completed),
-                )
-            return result
+        job = _lock_native_job(session, job_id)
+        if job.status == "completed":
+            return _native_completed_result(job)
         class_prompts = job.class_prompts or [{"name": job.text_prompt, "prompt": job.text_prompt}]
         prompts, prompt_to_class, class_names = [], {}, []
         for config in class_prompts:
@@ -839,20 +903,12 @@ def run_video_labeling_pipeline(celery_task, job_id: str) -> dict:
         completed = {entry["video_id"]: entry for entry in summary.get("videos", []) if entry["status"] == "completed"}
         for video in videos:
             if str(video.id) not in completed:
-                source_frames = session.query(Frame.id).filter_by(video_id=video.id)
-                existing = (
-                    session.query(Annotation.id)
-                    .filter(Annotation.job_id == job.id, Annotation.frame_id.in_(source_frames))
-                    .first()
-                )
-                if existing is not None:
-                    raise ValueError(
-                        "Existing observations lack a committed clip completion record; start a new labeling job"
-                    )
-        summary["videos"] = [completed[str(video.id)] for video in videos if str(video.id) in completed]
-        videos_processed = len(summary["videos"])
-        observations_count = sum(entry.get("observations", 0) for entry in summary["videos"])
-        frames_processed = sum(entry.get("sampled_frames", 0) for entry in summary["videos"])
+                _check_native_orphans(session, job, video)
+        eligible_video_ids = {str(video.id) for video in videos}
+        # Other deliveries may finalize while this one infers. Keep the last
+        # incomplete clip record until its replacement evidence commits.
+        summary["videos"] = [entry for entry in summary.get("videos", []) if entry["video_id"] in eligible_video_ids]
+        videos_processed, observations_count, frames_processed = _native_counts(summary)
         _update_job(
             session,
             job,
@@ -874,6 +930,20 @@ def run_video_labeling_pipeline(celery_task, job_id: str) -> dict:
                 try:
                     download_file(video.minio_key, video_path)
                     results = process_video_native(str(video_path), prompts, threshold=threshold, sample_fps=sample_fps)
+                    _validate_native_results(results)
+                    _prepare_native_images(job, video, video_path, results, tmpdir)
+                    job = _lock_native_job(session, job_id)
+                    if job.status == "completed":
+                        return _native_completed_result(job)
+                    summary = copy.deepcopy(job.processing_summary)
+                    videos_processed, observations_count, frames_processed = _native_counts(summary)
+                    if any(
+                        clip["video_id"] == str(video.id) and clip["status"] == "completed"
+                        for clip in summary["videos"]
+                    ):
+                        session.commit()
+                        continue
+                    _check_native_orphans(session, job, video)
                     invalidate_current_export(session, job.id)
                     annotations = _replace_native_observations(
                         session,
@@ -888,6 +958,7 @@ def run_video_labeling_pipeline(celery_task, job_id: str) -> dict:
                     entry.update(
                         {
                             "status": "completed",
+                            "native_assessment_version": 1,
                             "sampled_frames": len(results),
                             "observations": len(annotations),
                             "assessed_timestamps_s": [result["timestamp_s"] for result in results],
@@ -897,7 +968,10 @@ def run_video_labeling_pipeline(celery_task, job_id: str) -> dict:
                             "timestamp_method": results[0].get("timestamp_method") if results else None,
                         }
                     )
-                    next_summary = {**summary, "videos": [*summary["videos"], entry]}
+                    next_summary = {
+                        **summary,
+                        "videos": [*[clip for clip in summary["videos"] if clip["video_id"] != str(video.id)], entry],
+                    }
                     # Completion metadata and its observations must commit in
                     # one transaction; otherwise redelivery cannot reuse them.
                     _update_job(
@@ -909,12 +983,39 @@ def run_video_labeling_pipeline(celery_task, job_id: str) -> dict:
                         processing_summary=next_summary,
                         result_minio_key=None,
                     )
+                    for result in results:
+                        if result["detections"]:
+                            _publish_detection(
+                                str(job.id),
+                                video.filename,
+                                result["frame_idx"],
+                                [
+                                    {
+                                        "class": prompt_to_class.get(d["label"], d["label"]),
+                                        "confidence": float(d["score"]),
+                                        "track_id": d.get("track_id"),
+                                    }
+                                    for d in result["detections"]
+                                ],
+                            )
                     summary = next_summary
                     observations_count += len(annotations)
                     videos_processed += 1
                     frames_processed += len(results)
                 except Exception as error:
                     session.rollback()
+                    job = _lock_native_job(session, job_id)
+                    if job.status == "completed":
+                        return _native_completed_result(job)
+                    summary = copy.deepcopy(job.processing_summary)
+                    videos_processed, observations_count, frames_processed = _native_counts(summary)
+                    if any(
+                        clip["video_id"] == str(video.id) and clip["status"] == "completed"
+                        for clip in summary["videos"]
+                    ):
+                        session.commit()
+                        continue
+                    summary["videos"] = [clip for clip in summary["videos"] if clip["video_id"] != str(video.id)]
                     entry = {"video_id": str(video.id), "status": "failed", "error": str(error)}
                     logger.exception("Video %s failed during labeling/evidence storage", video.id)
                     if is_retryable(error):
@@ -945,8 +1046,15 @@ def run_video_labeling_pipeline(celery_task, job_id: str) -> dict:
                 _publish_progress(
                     job_id, videos_processed, len(videos), video.filename, annotations_so_far=observations_count
                 )
+        job = _lock_native_job(session, job_id)
+        if job.status == "completed":
+            return _native_completed_result(job)
+        summary = copy.deepcopy(job.processing_summary)
+        videos_processed, observations_count, frames_processed = _native_counts(summary)
         failures = [entry for entry in summary["videos"] if entry["status"] == "failed"]
-        status = "completed" if videos and not failures else "partial" if videos_processed else "failed"
+        completed_video_ids = {entry["video_id"] for entry in summary["videos"] if entry["status"] == "completed"}
+        all_clips_completed = bool(videos) and completed_video_ids == eligible_video_ids and not failures
+        status = "completed" if all_clips_completed else "partial" if videos_processed else "failed"
         error_message = "; ".join(f"{entry['video_id']}: {entry['error']}" for entry in failures) or (
             "No videos to process" if not videos else None
         )
@@ -972,6 +1080,9 @@ def run_video_labeling_pipeline(celery_task, job_id: str) -> dict:
         logger.exception("Video labeling pipeline failed")
         retryable = is_retryable(error)
         try:
+            job = _lock_native_job(session, job_id)
+            if job.status == "completed":
+                return _native_completed_result(job)
             _update_job(session, job, status="retrying" if retryable else "failed", error_message=str(error))
         except Exception:
             pass

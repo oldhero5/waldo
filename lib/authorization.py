@@ -22,6 +22,7 @@ from lib.db import (
     Frame,
     LabelingJob,
     ModelRegistry,
+    NativeFrameAssessment,
     Project,
     SessionLocal,
     TrainingRun,
@@ -185,6 +186,8 @@ def scope_resources(query, model, principal: WorkspacePrincipal):
         return query.filter(Video.project_id.in_(projects))
     if model is Frame:
         return query.filter(Frame.video_id.in_(videos))
+    if model is NativeFrameAssessment:
+        return query.filter(model.job_id.in_(jobs), model.video_id.in_(videos))
     if model is Annotation:
         frames = select(Frame.id).where(Frame.video_id.in_(videos))
         return query.filter(Annotation.frame_id.in_(frames), Annotation.job_id.in_(jobs))

@@ -2,6 +2,7 @@
 
 import gc
 import os
+import sys
 import weakref
 from pathlib import Path
 from types import SimpleNamespace
@@ -290,7 +291,10 @@ def persistence_run(text_run, monkeypatch):
 
     engine = make_engine(3)
     directories, opened, closed, stored = [], [], [], []
-    open_image = Image.open
+    # This fixture corrupts a PNG. Preserve the real Pillow decode error even
+    # when another test imported Ultralytics' optional-HEIF global wrapper.
+    patches = sys.modules.get("ultralytics.utils.patches")
+    open_image = patches._image_open if patches is not None else Image.open
     from labeler.sam3_frame_storage import PathBackedSam3Session
 
     close = PathBackedSam3Session.close
@@ -447,3 +451,18 @@ def test_disk_sequence_survives_validation_and_real_persistence_then_cleans_up(p
         entry = next(item for item in job.processing_summary["videos"] if item["video_id"] == str(run.video_ids[1]))
         assert entry["sampled_frames"] == 3
         assert entry["assessed_timestamps_s"] == [7, 7.5, 8]
+
+
+def test_corrupt_png_rollback_with_optional_decoder_wrapper_loaded(request, monkeypatch):
+    # Record Pillow before importing a package that replaces its global opener.
+    monkeypatch.setattr(Image, "open", Image.open)
+    from ultralytics.utils import checks, patches
+
+    monkeypatch.setattr(Image, "open", patches.image_open)
+
+    def forbid_install(*args, **kwargs):
+        pytest.fail("Corrupt PNG rollback must not check or install an optional HEIF decoder")
+
+    monkeypatch.setattr(checks, "check_requirements", forbid_install)
+    state = request.getfixturevalue("persistence_run")
+    test_late_io_failure_rolls_back_clip_and_preserves_prior_review(state, monkeypatch, "decode")
