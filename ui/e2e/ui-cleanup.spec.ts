@@ -28,7 +28,7 @@ async function mockApi(page: Page, status?: (route: Route, id: string) => Promis
       return json(route, { access_token: loginId, refresh_token: `refresh-${loginId}` });
     }
     if (path.endsWith("/auth/me")) return json(route, user(id));
-    if (path.endsWith("/status")) return status ? status(route, id) : json(route, [job(id)]);
+    if (path === "/api/v1/status") return status ? status(route, id) : json(route, [job(id)]);
     if (path.endsWith("/serve/status")) return json(route, { loaded: false, class_names: [], backend: "test" });
     return json(route, []);
   });
@@ -94,6 +94,7 @@ test("logout isolates cached data and late account A responses from account B", 
   await signIn(page, "A");
   await expect(page.getByText("A private footage", { exact: true })).toBeVisible();
   await page.getByRole("link", { name: "Settings", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Sign Out" })).toBeVisible();
   await page.getByRole("link", { name: "Home", exact: true }).click();
   await requestA; // A's background refetch stays in flight across logout.
   await page.getByRole("link", { name: "Settings", exact: true }).click();
