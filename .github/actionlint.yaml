@@ -1,0 +1,4 @@
+self-hosted-runner:
+  # This is a future trusted NVIDIA runner label, not runner registration.
+  labels:
+    - waldo-cuda

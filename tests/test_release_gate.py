@@ -62,6 +62,8 @@ def release_api(tmp_path):
         "GITHUB_REF": "refs/heads/main",
         "GITHUB_SHA": SHA,
         "GITHUB_REPOSITORY": "oldhero5/waldo",
+        "GITHUB_EVENT_NAME": "workflow_dispatch",
+        "GITHUB_RUN_ATTEMPT": "1",
         "RELEASE_VERSION": "v1.2.3",
     }
     return responses, env
@@ -75,6 +77,17 @@ def test_release_gate_accepts_current_main_with_all_evidence(release_api):
     _, env = release_api
     result = run_gate(env)
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("event", ["push", "pull_request", "schedule", ""])
+def test_release_gate_rejects_automatic_or_untrusted_events(release_api, event):
+    _, env = release_api
+    assert run_gate({**env, "GITHUB_EVENT_NAME": event}).returncode != 0
+
+
+def test_release_gate_rejects_reruns_before_expensive_qualification(release_api):
+    _, env = release_api
+    assert run_gate({**env, "GITHUB_RUN_ATTEMPT": "2"}).returncode != 0
 
 
 @pytest.mark.parametrize("ref", ["refs/heads/feat/ci", "refs/tags/v1.2.3"])
@@ -173,4 +186,23 @@ def test_release_gate_rejects_failed_approval_status(release_api):
     data = json.loads(path.read_text())
     data["statuses"][1]["state"] = "failure"
     path.write_text(json.dumps(data))
+    assert run_gate(env).returncode != 0
+
+
+@pytest.mark.parametrize("change", ["main", "approval", "ci"])
+def test_release_gate_recheck_rejects_changes_during_environment_wait(release_api, change):
+    responses, env = release_api
+    assert run_gate(env).returncode == 0
+    if change == "main":
+        (responses / "ref.json").write_text(json.dumps({"object": {"sha": "b" * 40}}))
+    elif change == "approval":
+        path = responses / "statuses.json"
+        data = json.loads(path.read_text())
+        data["statuses"][1]["state"] = "pending"
+        path.write_text(json.dumps(data))
+    else:
+        path = responses / "checks.json"
+        data = json.loads(path.read_text())
+        data["check_runs"][0]["conclusion"] = "failure"
+        path.write_text(json.dumps(data))
     assert run_gate(env).returncode != 0
