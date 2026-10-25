@@ -397,3 +397,109 @@ def test_postgres_concurrent_stale_delivery_retains_winner_review(native_job, mo
         assert job.result_minio_key == "winner-reviewed.zip"
         assert job.processing_summary == saved
         assert {row.id for row in session.query(NativeFrameAssessment)} == ids
+
+
+@pytest.mark.parametrize("native_job", ["postgres"], indirect=True)
+@pytest.mark.parametrize("redelivery_fails", [False, True])
+def test_postgres_redelivery_preserves_incomplete_clip_until_replacement(native_job, monkeypatch, redelivery_fails):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event, current_thread
+
+    from lib.db import NativeFrameAssessment
+
+    kit = native_job
+    process = kit.subject.process_video_native
+    second_entered, release_second = Event(), Event()
+    redelivery = None
+    reviewed_id = None
+    in_flight_summary = None
+
+    def inference(path, *args, **kwargs):
+        if str(kit.video_ids[1]) in path:
+            if current_thread().name.startswith("redelivery"):
+                second_entered.set()
+                assert release_second.wait(15), "redelivery was not released"
+                if redelivery_fails:
+                    raise ValueError("redelivery terminal failure")
+            else:
+                raise ValueError("first delivery terminal failure")
+        return process(path, *args, **kwargs)
+
+    def progress(job_id, processed, total, filename, **kwargs):
+        nonlocal redelivery, reviewed_id, in_flight_summary
+        if filename == "1.avi" and not current_thread().name.startswith("redelivery"):
+            reviewed_id = _review_first_clip(kit)
+            with kit.factory() as session:
+                job = session.get(LabelingJob, kit.job_id)
+                job.result_minio_key = "partial-reviewed.zip"
+                session.commit()
+            redelivery = pool.submit(kit.subject.run_video_labeling_pipeline, MagicMock(), kit.job_id)
+            assert second_entered.wait(15), "redelivery did not infer the incomplete clip"
+            with kit.factory() as session:
+                in_flight_summary = copy.deepcopy(session.get(LabelingJob, kit.job_id).processing_summary)
+
+    monkeypatch.setattr(kit.subject, "process_video_native", inference)
+    monkeypatch.setattr(kit.subject, "_publish_progress", progress)
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="redelivery") as pool:
+        try:
+            first = kit.subject.run_video_labeling_pipeline(MagicMock(), kit.job_id)
+            with kit.factory() as session:
+                job = session.get(LabelingJob, kit.job_id)
+                saved_status = job.status
+                saved_export = job.result_minio_key
+                original_assessment_ids = {row.id for row in session.query(NativeFrameAssessment)}
+        finally:
+            release_second.set()
+        second = redelivery.result(timeout=15)
+
+    assert first["status"] == saved_status == "partial"
+    assert saved_export == "partial-reviewed.zip"
+    assert {entry["video_id"]: entry["status"] for entry in in_flight_summary["videos"]} == {
+        str(kit.video_ids[0]): "completed",
+        str(kit.video_ids[1]): "failed",
+    }
+    assert second["status"] == ("partial" if redelivery_fails else "completed")
+    with kit.factory() as session:
+        job = session.get(LabelingJob, kit.job_id)
+        assert job.status == second["status"]
+        entries = {entry["video_id"]: entry for entry in job.processing_summary["videos"]}
+        assert set(entries) == {str(video) for video in kit.video_ids}
+        assert entries[str(kit.video_ids[0])]["status"] == "completed"
+        assert entries[str(kit.video_ids[1])]["status"] == ("failed" if redelivery_fails else "completed")
+        assessments = session.query(NativeFrameAssessment).all()
+        assert len(assessments) == (1 if redelivery_fails else 2)
+        assert original_assessment_ids <= {row.id for row in assessments}
+        assert job.result_minio_key == ("partial-reviewed.zip" if redelivery_fails else None)
+        row = session.get(Annotation, reviewed_id)
+        assert row.status == "accepted" and row.class_name == "edited camera"
+        assert row.bbox == [0.25, 0.25, 0.15, 0.15]
+        assert row.polygon == [0.1, 0.1, 0.3, 0.1, 0.3, 0.3]
+        assert session.query(Annotation).count() == (1 if redelivery_fails else 2)
+
+
+def test_native_finalization_requires_every_eligible_video_completion(native_job, monkeypatch):
+    kit = native_job
+    process = kit.subject.process_video_native
+
+    def inference(path, *args, **kwargs):
+        if str(kit.video_ids[1]) in path:
+            raise ValueError("second clip did not complete")
+        return process(path, *args, **kwargs)
+
+    def progress(job_id, processed, total, filename, **kwargs):
+        if filename == "1.avi":
+            with kit.factory() as session:
+                job = session.get(LabelingJob, kit.job_id)
+                job.processing_summary = {
+                    **job.processing_summary,
+                    "videos": [entry for entry in job.processing_summary["videos"] if entry["status"] == "completed"],
+                }
+                session.commit()
+
+    monkeypatch.setattr(kit.subject, "process_video_native", inference)
+    monkeypatch.setattr(kit.subject, "_publish_progress", progress)
+    result = kit.subject.run_video_labeling_pipeline(MagicMock(), kit.job_id)
+    assert result["status"] == "partial"
+    with kit.factory() as session:
+        assert session.get(LabelingJob, kit.job_id).status == "partial"
+        assert session.query(Annotation).count() == 1

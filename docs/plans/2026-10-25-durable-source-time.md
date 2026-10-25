@@ -176,7 +176,9 @@ coherent commits, PR creation and final checks. Keep the current checkout and it
 locked dependencies; no extra worktree or dependency upgrade is required.
 
 - [x] Run the new tests on disposable PostgreSQL/Redis/MinIO with a separate
-  Linux worker. Run required migration, backend and browser CI on the PR head.
+  Linux worker.
+- [ ] Run required migration, backend and browser CI on the PR head. Record
+  exact-head results in the PR body.
 - [x] Run a bounded source-time check on the private local videos. Use the
   current native path and cached MLX weights offline where hardware permits.
   Record code/model/configuration, elapsed time, sampling and limits locally.
@@ -234,3 +236,18 @@ The test-only corrections also touch `tests/test_postgres_upgrade.py`,
 preserving application behavior. The PR body records the final full-suite,
 exact-commit CI, independent review and owner approval. Those external gates
 remain open at this implementation commit.
+
+## Independent review correction
+
+Sol `/root/assessment_review` reproduced a finalization race with independent
+PostgreSQL sessions. A second delivery removed a failed clip from the summary
+while retrying it. The first delivery then reported completion because no failed
+entry remained, and the second discarded its result after seeing that status.
+
+Root and the implementer chose two small guards: retain eligible incomplete
+records until a new clip transaction replaces them, and require a completed
+record for every eligible video before final completion. Counters use completed
+clips only. New tests cover a second delivery that succeeds or fails and an
+incomplete summary. Overlapping deliveries can report partial evidence while
+another attempt finishes; this change does not track global worker activity.
+The repaired exact commit requires a new full test run and independent review.
