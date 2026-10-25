@@ -18,6 +18,66 @@ Update an annotation's bbox, class, or accepted state.
 ### `POST /api/v1/annotations/merge-classes`
 Bulk-rename one class to another across a job (e.g. merge `truck` and `lorry`).
 
+## Native frame assessments
+
+### `GET /api/v1/jobs/{job_id}/assessments`
+
+Return the original inference record for each sampled native source frame owned
+by this job. The response contains `job_id`, `coverage_status`,
+`coverage_scope` (`sampled_native_frames`), `items`, and `next_cursor`. Each item
+contains `id`, `source_video_id`, `source_frame_index`, `timestamp_s`,
+`timestamp_method`, nullable `frame_duration_s`, `source_width`, `source_height`
+and `detection_count`.
+
+`limit` defaults to 100 and accepts 1–500. `cursor` is an optional URL-safe
+base64 JSON position. It is limited to 256 characters and contains the job ID,
+video ID and source frame index. Results sort by video ID and then source frame
+index. The cursor marks the last returned position; it is not an authorization
+token. The server authorizes the job before it reads the cursor and scopes rows
+to both the job and accessible video. Invalid cursors return 400. An inaccessible
+job returns 404; rows linked to inaccessible videos are omitted.
+
+`coverage_status` is `unavailable` when the job has no accessible assessment
+rows, `partial` when evidence or completion metadata is incomplete, and
+`available` when a completed, unmerged job has matching version-1 assessment
+counts for every completed clip. `available` covers sampled native frames only;
+it does not mean full-video coverage or correct detections. A zero
+`detection_count` means inference assessed that frame and returned no detections.
+It does not mean a reviewer confirmed an empty scene. Missing rows mean unknown.
+The count stays fixed when reviewers edit or remove annotations.
+
+Copied jobs do not gain assessment rows. An add-class child reports its own
+assessments. A job with merged-in runs retains its own rows and reports partial
+coverage because those rows do not cover the combined dataset. Legacy jobs have
+unavailable coverage when they have no durable rows; summary arrays are not
+backfilled. If work is still running, pages are not a snapshot. Restart the scan
+after completion to read all committed rows.
+
+Example response for one assessed sample with no detections:
+
+```json
+{
+  "job_id": "00000000-0000-4000-8000-000000000001",
+  "coverage_status": "available",
+  "coverage_scope": "sampled_native_frames",
+  "items": [{
+    "id": "00000000-0000-4000-8000-000000000002",
+    "source_video_id": "00000000-0000-4000-8000-000000000003",
+    "source_frame_index": 24,
+    "timestamp_s": 1.0,
+    "timestamp_method": "source_pts",
+    "frame_duration_s": 0.041667,
+    "source_width": 1920,
+    "source_height": 1080,
+    "detection_count": 0
+  }],
+  "next_cursor": null
+}
+```
+
+Times use seconds from container start. They can be negative; they are not
+recording UTC. Dimensions use decoded pixels. An unknown duration is `null`.
+
 ## Source video inspection
 
 ### `GET /api/v1/jobs/{job_id}/sources`

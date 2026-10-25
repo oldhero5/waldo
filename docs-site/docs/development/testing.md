@@ -37,11 +37,21 @@ Set `WALDO_SERVICE_STACK=1` only when the configured Redis and MinIO are also
 disposable test services. These tests create users, jobs and artifacts. Do not use
 the running application's database, queue or bucket.
 
+Native assessment persistence and API regressions are in
+`tests/test_native_assessments.py` and `tests/test_assessment_api.py`. They cover
+zero-detection samples, source-time metadata, authorization, pagination and
+coverage status. `tests/test_native_retry_integrity.py` checks concurrent delivery;
+`tests/test_migrations.py` checks the populated-schema upgrade and downgrade
+refusal. Run these with the disposable PostgreSQL setup above. An
+application rollback build must retain the migration file, schema revision,
+assessment table and rows so Alembic startup can resolve the database revision.
+The migration refuses downgrade.
+
 ### Queued worker integration
 
 The required CI job sets `WALDO_WORKER_INTEGRATION=1`. The fixture starts a
-separate Celery process for each case, with a unique queue. It replaces only the
-inference engine in that process. Synthetic video still passes through the real
+separate Celery process for each case, with a unique queue. It substitutes model
+outputs in that process. Synthetic video still passes through the real
 API routes, Redis, video decoding, PostgreSQL, MinIO, review edits and export.
 The API client runs in-process through ASGI; this suite does not test HTTP transport.
 
@@ -60,9 +70,13 @@ pixels, empty results, inference errors, bounded timeouts, partial-job retry,
 and graceful worker restart with completed-job redelivery. It does not prove
 general crash recovery or exactly-once execution.
 
-Use a Linux container for this deterministic suite on a Mac. The production Mac
-task can select the native MLX path, which is outside the controlled text-engine
-fixture. The fixture stops its worker and removes its queue. Discard the test
+The fixture tests both text and native paths. Native mode keeps the production
+decoder, timing and persistence, with controlled model features, detections and
+tracking. It does not load MLX or qualify Metal hardware. Native cases include
+durable positive and empty samples, partial retry, review retention and restart.
+
+Use a Linux container for this deterministic suite on a Mac. The fixture stops
+its worker and removes its queue. Discard the test
 database, Redis data and MinIO bucket after the run. Do not mount private footage
 or local environment files into the test container.
 
