@@ -20,6 +20,13 @@ and [architecture roadmap](../../docs-site/docs/architecture/roadmap.md).
 
 ## Starting point and decision
 
+**October 25 update:** PR #24 merged as
+`46e4d5f0d95f5122a054b7b83130f7eb3c63825b` after exact-commit review, CI and
+owner approval. The release tooling is merged, but release qualification is
+not complete. Publishing remains disabled, including CUDA publication: there
+is no trusted NVIDIA host yet. The owner authorized
+[Wave 3 implementation](2026-10-25-durable-source-time.md).
+
 **October 11 update:** PR #22 merged as
 `4b189ff339e2aaaba36350174cb045d8ec63b5fa`. The owner moved a visible product
 feature ahead of release machinery: [inspect saved detections in their source

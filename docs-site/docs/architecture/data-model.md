@@ -67,8 +67,39 @@ New native observations preserve each sampled sighting and normalized geometry;
 representative detections no longer replace the timeline. PyTorch track IDs remain
 null until the adapter exposes them. Existing rows are not automatically rewritten:
 historical native pixel boxes and lost observations need reprocessing with provenance.
-RLE masks and reviewer identity still require future schema work. Source timestamps
-remain explicitly approximate rather than true presentation timestamps/timebase.
+RLE masks and reviewer identity still require future schema work. Native timestamps
+use decoded presentation times when available. The API marks FPS-derived times
+as approximate and ambiguous historical timing as unknown.
+
+### `native_frame_assessments`
+
+Stores the original inference result count and source timing for each sampled
+native frame. A row is unique by `(job_id, video_id, source_frame_index)` and
+keeps the native source index, timestamp in seconds from container start, timing
+method, optional frame duration, source dimensions and original `detection_count`.
+The index follows source presentation order; it is not an FFmpeg resampling
+ordinal. Negative finite timestamps are allowed. A zero count means inference
+found no detections in that sample; it is not ground truth. Annotation edits do
+not change this count. No image row is created for an empty assessment.
+
+The table is additive and has one migration. Historical summary arrays are not
+used to fabricate rows. For application rollback, build and review the prior
+application modules with this migration file retained. Keep the table, its rows
+and schema revision. Startup runs Alembic and must still recognize that revision.
+The migration refuses downgrade. Copied and merged datasets do not
+copy or combine native assessment rows.
+
+```mermaid
+flowchart LR
+    V[Source video] --> N[Native sampled inference]
+    J[Labeling job] --> N
+    N --> A[Assessment for every sampled frame]
+    N -->|Detections only| F[Saved frame and annotations]
+    A --> P[Authorized assessment pages]
+    F --> R[Human review and export]
+```
+
+Review changes annotations. It does not rewrite the original assessment count.
 
 ### `training_runs`
 A YOLO26 fine-tune. References the dataset slice and produces a `ModelRegistry` row on completion.
