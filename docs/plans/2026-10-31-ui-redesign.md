@@ -1039,8 +1039,8 @@ separate work:
   only in the child's `merged_runs`. After an add-class merge, the next
   auto-scan searches only the new class (`app/api/upload.py:103-104`). Until
   this is fixed, the interface shows "Coverage unknown" with a reason for
-  evidence held in a nested merge, never "Not examined", and the child that
-  holds it opens normally.
+  evidence held in a nested merge, never "Not examined", and links to the
+  child that holds it (see the Results states).
 - The standalone-images placeholder video has a storage key that is never
   written (`app/api/upload.py:342`; images are stored under other keys,
   `app/api/upload.py:395`). Collection-scope runs include it
