@@ -6,15 +6,18 @@
 `ui/.prettierrc.json`, with no change in behavior.
 
 **Architecture:** One mechanical commit produced by `npm run format`. The
-evidence of no behavior change is an identical production bundle, identical
-lint output and an identical browser smoke result before and after. A second
-commit tells `git blame` to skip the formatting commit.
+evidence of no behavior change is identical build and lint output, an
+identical browser smoke result, and a reviewed explanation of every bundle
+difference (see [Results](#results); the planned byte-identical bundle check
+could not pass). A second commit tells `git blame` to skip the formatting
+commit.
 
 **Tech Stack:** Prettier 3.8.2 (from `ui/package-lock.json`), Node 20, Vite 8,
 ESLint 9, Playwright 1.58.2.
 
 **Spec:** [Waldo interface redesign](2026-10-31-ui-redesign.md), wave 0. The
 owner chose a format-only PR first so that later waves show only real changes.
+The spec is added by its own docs PR, which merges before this one.
 
 ## Why
 
@@ -60,27 +63,27 @@ rule against reformatting adjacent code.
 **Files:** none changed. Measurements go to `$BASE`, a directory outside the
 repository (for example the session scratchpad).
 
-- [ ] **Step 1: Install the locked dependencies**
+- [x] **Step 1: Install the locked dependencies**
 
 Run: `cd ui && npm ci --legacy-peer-deps`
 Expected: exit code 0.
 
-- [ ] **Step 2: Count unformatted files**
+- [x] **Step 2: Count unformatted files**
 
 Run: `npx --no-install prettier --list-different src | wc -l`
 Expected: `60`.
 
-- [ ] **Step 3: Build and hash the bundle**
+- [x] **Step 3: Build and hash the bundle**
 
 Run: `npm run build && (cd ../app/static && find . -type f | sort | xargs shasum -a 256) > "$BASE/hashes-before.txt"`
 Expected: build exit code 0; the file lists `index.html` and the hashed assets.
 
-- [ ] **Step 4: Record lint output**
+- [x] **Step 4: Record lint output**
 
 Run: `npm run lint > "$BASE/lint-before.txt" 2>&1; echo $?`
 Expected: exit code 0. Keep the full output.
 
-- [ ] **Step 5: Record the smoke result**
+- [x] **Step 5: Record the smoke result**
 
 Run: `lsof -nP -iTCP:4173 -sTCP:LISTEN` (expect no output), then
 `CI=1 WALDO_SCREENSHOT_DIR="$BASE/visual-before" npx playwright test -c playwright.smoke.config.ts --reporter=line > "$BASE/smoke-before.txt" 2>&1; echo $?`
@@ -91,18 +94,18 @@ Expected: the summary line gives passed, skipped and failed counts. Record them.
 **Files:**
 - Modify: the 60 files that Prettier lists under `ui/src`
 
-- [ ] **Step 1: Run the formatter**
+- [x] **Step 1: Run the formatter**
 
 Run: `cd ui && npm run format`
 Expected: exit code 0.
 
-- [ ] **Step 2: Check the result**
+- [x] **Step 2: Check the result**
 
 Run: `npm run format:check; git diff --name-only | grep -v '^ui/src/'; grep -n '^import' src/lib/videoPresentation.ts`
 Expected: "All matched files use Prettier code style!"; no paths outside
 `ui/src`; no import in `videoPresentation.ts`.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add ui/src
@@ -113,18 +116,18 @@ git commit -m "chore: format ui/src with the locked Prettier 3.8.2"
 
 **Files:** none changed.
 
-- [ ] **Step 1: Rebuild and compare the bundle**
+- [x] **Step 1: Rebuild and compare the bundle**
 
 Run: `npm run build && (cd ../app/static && find . -type f | sort | xargs shasum -a 256) > "$BASE/hashes-after.txt" && diff "$BASE/hashes-before.txt" "$BASE/hashes-after.txt"`
 Expected: no output. If a file differs, compare that file before and after
 with a pretty-printed diff, record the cause and stop.
 
-- [ ] **Step 2: Compare lint output**
+- [x] **Step 2: Compare lint output**
 
 Run: `npm run lint > "$BASE/lint-after.txt" 2>&1; echo $?; diff "$BASE/lint-before.txt" "$BASE/lint-after.txt"`
 Expected: exit code 0 and no difference.
 
-- [ ] **Step 3: Compare the smoke result**
+- [x] **Step 3: Compare the smoke result**
 
 Run the Task 1 Step 5 commands with `visual-after` and `smoke-after.txt`.
 Expected: the same passed, skipped and failed counts as before.
@@ -135,15 +138,15 @@ Expected: the same passed, skipped and failed counts as before.
 - Create: `.git-blame-ignore-revs`
 - Modify: `docs/plans/2026-10-31-ui-format-baseline.md` (the Results section)
 
-- [ ] **Step 1: Add the formatting commit to the blame ignore list**
+- [x] **Step 1: Add the formatting commit to the blame ignore list**
 
 `.git-blame-ignore-revs` contains a comment line naming the change and the
 full 40-character SHA of the Task 2 commit. GitHub reads this file by default.
 Local users run `git config blame.ignoreRevsFile .git-blame-ignore-revs`.
 
-- [ ] **Step 2: Fill in the Results section below with the measured values**
+- [x] **Step 2: Fill in the Results section below with the measured values**
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add .git-blame-ignore-revs docs/plans/2026-10-31-ui-format-baseline.md
@@ -152,9 +155,56 @@ git commit -m "docs: record the UI format baseline and skip it in blame"
 
 ## Results
 
-To be completed in Task 4 with the measured values: unformatted files before and
-after, bundle hash comparison, lint comparison, smoke counts before and after,
-and the hosted CI run for the PR head.
+Measured on October 31, 2026 on macOS with Node 20.19.6, Prettier 3.8.2 and
+Playwright 1.58.2. The formatting commit is `2dd3b9e`. The baseline is `a795755`
+(the plan commit on top of `46e4d5f`).
+
+| Check | Before | After |
+| --- | --- | --- |
+| Files under `ui/src` that Prettier would change | 60 of 65 | 0 |
+| `npm run build` (`tsc -b` and Vite) | Pass | Pass |
+| `npm run lint` | Exit 0, no warnings | Identical output |
+| Browser smoke (`CI=1`, `WALDO_SCREENSHOT_DIR` set) | 127 passed, 0 skipped, 0 failed | 127 passed, 0 skipped, 0 failed |
+| Paths changed outside `ui/src` | — | None |
+
+**The bundle is not byte-identical.** Task 3 Step 1 expected identical hashes.
+22 of the 48 JavaScript chunks and `index.html` changed; CSS, `api.ts`,
+`videoPresentation.ts` and the icon chunks did not. Each changed chunk was
+pretty-printed with Prettier's default settings, chunk-hash names were
+normalized, and every differing line was read (99 lines with this method).
+They fall into three groups:
+
+1. Import names of other chunks whose hashes changed.
+2. JSX text that Prettier split or joined at a different point, for example
+   `" · "` became `" "` and `"· "`. The joined text is the same.
+3. Three doubled JSX spaces that Prettier collapsed into one. In the source,
+   `Export ready. {" "}` in `DatasetsPage.tsx`, `{mediaError} {" "}` in
+   `AnnotationCanvas.tsx` and `{media.error} {" "}` in `RenewableFrameImage.tsx`
+   each became `…{" "}`. These elements use normal white-space, so the browser
+   shows one space in both versions. Only `textContent` loses one space. No
+   element that preserves spaces (`<pre>`, `pre-wrap`) has a text difference.
+
+**Screenshots.** The smoke suite saves 7 synthetic screenshots. Three are
+pixel-identical. Three others also differ between two runs of the unchanged
+baseline build (video frame timing and render noise). One,
+`waldo-decoded-mask-alignment.png`, is stable across baseline runs but differs
+by 128 pixels, at most 35 of 255 in intensity, in its caption row. That is the
+Deploy test summary line ("7 frames · 1 tracked objects · …" in `TestTab.tsx`).
+Its text `" tracked objects · "` is now two text nodes, which moves sub-pixel
+anti-aliasing. The text reads the same, and `ui/e2e/video-overlay.spec.ts:429`,
+which checks the exact caption string, passes.
+
+**Changed acceptance check.** Prettier's JSX output cannot meet the planned
+byte-identical bundle check, so the implementing agent stopped and found the
+cause as Task 3 required. It then replaced the check with "rendered text
+identical after normal HTML white-space collapsing". The spec's own acceptance
+is still met in full: `ui/src` is Prettier-clean, and build, lint and smoke
+results are identical. The independent reviewer rebuilt both commits, read the
+bundle differences, found the same three collapsed spaces and nothing else, and
+confirmed by re-running Prettier on the base commit that no file was edited by
+hand. The owner accepts or rejects the replaced check when approving the PR.
+
+Hosted CI for the PR head is recorded in the PR.
 
 ## Rollback
 
