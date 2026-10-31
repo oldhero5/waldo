@@ -64,7 +64,12 @@ export const TEMPLATES: WorkflowTemplate[] = [
       nodes: [
         { id: "n1", type: "image_input", config: {}, position: { x: 50, y: 100 } },
         { id: "n2", type: "detection", config: { confidence: 0.3 }, position: { x: 340, y: 60 } },
-        { id: "n3", type: "visualize_blur", config: { kernel_size: 51 }, position: { x: 630, y: 60 } },
+        {
+          id: "n3",
+          type: "visualize_blur",
+          config: { kernel_size: 51 },
+          position: { x: 630, y: 60 },
+        },
         { id: "n4", type: "output", config: {}, position: { x: 920, y: 100 } },
       ],
       edges: [
@@ -85,7 +90,15 @@ export const TEMPLATES: WorkflowTemplate[] = [
         { id: "n1", type: "image_input", config: {}, position: { x: 50, y: 120 } },
         { id: "n2", type: "detection", config: { confidence: 0.25 }, position: { x: 340, y: 60 } },
         { id: "n3", type: "count", config: {}, position: { x: 630, y: 60 } },
-        { id: "n4", type: "llm", config: { model: "qwen3.5:9b", system_prompt: "Describe this scene based on the detection counts." }, position: { x: 920, y: 120 } },
+        {
+          id: "n4",
+          type: "llm",
+          config: {
+            model: "qwen3.5:9b",
+            system_prompt: "Describe this scene based on the detection counts.",
+          },
+          position: { x: 920, y: 120 },
+        },
         { id: "n5", type: "output", config: {}, position: { x: 1200, y: 120 } },
       ],
       edges: [
@@ -126,8 +139,18 @@ export const TEMPLATES: WorkflowTemplate[] = [
         { id: "n1", type: "image_input", config: {}, position: { x: 50, y: 120 } },
         { id: "n2", type: "detection", config: { confidence: 0.3 }, position: { x: 340, y: 80 } },
         { id: "n3", type: "count", config: {}, position: { x: 630, y: 80 } },
-        { id: "n4", type: "conditional", config: { operator: "gt", threshold: 5 }, position: { x: 920, y: 80 } },
-        { id: "n5", type: "webhook", config: { url: "https://hooks.slack.com/..." }, position: { x: 1200, y: 80 } },
+        {
+          id: "n4",
+          type: "conditional",
+          config: { operator: "gt", threshold: 5 },
+          position: { x: 920, y: 80 },
+        },
+        {
+          id: "n5",
+          type: "webhook",
+          config: { url: "https://hooks.slack.com/..." },
+          position: { x: 1200, y: 80 },
+        },
         { id: "n6", type: "output", config: {}, position: { x: 1200, y: 200 } },
       ],
       edges: [

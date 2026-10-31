@@ -26,7 +26,7 @@
   --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   /* Compatibility alias for existing page headings. */
   --font-serif: var(--font-sans);
-  --font-mono: 'SF Mono', ui-monospace, 'Fira Code', monospace;
+  --font-mono: "SF Mono", ui-monospace, "Fira Code", monospace;
   --transition: 160ms ease;
 
   --success: #5fb85f;
@@ -50,17 +50,25 @@
 
 body {
   margin: 0;
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family:
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    Roboto,
+    sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   background-color: var(--bg-page);
   color: var(--text-primary);
-  transition: background-color 0.2s ease, color 0.2s ease;
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease;
 }
 
 /* ── Typography ── */
 
-h1, h2 {
+h1,
+h2 {
   font-family: var(--font-serif);
   letter-spacing: -0.01em;
 }
@@ -79,20 +87,40 @@ h1, h2 {
 
 /* ── Markdown rich text rendering ── */
 
-.markdown-body h1, .markdown-body h2, .markdown-body h3 {
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3 {
   font-family: var(--font-serif);
   color: var(--text-primary);
   margin-top: 1em;
   margin-bottom: 0.4em;
   line-height: 1.3;
 }
-.markdown-body h1 { font-size: 1.3em; }
-.markdown-body h2 { font-size: 1.15em; }
-.markdown-body h3 { font-size: 1.05em; }
-.markdown-body p { margin-bottom: 0.6em; line-height: 1.6; }
-.markdown-body ul, .markdown-body ol { padding-left: 1.4em; margin-bottom: 0.6em; }
-.markdown-body li { margin-bottom: 0.3em; line-height: 1.5; }
-.markdown-body li::marker { color: var(--text-muted); }
+.markdown-body h1 {
+  font-size: 1.3em;
+}
+.markdown-body h2 {
+  font-size: 1.15em;
+}
+.markdown-body h3 {
+  font-size: 1.05em;
+}
+.markdown-body p {
+  margin-bottom: 0.6em;
+  line-height: 1.6;
+}
+.markdown-body ul,
+.markdown-body ol {
+  padding-left: 1.4em;
+  margin-bottom: 0.6em;
+}
+.markdown-body li {
+  margin-bottom: 0.3em;
+  line-height: 1.5;
+}
+.markdown-body li::marker {
+  color: var(--text-muted);
+}
 .markdown-body code {
   font-family: var(--font-mono);
   font-size: 0.88em;
@@ -116,9 +144,17 @@ h1, h2 {
   white-space: pre;
   color: var(--text-secondary);
 }
-.markdown-body strong { font-weight: 600; color: var(--text-primary); }
-.markdown-body em { font-style: italic; }
-.markdown-body a { color: var(--accent); text-decoration: underline; }
+.markdown-body strong {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.markdown-body em {
+  font-style: italic;
+}
+.markdown-body a {
+  color: var(--accent);
+  text-decoration: underline;
+}
 .markdown-body blockquote {
   border-left: 3px solid var(--text-secondary);
   padding-left: 12px;
@@ -137,7 +173,8 @@ h1, h2 {
   font-size: 0.9em;
   margin-bottom: 0.6em;
 }
-.markdown-body th, .markdown-body td {
+.markdown-body th,
+.markdown-body td {
   padding: 6px 10px;
   border: 1px solid var(--border-subtle);
   text-align: left;
@@ -201,13 +238,20 @@ h1, h2 {
 
 /* ── All clickable elements show pointer cursor ── */
 
-button, [role="button"], a, label[for], summary,
-.cursor-pointer, .surface-interactive,
-[onclick], [class*="hover:bg-"] {
+button,
+[role="button"],
+a,
+label[for],
+summary,
+.cursor-pointer,
+.surface-interactive,
+[onclick],
+[class*="hover:bg-"] {
   cursor: pointer;
 }
 
-button:disabled, [aria-disabled="true"] {
+button:disabled,
+[aria-disabled="true"] {
   cursor: not-allowed;
 }
 
@@ -248,60 +292,139 @@ input[type="checkbox"] {
 /* ── Animations ── */
 
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 /* ── Tailwind fallbacks for remaining hardcoded classes ── */
 
-.bg-white { background-color: var(--bg-surface) !important; }
-.bg-gray-50 { background-color: var(--bg-inset) !important; }
-.bg-gray-100 { background-color: var(--bg-elevated) !important; }
-.bg-gray-900 { background-color: var(--bg-elevated) !important; color: var(--text-primary) !important; }
+.bg-white {
+  background-color: var(--bg-surface) !important;
+}
+.bg-gray-50 {
+  background-color: var(--bg-inset) !important;
+}
+.bg-gray-100 {
+  background-color: var(--bg-elevated) !important;
+}
+.bg-gray-900 {
+  background-color: var(--bg-elevated) !important;
+  color: var(--text-primary) !important;
+}
 
-.text-gray-900, .text-gray-800 { color: var(--text-primary) !important; }
-.text-gray-700, .text-gray-600 { color: var(--text-secondary) !important; }
-.text-gray-500, .text-gray-400, .text-gray-300 { color: var(--text-muted) !important; }
+.text-gray-900,
+.text-gray-800 {
+  color: var(--text-primary) !important;
+}
+.text-gray-700,
+.text-gray-600 {
+  color: var(--text-secondary) !important;
+}
+.text-gray-500,
+.text-gray-400,
+.text-gray-300 {
+  color: var(--text-muted) !important;
+}
 
-.border-gray-200, .border-gray-100 { border-color: var(--border-subtle) !important; }
-.border-gray-300 { border-color: var(--border-default) !important; }
+.border-gray-200,
+.border-gray-100 {
+  border-color: var(--border-subtle) !important;
+}
+.border-gray-300 {
+  border-color: var(--border-default) !important;
+}
 
-.hover\:bg-gray-50:hover, .hover\:bg-gray-100:hover { background-color: var(--bg-surface-hover) !important; }
+.hover\:bg-gray-50:hover,
+.hover\:bg-gray-100:hover {
+  background-color: var(--bg-surface-hover) !important;
+}
 
-.bg-blue-600 { background-color: var(--accent) !important; color: var(--text-on-accent) !important; }
-.hover\:bg-blue-700:hover { background-color: var(--accent-hover) !important; }
-.text-blue-600, .text-blue-700 { color: var(--accent) !important; }
-.bg-blue-50 { background-color: var(--accent-soft) !important; }
+.bg-blue-600 {
+  background-color: var(--accent) !important;
+  color: var(--text-on-accent) !important;
+}
+.hover\:bg-blue-700:hover {
+  background-color: var(--accent-hover) !important;
+}
+.text-blue-600,
+.text-blue-700 {
+  color: var(--accent) !important;
+}
+.bg-blue-50 {
+  background-color: var(--accent-soft) !important;
+}
 
-.bg-green-50, .bg-green-100 { background-color: var(--success-soft) !important; }
-.bg-green-600 { background-color: var(--success) !important; }
-.text-green-600, .text-green-700, .text-green-800 { color: var(--success) !important; }
+.bg-green-50,
+.bg-green-100 {
+  background-color: var(--success-soft) !important;
+}
+.bg-green-600 {
+  background-color: var(--success) !important;
+}
+.text-green-600,
+.text-green-700,
+.text-green-800 {
+  color: var(--success) !important;
+}
 
-.bg-red-50, .bg-red-100 { background-color: var(--danger-soft) !important; }
-.text-red-500, .text-red-600, .text-red-700 { color: var(--danger) !important; }
+.bg-red-50,
+.bg-red-100 {
+  background-color: var(--danger-soft) !important;
+}
+.text-red-500,
+.text-red-600,
+.text-red-700 {
+  color: var(--danger) !important;
+}
 
-.bg-amber-50 { background-color: var(--warning-soft) !important; }
-.text-amber-600, .text-amber-700 { color: var(--warning) !important; }
+.bg-amber-50 {
+  background-color: var(--warning-soft) !important;
+}
+.text-amber-600,
+.text-amber-700 {
+  color: var(--warning) !important;
+}
 
 /* Form inputs */
 input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
-select, textarea {
+select,
+textarea {
   background-color: var(--bg-inset) !important;
   border-color: var(--border-default) !important;
   color: var(--text-primary) !important;
 }
-input::placeholder, textarea::placeholder { color: var(--text-muted) !important; }
+input::placeholder,
+textarea::placeholder {
+  color: var(--text-muted) !important;
+}
 
 /* Code */
-pre { background-color: var(--bg-inset) !important; color: var(--text-secondary) !important; }
+pre {
+  background-color: var(--bg-inset) !important;
+  color: var(--text-secondary) !important;
+}
 
 /* Explicit primary action colors, including labels and icons. */
-.bg-accent { background-color: var(--accent); }
-.text-on-accent { color: var(--text-on-accent); }
-.hover\:bg-accent-hover:hover { background-color: var(--accent-hover); }
+.bg-accent {
+  background-color: var(--accent);
+}
+.text-on-accent {
+  color: var(--text-on-accent);
+}
+.hover\:bg-accent-hover:hover {
+  background-color: var(--accent-hover);
+}
 
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
+  *,
+  *::before,
+  *::after {
     animation: none !important;
     transition: none !important;
     scroll-behavior: auto !important;

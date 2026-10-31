@@ -44,7 +44,8 @@ function DetectionOverlay({ detections }: { detections: PreviewDetection[] }) {
     ctx.clearRect(0, 0, W, H);
 
     // Use CSS variable accent colour via a temporary element for compatibility
-    const accentColor = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#2563eb";
+    const accentColor =
+      getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#2563eb";
 
     for (const d of detections) {
       if (!d.polygon || d.polygon.length < 6) continue;
@@ -52,7 +53,8 @@ function DetectionOverlay({ detections }: { detections: PreviewDetection[] }) {
       for (let i = 0; i < d.polygon.length; i += 2) {
         const px = d.polygon[i] * W;
         const py = d.polygon[i + 1] * H;
-        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
       }
       ctx.closePath();
       ctx.fillStyle = "rgba(37,99,235,0.2)";
@@ -65,7 +67,11 @@ function DetectionOverlay({ detections }: { detections: PreviewDetection[] }) {
 
   return (
     <div ref={containerRef} className="absolute inset-0 pointer-events-none">
-      <canvas ref={canvasRef} className="absolute inset-0" style={{ width: "100%", height: "100%" }} />
+      <canvas
+        ref={canvasRef}
+        className="absolute inset-0"
+        style={{ width: "100%", height: "100%" }}
+      />
     </div>
   );
 }
@@ -140,7 +146,10 @@ export default function LabelPage() {
     setError("");
     try {
       const classPrompts: ClassPrompt[] = validEntries.map((e) => {
-        const aliases = e.prompt.split(",").map((s) => s.trim()).filter(Boolean);
+        const aliases = e.prompt
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean);
         return {
           name: e.name.trim() || aliases[0],
           ...(aliases.length > 1 ? { prompts: aliases } : { prompt: aliases[0] }),
@@ -155,7 +164,7 @@ export default function LabelPage() {
       });
       setJobId(result.job_id);
     } catch (e: unknown) {
-      setError((e instanceof Error ? e.message : String(e)));
+      setError(e instanceof Error ? e.message : String(e));
     }
   }, [videoId, projectId, validEntries, taskType]);
 
@@ -166,7 +175,10 @@ export default function LabelPage() {
     setError("");
     try {
       const allPrompts = validEntries.flatMap((e) =>
-        e.prompt.split(",").map((s) => s.trim()).filter(Boolean)
+        e.prompt
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean),
       );
       const result = await previewPrompts({
         videoId: videoId || undefined,
@@ -177,7 +189,7 @@ export default function LabelPage() {
       });
       setPreview(result);
     } catch (e: unknown) {
-      setError((e instanceof Error ? e.message : String(e)));
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setPreviewing(false);
     }
@@ -193,11 +205,11 @@ export default function LabelPage() {
         points.map((p) => [p.x, p.y]),
         points.map((p) => p.label),
         taskType,
-        className
+        className,
       );
       setJobId(result.job_id);
     } catch (e: unknown) {
-      setError((e instanceof Error ? e.message : String(e)));
+      setError(e instanceof Error ? e.message : String(e));
     }
   }, [videoId, selectedFrame, points, taskType, className]);
 
@@ -206,15 +218,28 @@ export default function LabelPage() {
 
   return (
     <div className="min-h-screen">
-
       <div className="max-w-3xl mx-auto mt-6 px-4 pb-12">
         {/* Header */}
         <div className="surface p-6 mb-6" style={{ borderRadius: "var(--radius-lg)" }}>
-          <p className="eyebrow" style={{ marginBottom: 4 }}>Auto-labeling</p>
-          <h1 style={{ fontFamily: "var(--font-serif)", fontSize: 20, fontWeight: 700, color: "var(--text-primary)" }}>{title}</h1>
+          <p className="eyebrow" style={{ marginBottom: 4 }}>
+            Auto-labeling
+          </p>
+          <h1
+            style={{
+              fontFamily: "var(--font-serif)",
+              fontSize: 20,
+              fontWeight: 700,
+              color: "var(--text-primary)",
+            }}
+          >
+            {title}
+          </h1>
 
           {frames && frames.length > 0 && !projectId && (
-            <div className="flex items-center gap-3 mt-3 p-3 rounded-lg" style={{ backgroundColor: "var(--bg-inset)" }}>
+            <div
+              className="flex items-center gap-3 mt-3 p-3 rounded-lg"
+              style={{ backgroundColor: "var(--bg-inset)" }}
+            >
               <img
                 src={frames[0].image_url}
                 alt="Video preview"
@@ -222,9 +247,17 @@ export default function LabelPage() {
                 style={{ border: "1px solid var(--border-default)" }}
               />
               <div>
-                <p className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>{frames.length} frames extracted</p>
+                <p className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>
+                  {frames.length} frames extracted
+                </p>
                 {frames[0].width && frames[0].height && (
-                  <p style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}>
+                  <p
+                    style={{
+                      fontSize: 11,
+                      fontFamily: "var(--font-mono)",
+                      color: "var(--text-muted)",
+                    }}
+                  >
                     {frames[0].width} &times; {frames[0].height}px
                   </p>
                 )}
@@ -239,20 +272,35 @@ export default function LabelPage() {
           {!projectId && (
             <div className="grid grid-cols-2 gap-3 mb-4">
               {[
-                { key: "text" as Mode, label: "Describe with text", desc: "Describe what to look for in sampled video frames." },
-                { key: "exemplar" as Mode, label: "Click on examples", desc: "Point at objects in a frame and the AI will track them across the video." },
+                {
+                  key: "text" as Mode,
+                  label: "Describe with text",
+                  desc: "Describe what to look for in sampled video frames.",
+                },
+                {
+                  key: "exemplar" as Mode,
+                  label: "Click on examples",
+                  desc: "Point at objects in a frame and the AI will track them across the video.",
+                },
               ].map((opt) => (
                 <button
                   key={opt.key}
                   className="p-4 rounded-lg text-left transition-all"
                   style={{
-                    border: mode === opt.key ? "2px solid var(--accent)" : "2px solid var(--border-subtle)",
+                    border:
+                      mode === opt.key
+                        ? "2px solid var(--accent)"
+                        : "2px solid var(--border-subtle)",
                     backgroundColor: mode === opt.key ? "var(--accent-soft)" : "transparent",
                   }}
                   onClick={() => setMode(opt.key)}
                 >
-                  <p className="font-medium text-sm" style={{ color: "var(--text-primary)" }}>{opt.label}</p>
-                  <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>{opt.desc}</p>
+                  <p className="font-medium text-sm" style={{ color: "var(--text-primary)" }}>
+                    {opt.label}
+                  </p>
+                  <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>
+                    {opt.desc}
+                  </p>
                 </button>
               ))}
             </div>
@@ -282,7 +330,11 @@ export default function LabelPage() {
                     onChange={(e) => updateClassEntry(i, "prompt", e.target.value)}
                     placeholder={i === 0 ? 'e.g. "car, sedan, SUV"' : "Prompts (comma-separated)"}
                     className="flex-1 rounded-lg px-4 py-2.5 text-sm outline-none"
-                    style={{ border: "1px solid var(--border-default)", backgroundColor: "var(--bg-inset)", color: "var(--text-primary)" }}
+                    style={{
+                      border: "1px solid var(--border-default)",
+                      backgroundColor: "var(--bg-inset)",
+                      color: "var(--text-primary)",
+                    }}
                     onFocus={(e) => (e.currentTarget.style.borderColor = "var(--accent)")}
                     onBlur={(e) => (e.currentTarget.style.borderColor = "var(--border-default)")}
                     onKeyDown={(e) => {
@@ -296,7 +348,12 @@ export default function LabelPage() {
                     placeholder="Class name"
                     title="Short name for training data"
                     className="w-32 rounded-lg px-3 py-2.5 text-sm outline-none"
-                    style={{ border: "1px solid var(--border-default)", backgroundColor: "var(--bg-inset)", color: "var(--text-primary)", fontFamily: "var(--font-mono)" }}
+                    style={{
+                      border: "1px solid var(--border-default)",
+                      backgroundColor: "var(--bg-inset)",
+                      color: "var(--text-primary)",
+                      fontFamily: "var(--font-mono)",
+                    }}
                     onFocus={(e) => (e.currentTarget.style.borderColor = "var(--accent)")}
                     onBlur={(e) => (e.currentTarget.style.borderColor = "var(--border-default)")}
                   />
@@ -321,7 +378,10 @@ export default function LabelPage() {
                 </button>
                 <div className="flex items-center gap-3">
                   <div className="flex items-center gap-1.5">
-                    <label className="text-[10px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+                    <label
+                      className="text-[10px] uppercase tracking-wide"
+                      style={{ color: "var(--text-muted)" }}
+                    >
                       Threshold
                     </label>
                     <input
@@ -334,12 +394,18 @@ export default function LabelPage() {
                       className="w-24"
                       disabled={previewing}
                     />
-                    <span className="text-xs font-mono w-8" style={{ color: "var(--text-secondary)" }}>
+                    <span
+                      className="text-xs font-mono w-8"
+                      style={{ color: "var(--text-secondary)" }}
+                    >
                       {previewThreshold.toFixed(2)}
                     </span>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <label className="text-[10px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+                    <label
+                      className="text-[10px] uppercase tracking-wide"
+                      style={{ color: "var(--text-muted)" }}
+                    >
                       Frames
                     </label>
                     <input
@@ -347,9 +413,15 @@ export default function LabelPage() {
                       min={1}
                       max={16}
                       value={previewFrames}
-                      onChange={(e) => setPreviewFrames(Math.max(1, Math.min(16, Number(e.target.value) || 8)))}
+                      onChange={(e) =>
+                        setPreviewFrames(Math.max(1, Math.min(16, Number(e.target.value) || 8)))
+                      }
                       className="w-12 text-xs text-center rounded px-1 py-1"
-                      style={{ border: "1px solid var(--border-default)", backgroundColor: "var(--bg-inset)", color: "var(--text-primary)" }}
+                      style={{
+                        border: "1px solid var(--border-default)",
+                        backgroundColor: "var(--bg-inset)",
+                        color: "var(--text-primary)",
+                      }}
                       disabled={previewing}
                     />
                   </div>
@@ -368,28 +440,52 @@ export default function LabelPage() {
                   className="px-6 py-2.5 text-white rounded-lg font-medium disabled:opacity-40 transition-colors"
                   style={{ backgroundColor: "var(--accent)", color: "var(--text-on-accent)" }}
                 >
-                  {validEntries.length > 1 ? `Find ${validEntries.length} Object Types` : "Find Objects"}
+                  {validEntries.length > 1
+                    ? `Find ${validEntries.length} Object Types`
+                    : "Find Objects"}
                 </button>
               </div>
 
               {/* Preview results */}
               {preview && (
-                <div className="mt-4 p-4 rounded-lg" style={{ backgroundColor: "var(--bg-inset)", border: "1px solid var(--border-subtle)" }}>
+                <div
+                  className="mt-4 p-4 rounded-lg"
+                  style={{
+                    backgroundColor: "var(--bg-inset)",
+                    border: "1px solid var(--border-subtle)",
+                  }}
+                >
                   <div className="flex items-center justify-between mb-3">
                     <p className="eyebrow">
-                      Preview: {preview.total_detections} detection{preview.total_detections !== 1 ? "s" : ""} across {preview.frames.length} frames
+                      Preview: {preview.total_detections} detection
+                      {preview.total_detections !== 1 ? "s" : ""} across {preview.frames.length}{" "}
+                      frames
                     </p>
-                    <button onClick={() => setPreview(null)} className="text-xs hover:underline" style={{ color: "var(--text-muted)" }}>
+                    <button
+                      onClick={() => setPreview(null)}
+                      className="text-xs hover:underline"
+                      style={{ color: "var(--text-muted)" }}
+                    >
                       Dismiss
                     </button>
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                     {preview.frames.map((f) => (
-                      <div key={f.frame_idx} className="relative rounded-lg overflow-hidden" style={{ border: "1px solid var(--border-default)" }}>
-                        <img src={`data:image/jpeg;base64,${f.image_b64}`} alt={`Frame ${f.frame_idx}`} className="w-full aspect-video object-cover" />
+                      <div
+                        key={f.frame_idx}
+                        className="relative rounded-lg overflow-hidden"
+                        style={{ border: "1px solid var(--border-default)" }}
+                      >
+                        <img
+                          src={`data:image/jpeg;base64,${f.image_b64}`}
+                          alt={`Frame ${f.frame_idx}`}
+                          className="w-full aspect-video object-cover"
+                        />
                         <DetectionOverlay detections={f.detections} />
                         <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent px-2 py-1">
-                          <span style={{ fontSize: 10, color: "#fff", fontFamily: "var(--font-mono)" }}>
+                          <span
+                            style={{ fontSize: 10, color: "#fff", fontFamily: "var(--font-mono)" }}
+                          >
                             {f.detections.length} detection{f.detections.length !== 1 ? "s" : ""}
                           </span>
                         </div>
@@ -397,7 +493,10 @@ export default function LabelPage() {
                     ))}
                   </div>
                   {preview.total_detections === 0 && (
-                    <p className="text-center py-4" style={{ fontSize: 13, color: "var(--text-muted)" }}>
+                    <p
+                      className="text-center py-4"
+                      style={{ fontSize: 13, color: "var(--text-muted)" }}
+                    >
                       No detections found. Try different prompts or lower the threshold.
                     </p>
                   )}
@@ -417,12 +516,21 @@ export default function LabelPage() {
                 onChange={(e) => setClassName(e.target.value)}
                 placeholder="Class name"
                 className="rounded-lg px-4 py-2 w-48"
-                style={{ border: "1px solid var(--border-default)", backgroundColor: "var(--bg-inset)", color: "var(--text-primary)", fontFamily: "var(--font-mono)" }}
+                style={{
+                  border: "1px solid var(--border-default)",
+                  backgroundColor: "var(--bg-inset)",
+                  color: "var(--text-primary)",
+                  fontFamily: "var(--font-mono)",
+                }}
               />
               <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
                 Left-click = positive, Right-click = negative
               </span>
-              <button onClick={() => setPoints([])} className="text-sm hover:underline" style={{ color: "var(--danger)" }}>
+              <button
+                onClick={() => setPoints([])}
+                className="text-sm hover:underline"
+                style={{ color: "var(--danger)" }}
+              >
                 Clear points
               </button>
             </div>
@@ -455,9 +563,15 @@ export default function LabelPage() {
                 />
                 <div className="flex gap-3">
                   <button
-                    onClick={() => { setSelectedFrame(null); setPoints([]); }}
+                    onClick={() => {
+                      setSelectedFrame(null);
+                      setPoints([]);
+                    }}
                     className="px-4 py-2 rounded-lg text-sm"
-                    style={{ border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}
+                    style={{
+                      border: "1px solid var(--border-default)",
+                      color: "var(--text-secondary)",
+                    }}
                   >
                     Back to frames
                   </button>
@@ -476,52 +590,93 @@ export default function LabelPage() {
         )}
 
         {/* Job progress */}
-        {jobStatus && (() => {
-          const statusColor = jobStatus.status === "completed" ? "var(--success)"
-            : ["failed", "partial"].includes(jobStatus.status) ? "var(--danger)" : "var(--accent)";
-          const statusBg = jobStatus.status === "completed" ? "var(--success-soft)"
-            : ["failed", "partial"].includes(jobStatus.status) ? "var(--danger-soft)" : "var(--bg-inset)";
-          const progress = jobCompletionProgress(jobStatus);
-          return (
-            <div className="rounded-lg p-4 mb-4" style={{ backgroundColor: statusBg, border: `1px solid ${statusColor}` }}>
-              <div className="flex justify-between items-center mb-2">
-                <span className="font-medium capitalize" style={{ color: statusColor }}>{jobStatus.status}</span>
-                <span style={{ fontSize: 12, fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}>
-                  {jobStatus.processed_frames}/{jobStatus.total_frames} {jobStatus.processing_summary?.coverage === "sampled" ? "sampled frames" : "recorded entries"}
-                </span>
-              </div>
-              {progress != null && <div role="progressbar" aria-label="Processing progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={jobStatus.status === "completed" ? 100 : Math.floor(progress * 100)} className="w-full rounded-full h-2" style={{ backgroundColor: "rgba(0,0,0,0.1)" }}>
-                <div
-                  className="h-2 rounded-full transition-all"
-                  style={{ width: `${progress * 100}%`, backgroundColor: statusColor }}
-                />
-              </div>}
-              <JobCoverage job={jobStatus} />
-              {isTerminalJobStatus(jobStatus.status) && (
-                <div className="mt-3 flex gap-3">
-                  <button
-                    onClick={() => navigate(`/review/${jobStatus.job_id}`)}
-                    className="px-4 py-2 text-white rounded-lg text-sm font-medium"
-                    style={{ backgroundColor: "var(--success)" }}
+        {jobStatus &&
+          (() => {
+            const statusColor =
+              jobStatus.status === "completed"
+                ? "var(--success)"
+                : ["failed", "partial"].includes(jobStatus.status)
+                  ? "var(--danger)"
+                  : "var(--accent)";
+            const statusBg =
+              jobStatus.status === "completed"
+                ? "var(--success-soft)"
+                : ["failed", "partial"].includes(jobStatus.status)
+                  ? "var(--danger-soft)"
+                  : "var(--bg-inset)";
+            const progress = jobCompletionProgress(jobStatus);
+            return (
+              <div
+                className="rounded-lg p-4 mb-4"
+                style={{ backgroundColor: statusBg, border: `1px solid ${statusColor}` }}
+              >
+                <div className="flex justify-between items-center mb-2">
+                  <span className="font-medium capitalize" style={{ color: statusColor }}>
+                    {jobStatus.status}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: 12,
+                      fontFamily: "var(--font-mono)",
+                      color: "var(--text-muted)",
+                    }}
                   >
-                    {jobStatus.status === "completed" ? "Review Results" : "Review available evidence"}
-                  </button>
-                  {jobStatus.result_url && (
-                    <a
-                      href={jobStatus.result_url}
-                      className="px-4 py-2 rounded-lg text-sm"
-                      style={{ border: "1px solid var(--success)", color: "var(--success)" }}
-                    >
-                      Download Dataset
-                    </a>
-                  )}
+                    {jobStatus.processed_frames}/{jobStatus.total_frames}{" "}
+                    {jobStatus.processing_summary?.coverage === "sampled"
+                      ? "sampled frames"
+                      : "recorded entries"}
+                  </span>
                 </div>
-              )}
-            </div>
-          );
-        })()}
+                {progress != null && (
+                  <div
+                    role="progressbar"
+                    aria-label="Processing progress"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={
+                      jobStatus.status === "completed" ? 100 : Math.floor(progress * 100)
+                    }
+                    className="w-full rounded-full h-2"
+                    style={{ backgroundColor: "rgba(0,0,0,0.1)" }}
+                  >
+                    <div
+                      className="h-2 rounded-full transition-all"
+                      style={{ width: `${progress * 100}%`, backgroundColor: statusColor }}
+                    />
+                  </div>
+                )}
+                <JobCoverage job={jobStatus} />
+                {isTerminalJobStatus(jobStatus.status) && (
+                  <div className="mt-3 flex gap-3">
+                    <button
+                      onClick={() => navigate(`/review/${jobStatus.job_id}`)}
+                      className="px-4 py-2 text-white rounded-lg text-sm font-medium"
+                      style={{ backgroundColor: "var(--success)" }}
+                    >
+                      {jobStatus.status === "completed"
+                        ? "Review Results"
+                        : "Review available evidence"}
+                    </button>
+                    {jobStatus.result_url && (
+                      <a
+                        href={jobStatus.result_url}
+                        className="px-4 py-2 rounded-lg text-sm"
+                        style={{ border: "1px solid var(--success)", color: "var(--success)" }}
+                      >
+                        Download Dataset
+                      </a>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
-        {error && <p className="text-sm" style={{ color: "var(--danger)" }}>{error}</p>}
+        {error && (
+          <p className="text-sm" style={{ color: "var(--danger)" }}>
+            {error}
+          </p>
+        )}
       </div>
     </div>
   );

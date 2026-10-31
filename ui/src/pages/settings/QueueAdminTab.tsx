@@ -40,39 +40,50 @@ export function QueueAdminTab() {
 
   const handleRevoke = async (taskId: string | null) => {
     if (!taskId) return;
-    if (!confirm(`Revoke Celery task ${taskId.slice(0, 8)}? The worker will be signalled to stop.`)) return;
+    if (!confirm(`Revoke Celery task ${taskId.slice(0, 8)}? The worker will be signalled to stop.`))
+      return;
     try {
       await revokeTask(taskId, true);
       invalidate();
     } catch (e: unknown) {
-      alert(`Revoke failed: ${(e instanceof Error ? e.message : "Request failed")}`);
+      alert(`Revoke failed: ${e instanceof Error ? e.message : "Request failed"}`);
     }
   };
 
   const handleMarkFailed = async (jobId: string) => {
-    if (!confirm(`Force-fail job ${jobId.slice(0, 8)}? This also revokes the underlying Celery task.`)) return;
+    if (
+      !confirm(`Force-fail job ${jobId.slice(0, 8)}? This also revokes the underlying Celery task.`)
+    )
+      return;
     try {
       await markJobFailed(jobId, "Marked failed from admin panel");
       invalidate();
     } catch (e: unknown) {
-      alert(`Mark-failed failed: ${(e instanceof Error ? e.message : "Request failed")}`);
+      alert(`Mark-failed failed: ${e instanceof Error ? e.message : "Request failed"}`);
     }
   };
 
   const handlePurge = async (queueName: string, pending: number) => {
     if (pending === 0) return;
-    if (!confirm(`Purge ${pending} pending task(s) from queue "${queueName}"? This cannot be undone.`)) return;
+    if (
+      !confirm(`Purge ${pending} pending task(s) from queue "${queueName}"? This cannot be undone.`)
+    )
+      return;
     try {
       const res = await purgeQueue(queueName);
       invalidate();
       alert(`Purged ${res.removed} task(s) from ${queueName}`);
     } catch (e: unknown) {
-      alert(`Purge failed: ${(e instanceof Error ? e.message : "Request failed")}`);
+      alert(`Purge failed: ${e instanceof Error ? e.message : "Request failed"}`);
     }
   };
 
   if (isLoading) {
-    return <p className="text-sm" style={{ color: "var(--text-muted)" }}>Loading queue status…</p>;
+    return (
+      <p className="text-sm" style={{ color: "var(--text-muted)" }}>
+        Loading queue status…
+      </p>
+    );
   }
 
   if (error) {
@@ -92,7 +103,9 @@ export function QueueAdminTab() {
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <div>
-          <p className="eyebrow" style={{ marginBottom: 2 }}>Admin</p>
+          <p className="eyebrow" style={{ marginBottom: 2 }}>
+            Admin
+          </p>
           <h2 className="text-lg font-semibold" style={{ color: "var(--text-primary)" }}>
             Queue &amp; Workers
           </h2>
@@ -107,10 +120,7 @@ export function QueueAdminTab() {
       </div>
 
       <WorkersCard workers={data?.workers || []} />
-      <QueuesCard
-        queues={data?.queues || []}
-        onPurge={handlePurge}
-      />
+      <QueuesCard queues={data?.queues || []} onPurge={handlePurge} />
       <StuckJobsCard
         jobs={data?.stuck_jobs || []}
         threshold={data?.stuck_threshold_seconds || 600}
@@ -140,9 +150,10 @@ function WorkersCard({ workers }: { workers: AdminWorker[] }) {
           style={{ backgroundColor: "var(--warning-soft)", color: "var(--warning)" }}
         >
           <AlertTriangle size={14} />
-          No workers reachable. Start one with{" "}
-          <code className="font-mono">make dev-labeler</code> or{" "}
-          <code className="font-mono">make up-gpu</code>.
+          No workers reachable. Start one with <code className="font-mono">
+            make dev-labeler
+          </code>{" "}
+          or <code className="font-mono">make up-gpu</code>.
         </div>
       ) : (
         <div className="space-y-3">
@@ -153,18 +164,28 @@ function WorkersCard({ workers }: { workers: AdminWorker[] }) {
               style={{ backgroundColor: "var(--bg-inset)" }}
             >
               <div className="flex items-center justify-between mb-2">
-                <span className="text-sm font-medium font-mono" style={{ color: "var(--text-primary)" }}>
+                <span
+                  className="text-sm font-medium font-mono"
+                  style={{ color: "var(--text-primary)" }}
+                >
                   {w.name}
                 </span>
-                <div className="flex items-center gap-3 text-[10px]" style={{ color: "var(--text-muted)" }}>
+                <div
+                  className="flex items-center gap-3 text-[10px]"
+                  style={{ color: "var(--text-muted)" }}
+                >
                   {w.pool && <span>pool: {w.pool}</span>}
-                  {w.uptime_seconds != null && <span>uptime: {formatDuration(w.uptime_seconds)}</span>}
+                  {w.uptime_seconds != null && (
+                    <span>uptime: {formatDuration(w.uptime_seconds)}</span>
+                  )}
                   <span>reserved: {w.reserved_tasks}</span>
                 </div>
               </div>
 
               {w.active_tasks.length === 0 ? (
-                <p className="text-xs" style={{ color: "var(--text-muted)" }}>Idle</p>
+                <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                  Idle
+                </p>
               ) : (
                 <div className="space-y-1.5">
                   {w.active_tasks.map((t, i) => (
@@ -174,15 +195,24 @@ function WorkersCard({ workers }: { workers: AdminWorker[] }) {
                       style={{ backgroundColor: "var(--bg-surface)" }}
                     >
                       <div className="flex-1 min-w-0">
-                        <span className="font-mono" style={{ color: "var(--accent)" }}>{t.name}</span>
+                        <span className="font-mono" style={{ color: "var(--accent)" }}>
+                          {t.name}
+                        </span>
                         {t.prompt && (
-                          <span className="ml-2" style={{ color: "var(--text-secondary)" }}>"{t.prompt}"</span>
+                          <span className="ml-2" style={{ color: "var(--text-secondary)" }}>
+                            "{t.prompt}"
+                          </span>
                         )}
                         {t.variant && (
-                          <span className="ml-2" style={{ color: "var(--text-secondary)" }}>{t.variant}</span>
+                          <span className="ml-2" style={{ color: "var(--text-secondary)" }}>
+                            {t.variant}
+                          </span>
                         )}
                       </div>
-                      <span className="font-mono ml-3 shrink-0" style={{ color: "var(--text-muted)" }}>
+                      <span
+                        className="font-mono ml-3 shrink-0"
+                        style={{ color: "var(--text-muted)" }}
+                      >
                         {formatDuration(t.elapsed_seconds)}
                       </span>
                     </div>
@@ -217,7 +247,10 @@ function QueuesCard({
             style={{ backgroundColor: "var(--bg-inset)" }}
           >
             <div>
-              <p className="text-[10px] uppercase tracking-wide mb-0.5" style={{ color: "var(--text-muted)" }}>
+              <p
+                className="text-[10px] uppercase tracking-wide mb-0.5"
+                style={{ color: "var(--text-muted)" }}
+              >
                 {q.name}
               </p>
               <p className="text-lg font-bold font-mono" style={{ color: "var(--text-primary)" }}>
@@ -267,21 +300,27 @@ function StuckJobsCard({
       </div>
 
       {jobs.length === 0 ? (
-        <p className="text-xs" style={{ color: "var(--text-muted)" }}>No stuck jobs.</p>
+        <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+          No stuck jobs.
+        </p>
       ) : (
         <div className="space-y-2">
           {jobs.map((j) => (
             <div
               key={j.id}
               className="rounded-lg p-3"
-              style={{ backgroundColor: "var(--bg-inset)", border: "1px solid var(--warning-soft)" }}
+              style={{
+                backgroundColor: "var(--bg-inset)",
+                border: "1px solid var(--warning-soft)",
+              }}
             >
               <div className="flex items-center justify-between mb-1">
                 <div className="flex items-center gap-2 min-w-0">
                   <span
                     className="text-[10px] px-1.5 py-0.5 rounded font-medium"
                     style={{
-                      backgroundColor: j.status === "labeling" ? "var(--warning-soft)" : "var(--bg-surface)",
+                      backgroundColor:
+                        j.status === "labeling" ? "var(--warning-soft)" : "var(--bg-surface)",
                       color: j.status === "labeling" ? "var(--warning)" : "var(--text-muted)",
                     }}
                   >
@@ -291,14 +330,18 @@ function StuckJobsCard({
                     {j.text_prompt || <em>(no prompt)</em>}
                   </span>
                 </div>
-                <span className="text-xs font-mono shrink-0 ml-3" style={{ color: "var(--text-muted)" }}>
+                <span
+                  className="text-xs font-mono shrink-0 ml-3"
+                  style={{ color: "var(--text-muted)" }}
+                >
                   {formatDuration(j.age_seconds)}
                 </span>
               </div>
 
               <div className="flex items-center justify-between mt-2">
                 <span className="text-[10px] font-mono" style={{ color: "var(--text-muted)" }}>
-                  {j.id.slice(0, 8)}… {j.celery_task_id ? `task ${j.celery_task_id.slice(0, 8)}…` : ""}
+                  {j.id.slice(0, 8)}…{" "}
+                  {j.celery_task_id ? `task ${j.celery_task_id.slice(0, 8)}…` : ""}
                 </span>
                 <div className="flex items-center gap-1">
                   {j.celery_task_id && (

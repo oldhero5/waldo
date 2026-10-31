@@ -1,6 +1,12 @@
 import { TABS, type TabKey } from "./shared";
 
-export function TabBar({ activeTab, onTabChange }: { activeTab: TabKey; onTabChange: (t: TabKey) => void }) {
+export function TabBar({
+  activeTab,
+  onTabChange,
+}: {
+  activeTab: TabKey;
+  onTabChange: (t: TabKey) => void;
+}) {
   return (
     <div
       role="tablist"
