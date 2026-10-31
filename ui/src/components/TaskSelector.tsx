@@ -1,9 +1,25 @@
 const TASKS = [
   { value: "segment", label: "Segmentation", description: "Pixel-level masks for each object" },
-  { value: "detect", label: "Detection (YOLO)", description: "Fast bounding box detection with YOLO" },
-  { value: "detect_transformer", label: "Detection (RF-DETR)", description: "Transformer-based detection — higher accuracy, slower" },
-  { value: "classify", label: "Classification", description: "Padded object crops labeled by class" },
-  { value: "obb", label: "Oriented BBox", description: "Rotated bounding boxes for angled objects" },
+  {
+    value: "detect",
+    label: "Detection (YOLO)",
+    description: "Fast bounding box detection with YOLO",
+  },
+  {
+    value: "detect_transformer",
+    label: "Detection (RF-DETR)",
+    description: "Transformer-based detection — higher accuracy, slower",
+  },
+  {
+    value: "classify",
+    label: "Classification",
+    description: "Padded object crops labeled by class",
+  },
+  {
+    value: "obb",
+    label: "Oriented BBox",
+    description: "Rotated bounding boxes for angled objects",
+  },
   { value: "pose", label: "Pose", description: "One centroid keypoint per detected object" },
 ];
 
@@ -28,9 +44,7 @@ export default function TaskSelector({
           </option>
         ))}
       </select>
-      {selected && (
-        <p className="text-xs text-gray-400 mt-1">{selected.description}</p>
-      )}
+      {selected && <p className="text-xs text-gray-400 mt-1">{selected.description}</p>}
     </div>
   );
 }

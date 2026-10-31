@@ -62,61 +62,67 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => controller.abort();
   }, [token, clearSessionData]);
 
-  const login = useCallback(async (email: string, password: string) => {
-    const requestRevision = ++revision.current;
-    const res = await fetch(`${API}/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
-    });
-    if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.detail || "Login failed");
-    }
-    const data = await res.json();
+  const login = useCallback(
+    async (email: string, password: string) => {
+      const requestRevision = ++revision.current;
+      const res = await fetch(`${API}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || "Login failed");
+      }
+      const data = await res.json();
 
-    // Fetch user before updating token state so the route guard sees
-    // a valid user immediately — avoids the redirect-back-to-login race.
-    const meRes = await fetch(`${API}/auth/me`, {
-      headers: { Authorization: `Bearer ${data.access_token}` },
-    });
-    if (!meRes.ok) throw new Error("Failed to fetch user");
-    const me = await meRes.json();
-    if (requestRevision !== revision.current) throw new Error("Sign-in was interrupted");
-    clearSessionData();
-    localStorage.setItem("waldo_token", data.access_token);
-    localStorage.setItem("waldo_refresh", data.refresh_token);
-    setUser(me);
-    setToken(data.access_token);
-    setLoading(false);
-  }, [clearSessionData]);
+      // Fetch user before updating token state so the route guard sees
+      // a valid user immediately — avoids the redirect-back-to-login race.
+      const meRes = await fetch(`${API}/auth/me`, {
+        headers: { Authorization: `Bearer ${data.access_token}` },
+      });
+      if (!meRes.ok) throw new Error("Failed to fetch user");
+      const me = await meRes.json();
+      if (requestRevision !== revision.current) throw new Error("Sign-in was interrupted");
+      clearSessionData();
+      localStorage.setItem("waldo_token", data.access_token);
+      localStorage.setItem("waldo_refresh", data.refresh_token);
+      setUser(me);
+      setToken(data.access_token);
+      setLoading(false);
+    },
+    [clearSessionData],
+  );
 
-  const register = useCallback(async (email: string, password: string, displayName: string) => {
-    const requestRevision = ++revision.current;
-    const res = await fetch(`${API}/auth/register`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password, display_name: displayName }),
-    });
-    if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.detail || "Registration failed");
-    }
-    const data = await res.json();
+  const register = useCallback(
+    async (email: string, password: string, displayName: string) => {
+      const requestRevision = ++revision.current;
+      const res = await fetch(`${API}/auth/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password, display_name: displayName }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || "Registration failed");
+      }
+      const data = await res.json();
 
-    const meRes = await fetch(`${API}/auth/me`, {
-      headers: { Authorization: `Bearer ${data.access_token}` },
-    });
-    if (!meRes.ok) throw new Error("Failed to fetch user");
-    const me = await meRes.json();
-    if (requestRevision !== revision.current) throw new Error("Sign-in was interrupted");
-    clearSessionData();
-    localStorage.setItem("waldo_token", data.access_token);
-    localStorage.setItem("waldo_refresh", data.refresh_token);
-    setUser(me);
-    setToken(data.access_token);
-    setLoading(false);
-  }, [clearSessionData]);
+      const meRes = await fetch(`${API}/auth/me`, {
+        headers: { Authorization: `Bearer ${data.access_token}` },
+      });
+      if (!meRes.ok) throw new Error("Failed to fetch user");
+      const me = await meRes.json();
+      if (requestRevision !== revision.current) throw new Error("Sign-in was interrupted");
+      clearSessionData();
+      localStorage.setItem("waldo_token", data.access_token);
+      localStorage.setItem("waldo_refresh", data.refresh_token);
+      setUser(me);
+      setToken(data.access_token);
+      setLoading(false);
+    },
+    [clearSessionData],
+  );
 
   const logout = useCallback(() => {
     revision.current += 1;

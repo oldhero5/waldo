@@ -4,7 +4,11 @@
  */
 
 /** Inline pill/chip that never breaks across lines */
-export function Pill({ children, color, className = "" }: {
+export function Pill({
+  children,
+  color,
+  className = "",
+}: {
   children: React.ReactNode;
   color?: string;
   className?: string;
@@ -49,12 +53,17 @@ export function Code({ children }: { children: React.ReactNode }) {
 }
 
 /** Metric value with label — stays together as a unit */
-export function MetricChip({ label, value, trend }: {
+export function MetricChip({
+  label,
+  value,
+  trend,
+}: {
   label: string;
   value: string;
   trend?: "up" | "down" | "flat";
 }) {
-  const trendColor = trend === "up" ? "var(--success)" : trend === "down" ? "var(--danger)" : "var(--text-muted)";
+  const trendColor =
+    trend === "up" ? "var(--success)" : trend === "down" ? "var(--danger)" : "var(--text-muted)";
   const trendIcon = trend === "up" ? "↑" : trend === "down" ? "↓" : "";
 
   return (
@@ -68,18 +77,21 @@ export function MetricChip({ label, value, trend }: {
         lineHeight: 1.6,
       }}
     >
-      <span style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 10 }}>{label}</span>
-      <span style={{ color: "var(--text-primary)", fontWeight: 600, fontFamily: "var(--font-mono)" }}>{value}</span>
+      <span style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 10 }}>
+        {label}
+      </span>
+      <span
+        style={{ color: "var(--text-primary)", fontWeight: 600, fontFamily: "var(--font-mono)" }}
+      >
+        {value}
+      </span>
       {trendIcon && <span style={{ color: trendColor, fontSize: 10 }}>{trendIcon}</span>}
     </span>
   );
 }
 
 /** Status indicator with dot */
-export function StatusBadge({ status, label }: {
-  status: string;
-  label?: string;
-}) {
+export function StatusBadge({ status, label }: { status: string; label?: string }) {
   const colors: Record<string, string> = {
     active: "var(--success)",
     completed: "var(--success)",

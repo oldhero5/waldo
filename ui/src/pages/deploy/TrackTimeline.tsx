@@ -2,7 +2,14 @@ import { useMemo } from "react";
 import type { FrameResultOut } from "../../api";
 import { trackColor } from "./shared";
 
-export function TrackTimeline({ frames, currentFrame, confThreshold, classFilter, onSeek, flaggedSet }: {
+export function TrackTimeline({
+  frames,
+  currentFrame,
+  confThreshold,
+  classFilter,
+  onSeek,
+  flaggedSet,
+}: {
   frames: FrameResultOut[];
   currentFrame: number;
   confThreshold: number;
@@ -17,7 +24,11 @@ export function TrackTimeline({ frames, currentFrame, confThreshold, classFilter
         if (d.track_id != null && d.confidence >= confThreshold && classFilter.has(d.class_name)) {
           const key = `${d.track_id}-${d.class_name}`;
           if (!trackKeys.has(key)) {
-            trackKeys.set(key, { trackId: d.track_id, color: trackColor(d.track_id), className: d.class_name });
+            trackKeys.set(key, {
+              trackId: d.track_id,
+              color: trackColor(d.track_id),
+              className: d.class_name,
+            });
           }
         }
       }
@@ -28,7 +39,10 @@ export function TrackTimeline({ frames, currentFrame, confThreshold, classFilter
       for (const d of fr.detections) {
         if (d.track_id != null && d.confidence >= confThreshold && classFilter.has(d.class_name)) {
           const key = `${d.track_id}-${d.class_name}`;
-          if (!seen.has(key)) { seen.add(key); trackAppearances.set(key, (trackAppearances.get(key) || 0) + 1); }
+          if (!seen.has(key)) {
+            seen.add(key);
+            trackAppearances.set(key, (trackAppearances.get(key) || 0) + 1);
+          }
         }
       }
     }
@@ -47,8 +61,16 @@ export function TrackTimeline({ frames, currentFrame, confThreshold, classFilter
 
   return (
     <div className="mt-1 mb-2">
-      <p className="text-[10px] mb-0.5" style={{ color: "var(--text-muted)" }}>{sortedTracks.length} tracks</p>
-      <div className="relative rounded cursor-pointer" style={{ height: h, overflowY: innerH > maxH ? "auto" : "hidden", backgroundColor: "var(--bg-inset)" }}
+      <p className="text-[10px] mb-0.5" style={{ color: "var(--text-muted)" }}>
+        {sortedTracks.length} tracks
+      </p>
+      <div
+        className="relative rounded cursor-pointer"
+        style={{
+          height: h,
+          overflowY: innerH > maxH ? "auto" : "hidden",
+          backgroundColor: "var(--bg-inset)",
+        }}
         onClick={(e) => {
           const rect = e.currentTarget.getBoundingClientRect();
           const frac = (e.clientX - rect.left) / rect.width;
@@ -58,7 +80,10 @@ export function TrackTimeline({ frames, currentFrame, confThreshold, classFilter
         <div style={{ height: innerH, position: "relative" }}>
           <div
             className="absolute top-0 w-px bg-accent text-on-accent z-10"
-            style={{ left: `${(currentFrame / Math.max(1, totalFrames - 1)) * 100}%`, height: innerH }}
+            style={{
+              left: `${(currentFrame / Math.max(1, totalFrames - 1)) * 100}%`,
+              height: innerH,
+            }}
           />
           {sortedTracks.map(([tkey, info], row) => {
             const segments: { start: number; end: number; hasFlagged: boolean }[] = [];
@@ -66,23 +91,40 @@ export function TrackTimeline({ frames, currentFrame, confThreshold, classFilter
             let gapCount = 0;
             for (let i = 0; i < totalFrames; i++) {
               const det = frames[i].detections.find(
-                (d) => d.track_id === info.trackId && d.class_name === info.className && d.confidence >= confThreshold && classFilter.has(d.class_name)
+                (d) =>
+                  d.track_id === info.trackId &&
+                  d.class_name === info.className &&
+                  d.confidence >= confThreshold &&
+                  classFilter.has(d.class_name),
               );
               if (det) {
                 const key = `${i}-${info.trackId}`;
-                if (!seg) { seg = { start: i, end: i, hasFlagged: flaggedSet.has(key) }; }
-                else { seg.end = i; if (flaggedSet.has(key)) seg.hasFlagged = true; }
+                if (!seg) {
+                  seg = { start: i, end: i, hasFlagged: flaggedSet.has(key) };
+                } else {
+                  seg.end = i;
+                  if (flaggedSet.has(key)) seg.hasFlagged = true;
+                }
                 gapCount = 0;
               } else {
                 gapCount++;
-                if (seg && gapCount > 2) { segments.push(seg); seg = null; gapCount = 0; }
-                else if (seg) { seg.end = i; }
+                if (seg && gapCount > 2) {
+                  segments.push(seg);
+                  seg = null;
+                  gapCount = 0;
+                } else if (seg) {
+                  seg.end = i;
+                }
               }
             }
             if (seg) segments.push(seg);
 
             return (
-              <div key={tkey} className="absolute left-0 right-0" style={{ top: row * rowH + 2, height: rowH }}>
+              <div
+                key={tkey}
+                className="absolute left-0 right-0"
+                style={{ top: row * rowH + 2, height: rowH }}
+              >
                 {segments.map((s, si) => (
                   <div
                     key={si}

@@ -14,13 +14,7 @@ interface Props {
   onAddPoint: (point: Point) => void;
 }
 
-export default function ClickCanvas({
-  imageUrl,
-  width,
-  height,
-  points,
-  onAddPoint,
-}: Props) {
+export default function ClickCanvas({ imageUrl, width, height, points, onAddPoint }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   const handleClick = (e: React.MouseEvent) => {
@@ -42,7 +36,13 @@ export default function ClickCanvas({
         handleClick(e);
       }}
     >
-      <img src={imageUrl} alt="Frame for point annotations" width={width} height={height} className="block" />
+      <img
+        src={imageUrl}
+        alt="Frame for point annotations"
+        width={width}
+        height={height}
+        className="block"
+      />
       <svg
         className="absolute inset-0"
         width={width}

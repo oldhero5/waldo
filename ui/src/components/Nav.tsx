@@ -1,12 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation } from "react-router-dom";
-import {
-  Upload,
-  Database,
-  FlaskConical,
-  Rocket,
-  Loader2,
-} from "lucide-react";
+import { Upload, Database, FlaskConical, Rocket, Loader2 } from "lucide-react";
 import { listTrainingRuns } from "../api";
 
 const links = [
@@ -26,7 +20,7 @@ export default function Nav() {
   });
 
   const activeRun = runs?.find((r) =>
-    ["queued", "preparing", "training", "validating"].includes(r.status)
+    ["queued", "preparing", "training", "validating"].includes(r.status),
   );
 
   return (

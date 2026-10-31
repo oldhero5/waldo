@@ -18,7 +18,9 @@ export function hslToHex(hsl: string): string {
   const f = (n: number) => {
     const k = (n + h * 12) % 12;
     const c = l - a2 * Math.max(-1, Math.min(k - 3, 9 - k, 1));
-    return Math.round(c * 255).toString(16).padStart(2, "0");
+    return Math.round(c * 255)
+      .toString(16)
+      .padStart(2, "0");
   };
   return `#${f(0)}${f(8)}${f(4)}`;
 }

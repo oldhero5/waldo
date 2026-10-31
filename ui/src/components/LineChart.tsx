@@ -120,7 +120,9 @@ export default function LineChart({
     }
   };
 
-  const handleMouseUp = () => { dragging.current = false; };
+  const handleMouseUp = () => {
+    dragging.current = false;
+  };
 
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault();
@@ -143,7 +145,10 @@ export default function LineChart({
         viewBox={`0 0 ${w} ${h}`}
         className="w-full"
         style={{ height, cursor: zoom > 1 ? "grab" : undefined }}
-        onMouseLeave={() => { setHoveredIdx(null); handleMouseUp(); }}
+        onMouseLeave={() => {
+          setHoveredIdx(null);
+          handleMouseUp();
+        }}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
@@ -160,12 +165,20 @@ export default function LineChart({
         {yTicks.map((tick, i) => (
           <g key={i}>
             <line
-              x1={padL} y1={yScale(tick)} x2={w - padR} y2={yScale(tick)}
-              stroke="var(--border-subtle)" strokeWidth={0.5}
+              x1={padL}
+              y1={yScale(tick)}
+              x2={w - padR}
+              y2={yScale(tick)}
+              stroke="var(--border-subtle)"
+              strokeWidth={0.5}
             />
             <text
-              x={padL - 4} y={yScale(tick) + 3}
-              textAnchor="end" fontSize={9} fill="var(--text-muted)" fontFamily="monospace"
+              x={padL - 4}
+              y={yScale(tick) + 3}
+              textAnchor="end"
+              fontSize={9}
+              fill="var(--text-muted)"
+              fontFamily="monospace"
             >
               {tick < 1 ? tick.toFixed(3) : tick.toFixed(1)}
             </text>
@@ -173,16 +186,25 @@ export default function LineChart({
         ))}
 
         {/* X axis labels */}
-        <text x={padL} y={h - 4} fontSize={9} fill="var(--text-muted)">{firstEpoch}</text>
-        <text x={w - padR} y={h - 4} fontSize={9} fill="var(--text-muted)" textAnchor="end">{lastEpoch}</text>
+        <text x={padL} y={h - 4} fontSize={9} fill="var(--text-muted)">
+          {firstEpoch}
+        </text>
+        <text x={w - padR} y={h - 4} fontSize={9} fill="var(--text-muted)" textAnchor="end">
+          {lastEpoch}
+        </text>
 
         {/* Best epoch marker */}
         {bestEpoch != null && bestEpoch >= 0 && bestEpoch < data.length && (
           <g clipPath={`url(#${clipId})`}>
             <line
-              x1={xScale(bestEpoch)} y1={padT}
-              x2={xScale(bestEpoch)} y2={padT + plotH}
-              stroke="var(--success)" strokeWidth={1.5} strokeDasharray="4,3" opacity={0.6}
+              x1={xScale(bestEpoch)}
+              y1={padT}
+              x2={xScale(bestEpoch)}
+              y2={padT + plotH}
+              stroke="var(--success)"
+              strokeWidth={1.5}
+              strokeDasharray="4,3"
+              opacity={0.6}
             />
             <circle cx={xScale(bestEpoch)} cy={padT + 6} r={3} fill="var(--success)" />
           </g>
@@ -222,9 +244,13 @@ export default function LineChart({
         {activeIdx != null && (
           <g clipPath={`url(#${clipId})`}>
             <line
-              x1={xScale(activeIdx)} y1={padT}
-              x2={xScale(activeIdx)} y2={padT + plotH}
-              stroke="var(--border-default)" strokeWidth={1} strokeDasharray="3,3"
+              x1={xScale(activeIdx)}
+              y1={padT}
+              x2={xScale(activeIdx)}
+              y2={padT + plotH}
+              stroke="var(--border-default)"
+              strokeWidth={1}
+              strokeDasharray="3,3"
             />
             {visibleSeries.map((s) => {
               const v = data[activeIdx]?.[s.key];
@@ -232,8 +258,12 @@ export default function LineChart({
               return (
                 <circle
                   key={s.key}
-                  cx={xScale(activeIdx)} cy={yScale(v)}
-                  r={4} fill={s.color} stroke="white" strokeWidth={2}
+                  cx={xScale(activeIdx)}
+                  cy={yScale(v)}
+                  r={4}
+                  fill={s.color}
+                  stroke="white"
+                  strokeWidth={2}
                 />
               );
             })}
@@ -255,18 +285,28 @@ export default function LineChart({
             fontSize: 11,
           }}
         >
-          <p className="font-medium mb-1" style={{ color: "var(--text-primary)", fontFamily: "var(--font-mono)" }}>
+          <p
+            className="font-medium mb-1"
+            style={{ color: "var(--text-primary)", fontFamily: "var(--font-mono)" }}
+          >
             Epoch {data[activeIdx]?.[xKey]}
-            {pinnedIdx === activeIdx && <span style={{ color: "var(--text-muted)", marginLeft: 4 }}>pinned</span>}
+            {pinnedIdx === activeIdx && (
+              <span style={{ color: "var(--text-muted)", marginLeft: 4 }}>pinned</span>
+            )}
           </p>
           {visibleSeries.map((s) => {
             const v = data[activeIdx]?.[s.key];
             if (v == null) return null;
             return (
               <p key={s.key} className="flex items-center gap-1.5">
-                <span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: s.color }} />
+                <span
+                  className="inline-block w-2 h-2 rounded-full"
+                  style={{ backgroundColor: s.color }}
+                />
                 <span style={{ color: "var(--text-muted)" }}>{s.label}:</span>
-                <span style={{ fontFamily: "var(--font-mono)", color: "var(--text-primary)" }}>{v.toFixed(4)}</span>
+                <span style={{ fontFamily: "var(--font-mono)", color: "var(--text-primary)" }}>
+                  {v.toFixed(4)}
+                </span>
               </p>
             );
           })}
@@ -282,16 +322,27 @@ export default function LineChart({
               key={s.key}
               onClick={() => toggleSeries(s.key)}
               className="flex items-center gap-1"
-              style={{ fontSize: 10, color: hidden ? "var(--text-muted)" : "var(--text-secondary)", opacity: hidden ? 0.4 : 1, fontFamily: "var(--font-mono)" }}
+              style={{
+                fontSize: 10,
+                color: hidden ? "var(--text-muted)" : "var(--text-secondary)",
+                opacity: hidden ? 0.4 : 1,
+                fontFamily: "var(--font-mono)",
+              }}
             >
-              <span className="inline-block w-3 h-0.5 rounded" style={{ backgroundColor: hidden ? "var(--text-muted)" : s.color }} />
+              <span
+                className="inline-block w-3 h-0.5 rounded"
+                style={{ backgroundColor: hidden ? "var(--text-muted)" : s.color }}
+              />
               {s.label}
             </button>
           );
         })}
         {zoom > 1 && (
           <button
-            onClick={() => { setZoom(1); setPanX(0); }}
+            onClick={() => {
+              setZoom(1);
+              setPanX(0);
+            }}
             style={{ fontSize: 10, color: "var(--accent)", fontFamily: "var(--font-mono)" }}
           >
             Reset zoom

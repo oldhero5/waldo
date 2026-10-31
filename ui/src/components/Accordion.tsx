@@ -98,9 +98,7 @@ export default function Accordion({
         }}
       >
         <div style={{ overflow: "hidden" }}>
-          <div style={{ paddingTop: 4, paddingBottom: open ? 8 : 0 }}>
-            {children}
-          </div>
+          <div style={{ paddingTop: 4, paddingBottom: open ? 8 : 0 }}>{children}</div>
         </div>
       </div>
     </div>

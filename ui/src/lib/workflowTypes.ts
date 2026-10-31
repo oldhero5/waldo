@@ -1,7 +1,24 @@
 import type { Node } from "@xyflow/react";
-export type ConfigValue = string | number | boolean | null | ConfigValue[] | { [key: string]: ConfigValue };
-export interface BlockPort { name: string; type: string; description?: string; required?: boolean }
-export interface ConfigField { type: string; label?: string; default?: ConfigValue; min?: number; max?: number }
+export type ConfigValue =
+  | string
+  | number
+  | boolean
+  | null
+  | ConfigValue[]
+  | { [key: string]: ConfigValue };
+export interface BlockPort {
+  name: string;
+  type: string;
+  description?: string;
+  required?: boolean;
+}
+export interface ConfigField {
+  type: string;
+  label?: string;
+  default?: ConfigValue;
+  min?: number;
+  max?: number;
+}
 export interface BlockSchema {
   name: string;
   display_name: string;
@@ -23,8 +40,20 @@ export interface BlockNodeData extends Record<string, unknown> {
 }
 export type WorkflowNode = Node<BlockNodeData, "block">;
 export interface WorkflowGraph {
-  nodes: { id: string; type: string; config: Record<string, ConfigValue>; position?: { x: number; y: number } }[];
-  edges: { source: string; target: string; sourceHandle?: string; targetHandle?: string; source_port?: string; target_port?: string }[];
+  nodes: {
+    id: string;
+    type: string;
+    config: Record<string, ConfigValue>;
+    position?: { x: number; y: number };
+  }[];
+  edges: {
+    source: string;
+    target: string;
+    sourceHandle?: string;
+    targetHandle?: string;
+    source_port?: string;
+    target_port?: string;
+  }[];
 }
 export interface WorkflowRunResult {
   result?: unknown;

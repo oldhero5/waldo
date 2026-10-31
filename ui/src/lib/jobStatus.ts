@@ -1,6 +1,7 @@
 import type { JobStatus } from "../api";
 
-export const isTerminalJobStatus = (status: string) => ["completed", "partial", "failed", "cancelled"].includes(status);
+export const isTerminalJobStatus = (status: string) =>
+  ["completed", "partial", "failed", "cancelled"].includes(status);
 
 export function jobCompletionProgress(job: JobStatus): number | null {
   if (job.status === "completed") return 1;
@@ -11,5 +12,5 @@ export function jobCompletionProgress(job: JobStatus): number | null {
   return Number.isFinite(value) && value >= 0 && value < 1 ? value : null;
 }
 
-
-export const hasTrainingArtifact = (job: JobStatus) => job.status === "completed" && !!job.result_url;
+export const hasTrainingArtifact = (job: JobStatus) =>
+  job.status === "completed" && !!job.result_url;
