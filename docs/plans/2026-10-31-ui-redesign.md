@@ -210,7 +210,7 @@ show a breadcrumb, for example "Scans / truck — Site A / Review".
 | --- | --- | --- | --- |
 | `/` | Home | Dashboard | 3 (copy), 6 (content) |
 | `/footage` | Footage library, all videos grouped by collection, `?collection=` filter | `/upload`, `/collections` | 4 |
-| `/label/:videoId`, `/label/collection/:projectId` | Scan setup | Same routes, new copy and layout | 5 (landing), 8 (layout) |
+| `/label/:videoId`, `/label/collection/:projectId` | Scan setup | Same routes, new copy and layout | 5 ("See results" link), 8 (layout) |
 | `/results/:jobId` | Results view (new) | — | 5 |
 | `/review/:jobId` | Review studio | Same route | 7 |
 | `/scans` | Scan list (today's Datasets page, moved, with new copy) | `/datasets`, `/jobs` | 8 |
@@ -271,17 +271,20 @@ flowchart LR
 
 - `/footage` lists all videos under collection headings. Most users have one or
   two collections, so a flat page saves a click. `?collection=` filters to one.
-- Each video row shows file name, duration when known, upload date and a scan
-  chip:
-  - "Not scanned" when no scan includes the video.
-  - "Scanning · truck" while the newest scan that includes it runs.
-  - "Scanned · truck" or "2 scans" when scans finished. The chip names what was
-    searched, so it never reads as "fully examined".
-  - "Failed in last scan" when this video's entry in the newest scan failed.
-  - "Not examined in last scan" when the newest scan for its collection has no
-    entry for it, for example because the video was added after that scan.
-- A scan "includes" a video when it is a single-video scan for that video, or a
-  collection scan for its collection, or a merged run that lists it.
+- Each video row shows file name, duration when known, upload date and one scan
+  chip. A scan "has an entry for" a video when it is a single-video scan for
+  that video, or its per-video coverage or one of its merged runs lists the
+  video. The first rule that applies sets the chip:
+  1. "Scanning · truck" while a scan for this video, or a collection-scope scan
+     for its collection, runs.
+  2. "Not examined in last scan" when the newest finished collection-scope scan
+     for its collection has no entry for it, for example because the video was
+     added after that scan.
+  3. "Failed in last scan" when this video's entry in the newest finished scan
+     that has an entry for it failed.
+  4. "Scanned · truck" or "2 scans" when finished scans have entries for it.
+     The chip names what was searched, so it never reads as "fully examined".
+  5. "Not scanned" otherwise.
 - Row actions: "Scan" (primary when not scanned), "Results" (newest scan),
   "Try in Playground".
 - Standalone images show as one "Images (n)" row, not as a video named
@@ -333,9 +336,12 @@ flowchart LR
 - A short note says that two words for the same object can produce duplicate
   findings, because each alias runs separately and the results are not
   de-duplicated (`labeler/text_labeler.py:168-174,199-208`).
-- A link "Try more options in Playground" opens Playground. Playground's
-  "Unique tracked objects" stat (`ui/src/pages/PlaygroundPage.tsx:1348-1349`)
-  becomes "Local tracks" (wave 8).
+- A link "Try more options in Playground" opens Playground. In wave 8,
+  Playground's "Unique tracked objects" stat
+  (`ui/src/pages/PlaygroundPage.tsx:1348-1349`) becomes "Local tracks", its
+  "Detected objects (N unique)" list heading (`ui/src/pages/PlaygroundPage.tsx:724`)
+  becomes "Local tracks (N)", and `docs-site/docs/ui/playground.md:36,41` is
+  updated to match.
 - "Click on examples" explains why it is unavailable when a video has no saved
   frames, instead of showing a blank screen.
 - After the user starts a scan, the page keeps its in-page status block, which
@@ -350,9 +356,12 @@ flowchart LR
 
 The answer for one scan, and the analyst's main place to judge findings.
 
-**Header.** Scan display name, object words, scope (one video or a
-collection, with "N of M videos in this collection examined"), state badge, and
-one coverage sentence per run, for example:
+**Header.** Scan display name, object words, scope, state badge, and one
+coverage sentence per run. The scope reads "1 video", "1 video, plus N added by
+automatic scans", or "N of M videos in this collection examined". M counts the
+collection's videos without the standalone-images placeholder
+(`app/api/upload.py:336-343`), which the picker lists as "Images (n)". A failed
+video does not count as examined. Coverage sentences, for example:
 
 - "truck: examined one frame every 1 s, minimum score 0.35, 0:00–10:00. Frames
   between were not examined."
@@ -372,12 +381,19 @@ one coverage sentence per run, for example:
 | Source video unavailable or not playable | Saved finding frames instead of the player, with the reason (for example, the browser cannot play the format). |
 | Child run already merged | Redirect to the master scan named in `processing_summary.merged_into`. |
 
-**Video picker** for a collection scan. It lists every video in the collection
-from `GET /projects/{project_id}/videos`, not only the videos the scan
-recorded. Each entry shows its own state. A video that is in neither the scan
-nor its merged runs shows "Not examined by this scan", because auto-scans run
-only after a completed scan and merge only when they complete
-(`app/api/upload.py:77-82`, `lib/tasks.py:86`).
+**Video picker** when the scan covers more than one video. A single-video scan
+can cover more: it stores its collection (`app/api/label.py:97`), and an
+auto-scan merges into the newest completed scan in the collection of any scope
+(`app/api/upload.py:77-82`, `lib/tasks.py:158-162`).
+
+- For a collection scan, the picker lists every video in the collection from
+  `GET /projects/{project_id}/videos`, not only the videos the scan recorded.
+- For a single-video scan with merged runs, it lists the scan's video and each
+  merged video.
+- Each entry shows its own state. A collection video that is in neither the scan
+  nor its merged runs shows "Not examined by this scan", because auto-scans run
+  only after a completed scan and merge only when they complete
+  (`lib/tasks.py:86`).
 
 **Player.** The existing `SourceVideoPlayer`, with renewable source URLs. Wave 5
 adds optional props for a time callback and an external seek. Review's use of
@@ -440,16 +456,18 @@ the findings.
 
 - The browser fetches every page of findings with `offset` and `limit`
   (`app/api/review.py:169-176`) before it writes the file. If it cannot, the file
-  name and a header row say the file is partial.
+  name ends in `-partial` and the page shows a warning.
 - Totals come from `GET /jobs/{job_id}/stats`.
 - One row per finding, or one row per span (user choice), and a "Accepted
   only" option.
 - Columns: video file name, class, start and end in seconds and `m:ss.s`, time
   quality, score, review state, scan ID, run, minimum score and sampling
   interval for that run.
-- A header block states the units and origin: times are seconds from the start
-  of the source video as saved in `timestamp_s`; scores are model scores from 0
-  to 1; an empty cell means unknown, never zero.
+- The first line is the column-name row, so spreadsheets and `read_csv` open
+  the file directly. Column names carry the units, for example `start_s`,
+  `end_s`, `score_0_to_1` and `sample_interval_s`. Times are seconds from the
+  start of the source video as saved in `timestamp_s`. An empty cell means
+  unknown, never zero. The export panel and the docs state these rules.
 - Text cells that start with `=`, `+`, `-`, `@`, a tab or a carriage return are
   escaped. Number cells are not.
 
@@ -492,8 +510,10 @@ Keep the page, its inspector and its source playback. Add:
 - Bulk actions ask for confirmation in a dialog and offer Undo. The wave 7 plan
   decides whether Undo for bulk actions needs a bulk endpoint.
 - A step bar: Scan → Review → Training data → Train. A blocked step says why:
-  "Training data needs a new export because findings changed after the last
-  export." The fix is a button in the bar, including export. "Back to results"
+  "Export the current findings as training data before training." The UI cannot
+  tell "never exported" from "changed since the last export" (`JobStatus` has
+  no export history, `app/api/status.py:28-47`), so the copy claims neither. The
+  fix is a button in the bar, including export. "Back to results"
   is the primary action. The step bar replaces the sticky Train Model bar where
   the pinned train-link rules allow (`ui/e2e/job-coverage.spec.ts:96-115,190-211`).
 
@@ -504,7 +524,7 @@ to Scans and Training for history. There is no separate activity page.
 
 | Item | Source | States and copy |
 | --- | --- | --- |
-| Scans, including automatic and add-class runs | `GET /status` with an active-only filter (see polling) | "Waiting for a worker · 0:42", "Preparing", "Retrying: <last error>" (no attempt number is recorded, `lib/tasks.py:107-127`), "Scanning · 2 videos finished", "Finished", "Finished with gaps: 1 video failed", "Failed: <reason>" |
+| Scans, including automatic and add-class runs | `GET /status` with an active-only filter, plus one `GET /status/{job_id}` when an item leaves the active set (see polling) | "Waiting for a worker · 0:42", "Preparing", "Retrying: <last error>" (no attempt number is recorded, `lib/tasks.py:107-127`), "Scanning · 2 videos finished", "Finished", "Finished with gaps: 1 video failed", "Failed: <reason>" |
 | Training runs | Existing training list | Current states from the training API |
 | Model comparison | The existing comparison session | Current states |
 | Uploads in this browser tab | The add-footage drawer | Bytes and percent, "Saving on server", Cancel |
@@ -513,6 +533,11 @@ Rules:
 
 - Each finished item links to its next step: Results, the training run or the
   comparison.
+- The active-only filter stops returning a scan when it finishes. When a scan
+  the tray has shown leaves the active set, the tray calls
+  `GET /status/{job_id}` once and keeps the finished item, with its final state,
+  until the user dismisses it. Finished items live in memory for the current
+  tab only; after a reload, Home and Scans show recent results.
 - Elapsed times count from `created_at`. No start-time column exists, so the
   copy says "since the scan was requested", not "running for". Jobs store naive
   UTC times (`lib/db.py:164`), so the wave 4 field carries an explicit UTC
@@ -561,7 +586,9 @@ Rules:
   owner's approval in wave 9.
 - Deploy opens on Test. Blue-green tests are called "Traffic split", with "Live
   model" and "Candidate".
-- The video test summary "N tracked objects" (`ui/src/pages/deploy/VideoDemo.tsx:455`)
+- The video test summary "N tracked objects"
+  (`ui/src/pages/deploy/VideoDemo.tsx:455-457`) becomes "N local tracks", and
+  the track timeline heading "N tracks" (`ui/src/pages/deploy/TrackTimeline.tsx:50`)
   becomes "N local tracks".
 - The Endpoints copy no longer says an API key is required while the interface
   cannot create one (`ui/src/pages/deploy/EndpointsTab.tsx:240-247`).
@@ -641,9 +668,10 @@ Do not build a primitive with no consumer.
 | --- | --- |
 | Toast with Undo, and a `role="status"` `aria-live="polite"` region | 2 |
 | Button, IconButton (requires an accessible name), PageHeader (extends `PageLayout`, adds `document.title`), StatusBadge with one `statusMeta(status)` that covers partial, retrying and cancelled; Dialog on native `<dialog>` (the small-screen drawer); Menu and Popover (the account menu) | 3 |
-| Field (label, hint, error) around Input, Select, Textarea, NumberInput and Slider with a value readout; ConfirmDialog; ProgressBar with `role="progressbar"`; QueryState with Skeleton, EmptyState and ErrorState with Retry | 4 |
+| Field (label, hint, error) around Input and Select; ProgressBar with `role="progressbar"`; QueryState with Skeleton, EmptyState and ErrorState with Retry | 4 |
 | Timeline | 5 |
-| Tabs and SegmentedControl (buttons with `aria-pressed` where tests pin buttons) | as needed |
+| ConfirmDialog (bulk confirms); Slider with a value readout ("Reject below") | 7 |
+| Tabs and SegmentedControl (buttons with `aria-pressed` where tests pin buttons); NumberInput; Textarea | as needed |
 
 Each native dialog is replaced in the wave that rebuilds its page. The global
 `!important` overrides stay until wave 10, which scopes them to the legacy
@@ -661,7 +689,8 @@ components that still need them (for example `AnnotationCanvas`).
 - Minimum widths: the shell, lists, Home, Footage and Settings work at 375 px.
   Below 768 px, Results stacks player, timeline and spans. The Review inspector
   keeps working at 600 px and wider, as
-  `ui/e2e/source-video-inspection.spec.ts:365-388` pins.
+  `ui/e2e/source-video-inspection.spec.ts:365-388` pins. Below 600 px it says
+  that it needs a wider window.
 
 ## Test contracts
 
@@ -714,9 +743,10 @@ strong checks:
 | 6 | Strict exact text of scan names on Home (`ui/e2e/ui-cleanup.spec.ts:49,95,105,110,112-113`) | None: Home shows each scan name once |
 | 7 | Review keyboard guard skips buttons (`ui/src/components/AnnotationCanvas.tsx:403`, `ui/src/pages/ReviewPage.tsx:402`) | Shortcuts keep working after a mouse click on a review button; source-video tests kept |
 | 7 | Sticky "Train Model" link and its review text "2 accepted, 1 remaining to review", with no "All reviewed!" (`ui/e2e/job-coverage.spec.ts:96-115,190-211`; `ui/e2e/source-video-inspection.spec.ts:562-563`) | Step bar; the review text and the train-link rules for partial and failed evidence kept |
-| 7 | "Export dataset before training." from `ui/src/components/JobCoverage.tsx:40`, shown on Label and Review (`ui/e2e/job-coverage.spec.ts:194`) | "Training data needs a new export because findings changed after the last export." |
+| 7 | "Export dataset before training." from `ui/src/components/JobCoverage.tsx:40`, shown on Label, Review and Datasets (`ui/e2e/job-coverage.spec.ts:194`) | "Export the current findings as training data before training." |
 | 7 | Review filter button "Pending1" (`ui/e2e/source-video-inspection.spec.ts:276`) | "Not reviewed1" |
-| 8 | Datasets and Label labels: "Duplicate Dataset", "Manage Classes", "View Annotations", "Train New Model", "Find Objects", "Review available evidence", "Test Prompts", the "Output format" text used to locate its select, and "10 sampled frames · 10 processed" (`ui/e2e/job-coverage.spec.ts:48-109,184,208-211,257-261,318`) | New terms, listed per label in the wave 8 plan |
+| 7 | "Accept All" applies on click (`ui/e2e/source-video-inspection.spec.ts:278-279`) | The test confirms the new dialog first; the request assertion is kept |
+| 8 | Datasets and Label labels: "Duplicate Dataset", "Manage Classes", "View Annotations", "Train New Model", "Find Objects", "Review available evidence", "Test Prompts", the placeholder `e.g. "car, sedan, SUV"`, the "Output format" text used to locate its select, and "10 sampled frames · 10 processed" (`ui/e2e/job-coverage.spec.ts:48-109,183-184,208-211,257-261,318-319`) | New terms, listed per label in the wave 8 plan |
 | 9 | Video test summary "1 tracked objects" (`ui/e2e/video-overlay.spec.ts:429`) | "1 local track" |
 | 10 | Workflow editor `prompt()` and `dialog.accept` step (`ui/e2e/ui-cleanup.spec.ts:498`) | Dialog primitive; test step updated |
 
@@ -727,7 +757,8 @@ renames them.
 
 ## Backend changes
 
-Additive response fields and query filters only. No schema migration. Each
+Additive response fields and query filters only, plus one format fix to
+`VideoOut.created_at`. No schema migration. Each
 change ships with pytest coverage and docs in the wave that first needs it. A
 wave may add another additive field or filter when its screens need data that no
 endpoint returns; it lists the change in its plan and PR.
@@ -735,6 +766,7 @@ endpoint returns; it lists the change in its plan and PR.
 | Wave | Change | Reason |
 | --- | --- | --- |
 | 4 | `JobStatus.project_id`, `JobStatus.created_at` (ISO 8601 with an explicit UTC offset, tested with a non-UTC browser time zone), `JobStatus.class_prompts` | Scan chips per video; upload and elapsed times; coverage per object lane. Collection scans return `video_id` as the string "None" today (`app/api/status.py:65`). |
+| 4 | `VideoOut.created_at` gains an explicit UTC offset; it stays ISO 8601. Today it is a naive `isoformat()` of a UTC time (`app/api/upload.py:442`, `lib/db.py:38`). The wave 4 plan checks other readers first. | Footage upload dates and the duplicate notice show the right day outside UTC |
 | 4 | `GET /status?project_id=` | Scan state for one collection without the 500-job list |
 | 4 | `UploadResponse.duplicate`, `UploadResponse.auto_label_job_id` | Honest upload notices |
 | 5 (optional) | A total video count for running scans | "1 of 5 videos finished" instead of "1 video finished" |
@@ -755,11 +787,11 @@ Screenshots use synthetic data only.
 | 2 | `feat/ui-app-safety` | Toast and live region; review failures roll back with a toast; error boundary; not-found page; the deep link survives sign-in only after an unauthenticated redirect, never after sign-out; one 401 refresh through `/auth/refresh`. | S |
 | 3 | `feat/ui-shell` | Tokens in `@theme`; two-mode responsive sidebar with the new groups and names; matching page headings; breadcrumbs and active parents; account menu; assistant layering. | M |
 | 4 | `feat/ui-footage` | Backend fields and filter; `/footage` with scan chips; add-footage drawer with suggestions, auto-scan warning, progress, Cancel, notices and next step; redirects from `/upload` and `/collections`. | M |
-| 5 | `feat/ui-results` | `/results/:jobId` with all states, every collection video, coverage per object lane, spans, synced player, accept and reject of one finding with Undo, URL state and complete CSV. "See results" links from Scan setup, Footage and Datasets. | L |
-| 6 | `feat/ui-activity-home` | Activity tray (scans, training, comparison, uploads) with an active-only filter; new Home next-step card. | M |
+| 5 | `feat/ui-results` | `/results/:jobId` with all states, every video the scan covers, coverage per object lane, spans, synced player, accept and reject of one finding with Undo, URL state and complete CSV. "See results" links from Scan setup, Footage and Datasets. | L |
+| 6 | `feat/ui-activity-home` | Activity tray (scans, training, comparison, uploads) with an active-only filter and finished items kept for the tab; new Home next-step card. | M |
 | 7 | `feat/ui-review` | Undo, focus rules, 1–9 classes, help sheet, URL filters and selection, "Not reviewed" filter, modifier guard, slider-based reject, step bar, bulk confirms with Undo. Results gains "Accept all in span" and Enter to open the Review inspector. | L |
-| 8 | `feat/ui-scan-setup` | Scan setup layout and copy (preview source, sampling control, estimate, For training section, alias note, videos-finished progress); Playground "Local tracks" label; `/scans` with new copy and videos-finished progress; redirects from `/datasets` and `/jobs`; dialogs on these pages replaced. | L |
-| 9 | `feat/ui-training-deploy` | `/training`; one "Make live" (owner approves the alias change); Deploy opens on Test; Traffic split; "local tracks" label; Endpoints copy; Train restyle; dialogs replaced. | L |
+| 8 | `feat/ui-scan-setup` | Scan setup layout and copy (preview source, sampling control, estimate, For training section, alias note, videos-finished progress); Playground "Local tracks" labels and docs page; `/scans` with new copy and videos-finished progress; redirects from `/datasets` and `/jobs`; dialogs on these pages replaced. | L |
+| 9 | `feat/ui-training-deploy` | `/training`; one "Make live" (owner approves the alias change); Deploy opens on Test; Traffic split; "local tracks" labels; Endpoints copy; Train restyle; dialogs replaced. | L |
 | 10 | `feat/ui-settings-cleanup` | Settings tabs in the URL; unhandled buttons disabled with reasons; Queue and Workflow dialogs replaced; `!important` overrides scoped to the legacy components; docs screenshots and recordings regenerated with synthetic data. | M |
 
 Order and dependencies:
@@ -814,7 +846,8 @@ These are design calls, reviewed by the UX and engineering buddies. The owner
 can overturn any of them when reading this document.
 
 1. A new `/results/:jobId` route holds the results view, not a tab inside
-   Review. The analyst lands on results first. Both buddies agreed.
+   Review. Scan setup keeps its status block and links to it with "See
+   results"; Home and Footage link to it too. Both buddies agreed.
 2. Results allows accept and reject of the selected finding, with Undo (wave
    5). "Accept all in span" arrives in wave 7 with bulk Undo. Class changes and
    editing stay in Review. The UX buddy asked for this; the engineering buddy
@@ -835,7 +868,10 @@ can overturn any of them when reading this document.
 8. Playground stays a separate tool, linked from Footage and Scan setup. Its
    promotion behavior does not change.
 9. The activity tray uses server data and in-tab uploads only. There is no
-   client task registry, no preview items and no separate activity page.
+   stored client task registry, no preview items and no separate activity page.
+   Finished scans come from one status lookup when a scan leaves the active set
+   and stay in memory for the tab. The independent reviewer offered this or a
+   "finished in the last N minutes" filter; this one needs no backend change.
 10. The sidebar has two modes (full rail and drawer), not three.
 11. The Scans list is today's Datasets page with new copy, not a rebuild.
 12. Each primitive is built in the wave that first uses it, and each native
