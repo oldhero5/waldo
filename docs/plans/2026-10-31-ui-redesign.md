@@ -259,7 +259,8 @@ flowchart LR
   3. Footage was never scanned → "Scan <collection or video>".
   4. No footage → "Add footage".
 - A second, smaller item shows an active training run when one exists.
-- Recent collections and recent scans, newest first.
+- Recent collections and recent scans, newest first. A merged child run counts
+  as part of its master scan, not as its own entry.
 - The stat strip with its "Annotations" total is removed.
 - Loading shows skeletons, not zeros. The new-user card appears only after data
   loads and is empty.
@@ -273,24 +274,27 @@ flowchart LR
 - `/footage` lists all videos under collection headings. Most users have one or
   two collections, so a flat page saves a click. `?collection=` filters to one.
 - Each video row shows file name, duration when known, upload date and one scan
-  chip. A scan "has an entry for" a video when it is a single-video scan for
-  that video, or its per-video coverage or one of its merged runs lists the
-  video. A child run that has merged (`processing_summary.merged_into`) counts
-  as part of its master scan, not as a separate scan. The chip is set this way:
-  1. "Scanning · truck" while a scan for this video, or a collection-scope scan
-     for its collection, runs.
-  2. Otherwise, take the newest finished scan that has an entry for the video
-     or is a collection-scope scan of its collection. Then:
-     - no entry for the video: "Not examined in last scan", for example because
-       the video was added after that scan and nothing has merged for it;
-     - the video's entry failed: "Failed in last scan";
-     - the video's entry finished: "Scanned · truck", or "2 scans" when more
-       than one finished scan has an entry for it. The chip names only the
-       object words searched in this video, so it never reads as "fully
-       examined".
-  3. "Not scanned" when no such scan exists.
-- Row actions: "Scan" (primary when not scanned), "Results" (newest scan),
-  "Try in Playground".
+  chip: "Scanning · truck", "Scanned · truck" (or "2 scans"), "Failed in last
+  scan", "Not examined in last scan", "Coverage unknown · truck" or "Not
+  scanned". The wave 4 plan writes the exact selection rule and tests it with
+  every history in [Scan histories to test](#scan-histories-to-test). These
+  rules always hold:
+  - A scan has ended when its status is `completed`, `partial` or `failed`. A
+    failed scan, or a failed entry for the video, shows "Failed in last scan".
+    A failure never reads as "Not examined" or "Not scanned".
+  - "Not examined" and "Not scanned" appear only when the data shows that no
+    ended scan examined the video. When the data cannot say, the chip says
+    "Coverage unknown": for a legacy scan (no `processing_summary.coverage`),
+    or for evidence held in a nested merge (see [Separate reports](#separate-reports)).
+  - A child run that merged (`processing_summary.merged_into`) counts as part
+    of its master, not as a separate scan.
+  - The chip names only the object words searched in this video, so it never
+    reads as "fully examined".
+  - "Scanning" applies only to videos that a running scan includes. A run reads
+    its video list when it starts (`labeler/text_labeler.py:227-231`), so a
+    video uploaded later is not in it.
+- Row actions: "Scan" (primary when not scanned), "Results" (opens the scan the
+  chip describes), "Try in Playground".
 - Standalone images show as one "Images (n)" row, not as a video named
   `__standalone_images__`.
 - Videos without saved frames show a neutral placeholder with the file name.
@@ -301,10 +305,12 @@ flowchart LR
   - Keyboard-accessible drop zone and file picker.
   - The collection field suggests existing names. Typing an existing name says
     "Adds to the existing collection".
-  - Before upload, if the collection has a finished scan, the drawer warns:
+  - Before upload, if the collection has a job with status `completed` and
+    object words, the drawer warns. It names the newest such job and that job's
+    own class list, exactly as the server picks them (`app/api/upload.py:68-113`):
     "Videos added to Site A are scanned for 'truck' automatically and added to
-    the scan 'truck — Site A'" (`app/api/upload.py:68-113`). Behavior does not
-    change.
+    the scan 'truck — Site A'". A `partial` or `failed` scan starts no
+    auto-scan, so it gives no warning. Behavior does not change.
   - Per-file byte progress with Cancel, using `XMLHttpRequest` upload progress.
     After 100%: "Saving on server". The browser rejects files over the server
     limit of 10 GiB (10 × 1024³ bytes, `app/api/upload.py:190`) before upload.
@@ -362,16 +368,17 @@ The answer for one scan, and the analyst's main place to judge findings.
 
 **Header.** Scan display name, object words, scope, state badge, and one
 coverage sentence per run. The scope reads "1 video", "1 video, plus N from
-later runs", or "N of M videos in this collection examined". A later run
-searched only its own classes, so lanes for the classes it did not search say
-"Not searched". N and M leave out the standalone-images placeholder
-(`app/api/upload.py:336-343`; the list endpoint returns it,
-`app/api/upload.py:432`), which the picker lists as "Images (n)". A failed video
-does not count as examined. Coverage sentences, for example:
+later runs" or "Collection · M videos". Each coverage sentence gives its own
+video count, because a later run searched only its own classes. Counts leave
+out the standalone-images placeholder (`app/api/upload.py:336-343`; the list
+endpoint returns it, `app/api/upload.py:432`), which the picker lists as
+"Images (n)". The placeholder is never counted as a failed video. A failed
+video does not count as examined. Coverage sentences, for example:
 
-- "truck: examined one frame every 1 s, minimum score 0.35, 0:00–10:00. Frames
-  between were not examined."
-- "person (added later): examined one frame every 1 s, minimum score 0.50."
+- "truck: 2 of 3 videos examined, one frame every 1 s, minimum score 0.35,
+  0:00–10:00. Frames between were not examined."
+- "person (added later): 3 of 3 videos examined, one frame every 1 s, minimum
+  score 0.35."
 
 **States.**
 
@@ -382,7 +389,7 @@ does not count as examined. Coverage sentences, for example:
 | Finished, no findings | "Examined N frames; no findings at or above minimum score X." Action: "Try other words or a lower minimum score", which opens Scan setup with the words filled in. |
 | Finished with gaps | Normal view, plus each failed or unfinished video with its reason. Failed videos are never shown as empty. |
 | Failed | The reason and a link back to Scan setup. |
-| Legacy scan without coverage data | "Coverage unknown" in the header and on the strip. |
+| Legacy scan (no `processing_summary.coverage`; a merge into it adds only `merged_runs`, `lib/tasks.py:163-164,207`) | "Coverage unknown" in the header and on the strip for the scan's own videos. |
 | Image-only scan | No timeline or player; spans become a frame list. |
 | Source video unavailable or not playable | Saved finding frames instead of the player, with the reason (for example, the browser cannot play the format). |
 | Child run already merged | Redirect to the master scan named in `processing_summary.merged_into`. |
@@ -390,23 +397,24 @@ does not count as examined. Coverage sentences, for example:
 **Video picker** when the scan covers more than one video. A single-video scan
 can cover more, because it stores its collection (`app/api/label.py:97`):
 
-- An auto-scan merges into the newest completed scan in the collection of any
-  scope (`app/api/upload.py:77-82`, `lib/tasks.py:159-162`). It searches the
-  master's classes (`app/api/upload.py:103-104`).
+- An auto-scan merges into the newest `completed` job in the collection, of any
+  scope (`app/api/upload.py:77-82`, `lib/tasks.py:159-162`). It searches that
+  job's own `text_prompt` and `class_prompts` (`app/api/upload.py:103-104`),
+  not classes that later merges added.
 - "Scan for another object" creates a collection-scope child that searches
-  every video in the collection for the new class only, and merges it into the
-  scan (`app/api/review.py:378-396`, `labeler/text_labeler.py:227-231`).
+  every video in the collection for the new class only
+  (`app/api/review.py:378-396`, `labeler/text_labeler.py:227-231`,
+  `labeler/video_labeler.py:833-834`). It merges into the scan only when it
+  ends `completed` (`lib/tasks.py:86`). A `partial` or `failed` child stays a
+  separate job with `parent_id`; Results for the parent lists it with its
+  state.
 
-The picker entries:
-
-- For a collection scan, the picker lists every video in the collection from
-  `GET /projects/{project_id}/videos`, not only the videos the scan recorded.
-- For a single-video scan with merged runs, it lists the scan's video and each
-  merged video.
-- Each entry shows its own state. A collection video that is in neither the scan
-  nor its merged runs shows "Not examined by this scan", because auto-scans run
-  only after a completed scan and merge only when they complete
-  (`lib/tasks.py:86`).
+The picker lists every video that the scan or its merged runs cover. For a
+collection scan, it lists every video in the collection
+(`GET /projects/{project_id}/videos`), not only the videos the scan recorded.
+Each entry follows the Footage chip rules for this scan. A collection video
+with no entry in this scan shows "Not examined by this scan" and links to any
+later scan that has an entry for it, for example a failed automatic scan.
 
 **Player.** The existing `SourceVideoPlayer`, with renewable source URLs. Wave 5
 adds optional props for a time callback and an external seek. Review's use of
@@ -420,9 +428,17 @@ Source playback exists only for videos with at least one finding
   the run or runs that searched for that class in that video
   (`processing_summary.videos[].assessed_timestamps_s`, and each entry of
   `merged_runs` with its own `class_prompts`). A lane for a class the run never
-  searched in that video says "Not searched". When a run records no class list
-  (exemplar and legacy scans), its lanes say "Coverage unknown", never "Not
-  searched".
+  searched in that video says "Not searched".
+  - A text run with no class list searched its `text_prompt`
+    (`labeler/text_labeler.py:90-94`, `labeler/video_labeler.py:803`).
+    Exemplar runs and legacy scans say "Coverage unknown", never "Not
+    searched".
+  - A class that appears on findings but is in no run's class list for that
+    video gets a lane that says "class changed after the scan; coverage
+    unknown". This happens when a person changes, merges or deletes a class
+    (`app/api/review.py:238,416,539`).
+  - An empty lane says "examined, no current findings at or above the minimum
+    score", because a person can move findings to another class.
 - **Sampling interval.** Read it from the effective per-video sampling values in
   `processing_summary`, then the run's requested rate. If neither exists, say
   "sampling not recorded". Auto-scan children have a null `sample_fps`, so the
@@ -827,14 +843,47 @@ Order and dependencies:
 - New shell queries must tolerate the `[]` fallback that every spec returns for
   unknown API paths.
 - Results gets synthetic fixtures for: a 1-hour video at 1 frame per second, a
-  merged add-class run with different settings, a scan with no findings, a
-  partial scan with a failed video, a legacy scan without coverage data, and an
-  image-only scan.
+  merged auto-scan run with different settings, a scan with no findings, a
+  partial scan with a failed video, a legacy scan without coverage data, an
+  image-only scan, and every history in
+  [Scan histories to test](#scan-histories-to-test).
 - Each wave runs `npm run build`, `npm run lint` and the smoke suite, plus a real
   local workflow on :8000 with synthetic clips, as AGENTS.md requires.
 - If a wave changes dependencies, `index.html` or assets, it also runs
   `make build` and confirms `/` contains `<div id="root">` and an `/assets/`
   URL. New dependencies must install on Node 20 and Alpine (musl).
+
+### Scan histories to test
+
+The wave 4 plan (Footage chips) and the wave 5 plan (Results scope, picker and
+lanes) turn each history into a synthetic fixture. For each history, the tests
+check four things: exactly one chip results, Footage and Results agree, nothing
+claims a video or class was examined when the backend did not search it, and no
+failure is hidden. Collection P has videos V1 and V2 unless stated.
+
+1. A collection scan, then an upload V3 whose auto-scan completes and merges.
+2. A single-video scan of V1, then an upload V3 whose auto-scan merges into it.
+3. "Scan for another object" on a single-video scan of V1. The child searches
+   V1 and V2 for the new class only, and merges.
+4. "Scan for another object" on a collection scan that did not include V3.
+5. A newer single-video scan of a video that the last collection scan did not
+   include.
+6. An auto-scan child that fails and does not merge.
+7. An add-class child that ends `partial` and does not merge.
+8. Two uploads in a row, where the second auto-scan merges into the first
+   child (nested merge).
+9. An upload after an add-class merge, where the auto-scan copies only the new
+   class.
+10. A legacy collection scan with no coverage data, before and after an
+    auto-scan merges into it.
+11. A collection scan that is running when V3 is uploaded.
+12. Two collection scans for the same class.
+13. An older completed scan that receives V3's auto-scan while a newer
+    collection scan runs without V3.
+14. A duplicated scan. The duplicate copies `processing_summary`, including
+    `merged_into`, but not `class_prompts` (`app/api/review.py:469-485`).
+15. A collection with standalone images.
+16. A finding whose class a person changed after the scan.
 
 ## Risks and limits
 
@@ -890,6 +939,12 @@ can overturn any of them when reading this document.
 11. The Scans list is today's Datasets page with new copy, not a rebuild.
 12. Each primitive is built in the wave that first uses it, and each native
     dialog is replaced in the wave that rebuilds its page.
+13. For Footage chips and the Results picker, this document states the rules
+    that must always hold and lists the scan histories to test. The wave 4 and
+    5 plans write the exact selection rules against those fixtures. Reason:
+    three review rounds showed that exact rules written without fixtures kept
+    missing backend cases (failed children, nested merges, legacy scans). The
+    backend defects behind several cases are under Separate reports.
 
 ## Separate reports
 
@@ -901,6 +956,22 @@ separate work:
   Results shows the settings of each run.
 - The collection preview uses an arbitrary video (`app/api/label.py:252-258`).
   Scan setup works around it by sending a chosen `video_id`.
+- Auto-scan master selection (`app/api/upload.py:77-82`) does not skip merged
+  child runs, which keep status `completed` and are newer than their master.
+  After one merge, the next upload's auto-scan merges into that child: its
+  findings move to the child job (`lib/tasks.py:192`), and its run is recorded
+  only in the child's `merged_runs`. After an add-class merge, the next
+  auto-scan searches only the new class (`app/api/upload.py:103-104`). Until
+  this is fixed, the interface shows "Coverage unknown" with a reason for
+  evidence held in a nested merge, never "Not examined".
+- The standalone-images placeholder video has a storage key that is never
+  written (`app/api/upload.py:342`; images are stored under other keys,
+  `app/api/upload.py:395`). Collection-scope runs include it
+  (`labeler/text_labeler.py:227-231`). From reading the code (not run), such
+  runs probably end `partial`, so add-class runs there do not merge and the
+  next upload gets no auto-scan.
+- Scan duplication (`app/api/review.py:469-485`) copies `processing_summary`,
+  including `merged_into`, but not `class_prompts`.
 - Dead code: `ui/src/components/Nav.tsx`, `ui/src/components/AnnotationOverlay.tsx`
   and the unused `zustand` dependency.
 - Legacy browser specs: `ui/e2e/waldo.spec.ts` is stale, and
@@ -912,6 +983,8 @@ separate work:
   Timeline implementation (SVG or DOM), within the frozen-internals limits.
 - The exact form of the active-only filter on `GET /status`.
 - Whether bulk Undo in Review needs a bulk endpoint.
+- The exact Footage chip and Results picker selection rules, within the rules
+  stated here and tested with every scan history.
 - Whether to add the optional total video count.
 - Copy details that follow the terms and honesty rules.
 
