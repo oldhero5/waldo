@@ -6,7 +6,7 @@
 `ui/.prettierrc.json`, with no change in behavior.
 
 **Architecture:** One mechanical commit produced by `npm run format`. The
-evidence of no behavior change is identical build and lint output, an
+evidence of no behavior change is a passing build, identical lint output, an
 identical browser smoke result, and a reviewed explanation of every bundle
 difference (see [Results](#results); the planned byte-identical bundle check
 could not pass). A second commit tells `git blame` to skip the formatting
@@ -189,14 +189,15 @@ pixel-identical. Three others also differ between two runs of the unchanged
 baseline build (video frame timing and render noise). One,
 `waldo-decoded-mask-alignment.png`, is stable across baseline runs but differs
 by 128 pixels, at most 35 of 255 in intensity, in its caption row. That is the
-Deploy test summary line ("7 frames · 1 tracked objects · …" in `TestTab.tsx`).
+Deploy test summary line ("7 frames · 1 tracked objects · …" in `VideoDemo.tsx`,
+which the Deploy Test tab renders).
 Its text `" tracked objects · "` is now two text nodes, which moves sub-pixel
 anti-aliasing. The text reads the same, and `ui/e2e/video-overlay.spec.ts:429`,
 which checks the exact caption string, passes.
 
 **Changed acceptance check.** Prettier's JSX output cannot meet the planned
-byte-identical bundle check, so the implementing agent stopped and found the
-cause as Task 3 required. It then replaced the check with "rendered text
+byte-identical bundle check, so the implementing agent stopped, found the
+cause as Task 3 required, and proposed a replacement check: "rendered text
 identical after normal HTML white-space collapsing". The spec's own acceptance
 is still met in full: `ui/src` is Prettier-clean, and build, lint and smoke
 results are identical. The independent reviewer rebuilt both commits, read the
