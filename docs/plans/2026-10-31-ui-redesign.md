@@ -113,8 +113,8 @@ These guide decisions that this document does not cover.
 - Changes to labeling, training or inference behavior, with two exceptions the
   owner approved or must approve: a Label-page scan sends the minimum score the
   user saw (wave 1), and "Make live" uses promote, which also moves the champion
-  alias (wave 9, owner approval required). Two known backend defects are
-  reported separately (see [Separate reports](#separate-reports)).
+  alias (wave 9, owner approval required). Known backend defects are reported
+  separately (see [Separate reports](#separate-reports)).
 - Edge deployment UI, the desktop app and the System 1 work (on hold).
 - Removing the floating read-only assistant panel. It is a documented decision
   (`docs-site/docs/ui/agent.md:44-45`).
@@ -255,7 +255,7 @@ flowchart LR
 
 - One next-step card computed from real state, in this order:
   1. A scan is running → "See progress" (opens Results).
-  2. A finished scan has findings not reviewed → "See results for <scan>".
+  2. A scan that has ended has findings not reviewed → "See results for <scan>".
   3. Footage was never scanned → "Scan <collection or video>".
   4. No footage → "Add footage".
 - A second, smaller item shows an active training run when one exists.
@@ -279,9 +279,14 @@ flowchart LR
   scanned". The wave 4 plan writes the exact selection rule and tests it with
   every history in [Scan histories to test](#scan-histories-to-test). These
   rules always hold:
-  - A scan has ended when its status is `completed`, `partial` or `failed`. A
-    failed scan, or a failed entry for the video, shows "Failed in last scan".
-    A failure never reads as "Not examined" or "Not scanned".
+  - A scan has ended when its status is `completed`, `partial` or `failed`.
+  - A video's state comes from its own entry when one exists. A `completed`
+    entry reads as examined even when the scan as a whole failed: an admin can
+    mark a scan failed after some videos finished
+    (`app/api/admin.py:289-309`), and running out of retries keeps finished
+    entries (`lib/tasks.py:107-127`). A failed entry, or a failed scan with no
+    entry for the video, shows "Failed in last scan". A failure never reads as
+    "Not examined" or "Not scanned".
   - "Not examined" and "Not scanned" appear only when the data shows that no
     ended scan examined the video. When the data cannot say, the chip says
     "Coverage unknown": for a legacy scan (no `processing_summary.coverage`),
@@ -291,8 +296,15 @@ flowchart LR
   - The chip names only the object words searched in this video, so it never
     reads as "fully examined".
   - "Scanning" applies only to videos that a running scan includes. A run reads
-    its video list when it starts (`labeler/text_labeler.py:227-231`), so a
-    video uploaded later is not in it.
+    its video list when it starts and again on each retry
+    (`labeler/text_labeler.py:227-231`, `labeler/video_labeler.py:833-834`),
+    and no start time is stored. For a video uploaded after the scan was
+    requested, inclusion is unknown until its entry appears, and the chip says
+    so.
+  - One shared function computes these states from the collection's jobs and
+    videos. Wave 4 writes it with every scan history as a unit test. The wave 5
+    Results picker and lanes reuse it, so Footage and Results agree by
+    construction.
 - Row actions: "Scan" (primary when not scanned), "Results" (opens the scan the
   chip describes), "Try in Playground".
 - Standalone images show as one "Images (n)" row, not as a video named
@@ -309,8 +321,11 @@ flowchart LR
     object words, the drawer warns. It names the newest such job and that job's
     own class list, exactly as the server picks them (`app/api/upload.py:68-113`):
     "Videos added to Site A are scanned for 'truck' automatically and added to
-    the scan 'truck — Site A'". A `partial` or `failed` scan starts no
-    auto-scan, so it gives no warning. Behavior does not change.
+    the scan 'truck — Site A'". When the job the server picks is a merged
+    child (see Separate reports), the warning names its master scan and the
+    classes that child's job lists, for example "scanned for 'person' only". A
+    `partial` or `failed` scan starts no auto-scan, so it gives no warning.
+    Behavior does not change.
   - Per-file byte progress with Cancel, using `XMLHttpRequest` upload progress.
     After 100%: "Saving on server". The browser rejects files over the server
     limit of 10 GiB (10 × 1024³ bytes, `app/api/upload.py:190`) before upload.
@@ -380,19 +395,23 @@ video does not count as examined. Coverage sentences, for example:
 - "person (added later): 3 of 3 videos examined, one frame every 1 s, minimum
   score 0.35."
 
+When many auto-scans merge, the wave 5 plan may group runs that have the same
+class and settings into one sentence. Each run's settings stay visible
+(honesty rule 7).
+
 **States.**
 
 | State | What the page shows |
 | --- | --- |
 | Running | "Scanning · 1 video finished" (or "1 of 5 videos finished" when the total is known). Finished videos fill in. Elapsed time since the scan was requested. |
 | Finished, findings exist | Timeline, spans and actions. |
-| Finished, no findings | "Examined N frames; no findings at or above minimum score X." Action: "Try other words or a lower minimum score", which opens Scan setup with the words filled in. |
+| Finished, no findings | "Examined N frames; no current findings at or above minimum score X." Action: "Try other words or a lower minimum score", which opens Scan setup with the words filled in. |
 | Finished with gaps | Normal view, plus each failed or unfinished video with its reason. Failed videos are never shown as empty. |
-| Failed | The reason and a link back to Scan setup. |
+| Failed | The reason, a link back to Scan setup, and the normal view for videos whose entries completed, as in "Finished with gaps". Findings that a failed scan holds stay visible and count as not reviewed. When a scan is both failed and legacy, Failed wins. |
 | Legacy scan (no `processing_summary.coverage`; a merge into it adds only `merged_runs`, `lib/tasks.py:163-164,207`) | "Coverage unknown" in the header and on the strip for the scan's own videos. |
 | Image-only scan | No timeline or player; spans become a frame list. |
 | Source video unavailable or not playable | Saved finding frames instead of the player, with the reason (for example, the browser cannot play the format). |
-| Child run already merged | Redirect to the master scan named in `processing_summary.merged_into`. |
+| Child run already merged | Redirect to the master scan named in `processing_summary.merged_into`, but only when the child holds no findings. A child that holds findings from a nested merge (see Separate reports) opens normally, with a notice that names its master. |
 
 **Video picker** when the scan covers more than one video. A single-video scan
 can cover more, because it stores its collection (`app/api/label.py:97`):
@@ -408,12 +427,16 @@ can cover more, because it stores its collection (`app/api/label.py:97`):
   ends `completed` (`lib/tasks.py:86`). A `partial` or `failed` child stays a
   separate job with `parent_id`; Results for the parent lists it with its
   state.
+- Duplicates also set `parent_id` (`app/api/review.py:472`). An add-class child
+  has its own one-entry `class_prompts`; a duplicate has none and a `version`
+  of 2 or more. Results does not list duplicates as runs.
 
 The picker lists every video that the scan or its merged runs cover. For a
 collection scan, it lists every video in the collection
 (`GET /projects/{project_id}/videos`), not only the videos the scan recorded.
-Each entry follows the Footage chip rules for this scan. A collection video
-with no entry in this scan shows "Not examined by this scan" and links to any
+Each entry comes from the shared state function. A video with no entry in this
+scan reads "Coverage unknown" for a legacy scan or for evidence held in a
+nested merge. Otherwise it reads "Not examined by this scan" and links to any
 later scan that has an entry for it, for example a failed automatic scan.
 
 **Player.** The existing `SourceVideoPlayer`, with renewable source URLs. Wave 5
@@ -430,13 +453,19 @@ Source playback exists only for videos with at least one finding
   `merged_runs` with its own `class_prompts`). A lane for a class the run never
   searched in that video says "Not searched".
   - A text run with no class list searched its `text_prompt`
-    (`labeler/text_labeler.py:90-94`, `labeler/video_labeler.py:803`).
-    Exemplar runs and legacy scans say "Coverage unknown", never "Not
-    searched".
+    (`labeler/text_labeler.py:90-94`, `labeler/video_labeler.py:803`). Wave 4
+    adds `JobStatus.prompt_type` so the interface can tell text runs from
+    exemplar runs. A merged run's entry has no `text_prompt`, so it is read from
+    that child's `GET /status/{job_id}`; if the child is gone, its lanes say
+    "Coverage unknown". A duplicate uses its original's class list through
+    `parent_id`, or says "Coverage unknown".
+  - Exemplar runs and legacy scans say "Coverage unknown", never "Not
+    searched". This rule takes precedence over the next one.
   - A class that appears on findings but is in no run's class list for that
     video gets a lane that says "class changed after the scan; coverage
-    unknown". This happens when a person changes, merges or deletes a class
-    (`app/api/review.py:238,416,539`).
+    unknown". This happens when a person changes or merges a class
+    (`app/api/review.py:238,416`). Deleting a class removes its findings
+    (`app/api/review.py:539-556`).
   - An empty lane says "examined, no current findings at or above the minimum
     score", because a person can move findings to another class.
 - **Sampling interval.** Read it from the effective per-video sampling values in
@@ -506,8 +535,10 @@ the findings.
 A and R accept and reject, U undoes. Enter opens the selected finding in the
 Review inspector from wave 7.
 
-**Data.** `GET /status/{job_id}` with the additive `class_prompts` and
-`project_id` fields, `GET /jobs/{job_id}/annotations` (paged),
+**Data.** `GET /status/{job_id}` with the additive `class_prompts`,
+`prompt_type` and `project_id` fields, `GET /status?project_id=` for the
+collection's jobs (unmerged children, later scans and nested merges),
+`GET /jobs/{job_id}/annotations` (paged),
 `GET /jobs/{job_id}/stats`, `GET /projects/{project_id}/videos` for file names
 and durations, saved sources and source playback. No answer endpoint. The plan
 measures load time with a synthetic fixture of a 1-hour video at 1 frame per
@@ -553,7 +584,7 @@ to Scans and Training for history. There is no separate activity page.
 
 | Item | Source | States and copy |
 | --- | --- | --- |
-| Scans, including automatic and add-class runs | `GET /status` with an active-only filter, plus one `GET /status/{job_id}` when an item leaves the active set (see polling) | "Waiting for a worker · 0:42", "Preparing", "Retrying: <last error>" (no attempt number is recorded, `lib/tasks.py:107-127`), "Scanning · 2 videos finished", "Finished", "Finished with gaps: 1 video failed", "Failed: <reason>" |
+| Scans, including automatic and add-class runs | `GET /status` with an active-only filter, plus one `GET /status/{job_id}` when an item leaves the active set (see polling) | "Waiting for a worker · 0:42", "Preparing", "Retrying: <last error>" (no attempt number is recorded, `lib/tasks.py:107-127`), "Scanning · 2 videos finished", "Finished", "Finished with gaps: 1 video failed" (the images placeholder is never counted; a run that is partial only because of it says "images not examined"), "Failed: <reason>" |
 | Training runs | Existing training list | Current states from the training API |
 | Model comparison | The existing comparison session | Current states |
 | Uploads in this browser tab | The add-footage drawer | Bytes and percent, "Saving on server", Cancel |
@@ -643,7 +674,8 @@ These apply to every screen.
    `labeler/video_labeler.py:860-862,906-908`). Show videos finished and elapsed
    time. Never show frames or a percentage for one video.
 2. Keep four states apart: "not examined", "not searched" (this object was not
-   looked for here), "examined, no findings at or above the minimum score", and
+   looked for here), "examined, no current findings at or above the minimum
+   score", and
    "coverage unknown". Never say "none" or "all".
 3. Never present tracks as a count of objects. A local track ID is not a
    physical object (AGENTS.md): a tracker can split one object into several
@@ -794,9 +826,9 @@ endpoint returns; it lists the change in its plan and PR.
 
 | Wave | Change | Reason |
 | --- | --- | --- |
-| 4 | `JobStatus.project_id`, `JobStatus.created_at` (ISO 8601 with an explicit UTC offset, tested with a non-UTC browser time zone), `JobStatus.class_prompts` | Scan chips per video; upload and elapsed times; coverage per object lane. Collection scans return `video_id` as the string "None" today (`app/api/status.py:65`). |
+| 4 | `JobStatus.project_id`, `JobStatus.created_at` (ISO 8601 with an explicit UTC offset, tested with a non-UTC browser time zone), `JobStatus.class_prompts`, `JobStatus.prompt_type`. `project_id` falls back to the video's collection for older jobs, because migration 004 added the column with no backfill (`alembic/versions/004_collections_multiclass.py:24-28`). | Scan chips per video; upload and elapsed times; coverage per object lane. Collection scans return `video_id` as the string "None" today (`app/api/status.py:65`). |
 | 4 | `VideoOut.created_at` gains an explicit UTC offset; it stays ISO 8601. Today it is a naive `isoformat()` of a UTC time (`app/api/upload.py:442`, `lib/db.py:114`). The wave 4 plan checks other readers first. | Footage upload dates and the duplicate notice show the right day outside UTC |
-| 4 | `GET /status?project_id=` | Scan state for one collection without the 500-job list |
+| 4 | `GET /status?project_id=`, with the same fallback for older jobs. It returns every job in the collection (paged), not the default 500 (`app/api/status.py:101`). | Scan state for one collection without the full job list |
 | 4 | `UploadResponse.duplicate`, `UploadResponse.auto_label_job_id` | Honest upload notices |
 | 5 (optional) | A total video count for running scans | "1 of 5 videos finished" instead of "1 video finished" |
 | 6 | An active-only filter on `GET /status`, and a pending-finding count if Home needs it | Bounded tray polling that cannot hide an older running scan; Home next step |
@@ -844,9 +876,9 @@ Order and dependencies:
   unknown API paths.
 - Results gets synthetic fixtures for: a 1-hour video at 1 frame per second, a
   merged auto-scan run with different settings, a scan with no findings, a
-  partial scan with a failed video, a legacy scan without coverage data, an
-  image-only scan, and every history in
-  [Scan histories to test](#scan-histories-to-test).
+  partial scan with a failed video, a legacy scan without coverage data and an
+  image-only scan. The shared state function and Results also cover every
+  history in [Scan histories to test](#scan-histories-to-test).
 - Each wave runs `npm run build`, `npm run lint` and the smoke suite, plus a real
   local workflow on :8000 with synthetic clips, as AGENTS.md requires.
 - If a wave changes dependencies, `index.html` or assets, it also runs
@@ -855,11 +887,23 @@ Order and dependencies:
 
 ### Scan histories to test
 
-The wave 4 plan (Footage chips) and the wave 5 plan (Results scope, picker and
-lanes) turn each history into a synthetic fixture. For each history, the tests
-check four things: exactly one chip results, Footage and Results agree, nothing
-claims a video or class was examined when the backend did not search it, and no
-failure is hidden. Collection P has videos V1 and V2 unless stated.
+The wave 4 plan turns each history into a unit test of the shared state
+function. The wave 5 plan adds each one as a Results fixture (scope, picker and
+lanes). The wave plans write the expected states, and the owner approves them.
+For each history, the tests check six things:
+
+1. Exactly one chip results.
+2. Footage and Results agree.
+3. Nothing claims a video or class was examined when the backend did not
+   search it.
+4. No failure is hidden.
+5. Nothing reads "Not examined", "Not searched" or "no current findings" where
+   the data shows the video or class was examined, or where the data cannot
+   say.
+6. Every finding that the scan and its runs hold can be opened from Results
+   and counts in the "not reviewed" totals.
+
+Collection P has videos V1 and V2 unless stated.
 
 1. A collection scan, then an upload V3 whose auto-scan completes and merges.
 2. A single-video scan of V1, then an upload V3 whose auto-scan merges into it.
@@ -880,10 +924,21 @@ failure is hidden. Collection P has videos V1 and V2 unless stated.
 12. Two collection scans for the same class.
 13. An older completed scan that receives V3's auto-scan while a newer
     collection scan runs without V3.
-14. A duplicated scan. The duplicate copies `processing_summary`, including
-    `merged_into`, but not `class_prompts` (`app/api/review.py:469-485`).
+14. A duplicate of a partial scan with more than one class. The duplicate sets
+    `parent_id`, copies the status and `processing_summary` (including
+    `merged_into`), but not `class_prompts` (`app/api/review.py:469-485`).
 15. A collection with standalone images.
 16. A finding whose class a person changed after the scan.
+17. A collection scan that an admin marks failed after V1 completes.
+18. A collection scan whose retries run out after V1 completes.
+19. An auto-scan child that completes, but whose merge fails until its retries
+    run out (`lib/tasks.py:86-99`).
+20. A single-video scan from before collections existed (null `project_id`,
+    null `processing_summary`).
+21. A scan stopped with "Revoke" in Settings › Queue, which leaves the job in a
+    running status (`app/api/admin.py:257-266`).
+22. An exemplar scan, then an upload whose auto-scan searches the text of the
+    exemplar's class name.
 
 ## Risks and limits
 
@@ -939,9 +994,10 @@ can overturn any of them when reading this document.
 11. The Scans list is today's Datasets page with new copy, not a rebuild.
 12. Each primitive is built in the wave that first uses it, and each native
     dialog is replaced in the wave that rebuilds its page.
-13. For Footage chips and the Results picker, this document states the rules
-    that must always hold and lists the scan histories to test. The wave 4 and
-    5 plans write the exact selection rules against those fixtures. Reason:
+13. For Footage chips and the Results picker and lanes, this document states
+    the rules that must always hold and lists the scan histories to test. Wave 4
+    writes one shared state function against those histories, and wave 5
+    reuses it. The design buddy agreed. Reason:
     three review rounds showed that exact rules written without fixtures kept
     missing backend cases (failed children, nested merges, legacy scans). The
     backend defects behind several cases are under Separate reports.
@@ -963,15 +1019,31 @@ separate work:
   only in the child's `merged_runs`. After an add-class merge, the next
   auto-scan searches only the new class (`app/api/upload.py:103-104`). Until
   this is fixed, the interface shows "Coverage unknown" with a reason for
-  evidence held in a nested merge, never "Not examined".
+  evidence held in a nested merge, never "Not examined", and the child that
+  holds it opens normally.
 - The standalone-images placeholder video has a storage key that is never
   written (`app/api/upload.py:342`; images are stored under other keys,
   `app/api/upload.py:395`). Collection-scope runs include it
   (`labeler/text_labeler.py:227-231`). From reading the code (not run), such
-  runs probably end `partial`, so add-class runs there do not merge and the
-  next upload gets no auto-scan.
+  runs probably end `partial`, so add-class runs there do not merge, and new
+  uploads merge into an older completed job if one exists.
 - Scan duplication (`app/api/review.py:469-485`) copies `processing_summary`,
-  including `merged_into`, but not `class_prompts`.
+  including `merged_into`, but not `class_prompts`. After a multi-class scan is
+  duplicated, auto-scans that pick the duplicate search only its first class.
+- After an exemplar scan, the next auto-scan copies the exemplar's class name
+  (default "object") as a text search (`app/api/label.py:59,143`;
+  `app/api/upload.py:100-107`).
+- "Revoke" in Settings › Queue stops the worker but leaves the job in a running
+  status (`app/api/admin.py:257-266`).
+- "Import from a collection" starts auto-scans with no warning, and reports
+  every linked video as auto-labeled even when no auto-scan starts
+  (`app/api/upload.py:182-183`).
+- Safari: in a local WebKit run of the smoke suite on October 31, 2026, Review's
+  source player sought the nonzero-start MP4 fixture to 0.600 s where
+  Chromium seeks to 0.667 s (`ui/e2e/source-video-inspection.spec.ts:192`). CI
+  runs the suite only in Chromium, and WebKit cannot decode the WebM fixture
+  that most video tests use. Results reuses this player, so the fix and a
+  WebKit check belong before or in wave 5.
 - Dead code: `ui/src/components/Nav.tsx`, `ui/src/components/AnnotationOverlay.tsx`
   and the unused `zustand` dependency.
 - Legacy browser specs: `ui/e2e/waldo.spec.ts` is stale, and
@@ -983,8 +1055,9 @@ separate work:
   Timeline implementation (SVG or DOM), within the frozen-internals limits.
 - The exact form of the active-only filter on `GET /status`.
 - Whether bulk Undo in Review needs a bulk endpoint.
-- The exact Footage chip and Results picker selection rules, within the rules
-  stated here and tested with every scan history.
+- The exact rules inside the shared state function (Footage chips, Results
+  picker and lanes), within the rules stated here and tested with every scan
+  history.
 - Whether to add the optional total video count.
 - Copy details that follow the terms and honesty rules.
 
