@@ -286,27 +286,30 @@ flowchart LR
     scan's merged runs count as the scan's entries. A `completed` entry reads
     as examined even when the scan as a whole failed, because running out of
     retries keeps finished entries (`lib/tasks.py:107-127`). A failed entry, or
-    no entry in a failed scan for a video uploaded before that scan was
-    requested, reads "Failed in last scan". A failure never reads as "Not
+    no entry in a failed collection scan for a video uploaded before that scan
+    was requested, reads "Failed in last scan". A failure never reads as "Not
     examined" or "Not scanned".
+  - A single-video scan, including every auto-scan child, includes only its own
+    video (`labeler/text_labeler.py:227-231`, `labeler/video_labeler.py:833-836`).
   - "Not examined" and "Not scanned" appear only when the data shows that no
-    ended scan examined the video. Otherwise the chip reads "Coverage unknown ·
-    truck" and gives its reason:
+    ended scan examined the video. When the data cannot say, the chip reads
+    "Coverage unknown · truck" and gives its reason:
     - a legacy scan (no `processing_summary.coverage`);
     - evidence held in a nested merge, which is a backend defect (see
       [Separate reports](#separate-reports));
-    - a video uploaded after a running or failed scan was requested, with no
-      entry. A run reads its video list when it starts and again on each retry
-      (`labeler/text_labeler.py:227-231`, `labeler/video_labeler.py:833-834`),
-      and no start time is stored, so its inclusion is unknown.
+    - a video uploaded after a running or failed collection scan was requested,
+      with no entry. A run reads its video list when it starts and again on
+      each retry, and no start time is stored, so its inclusion is unknown.
   - A child run that merged (`processing_summary.merged_into`) counts as part
-    of its master, not as a separate scan. A duplicate is a copy, not a scan,
-    and is not counted.
+    of its master, not as a separate scan. A duplicate's copied entries do not
+    count as another scan of those videos, and they never replace a newer
+    scan's state. Runs that merge into a duplicate after it was made count as
+    normal, because the server can pick a duplicate as an auto-scan master.
   - The chip names only the object words searched in this video, so it never
     reads as "fully examined".
-  - "Scanning" applies to videos that a running scan includes. A job whose task
-    was revoked before it ran can stay in a running status, and the data cannot
-    show this (see Separate reports).
+  - "Scanning" applies to videos that a running scan includes. After "Revoke"
+    or "Mark failed", a job can stay in a running or retrying status, and the
+    data cannot show this (see Separate reports).
   - One shared function computes these states from the collection's jobs and
     videos. Wave 4 writes it with every scan history as a unit test. The wave 5
     Results picker and lanes reuse it, so Footage and Results agree by
@@ -417,10 +420,10 @@ class and settings into one sentence. Each run's settings stay visible
 | Finished, no findings | "Examined N frames; no current findings at or above minimum score X." Action: "Try other words or a lower minimum score", which opens Scan setup with the words filled in. |
 | Finished with gaps | Normal view, plus each failed or unfinished video with its reason. Failed videos are never shown as empty. |
 | Failed | The reason, a link back to Scan setup, and the normal view for videos whose entries completed, as in "Finished with gaps". Findings that a failed scan holds stay visible and count in the "not reviewed" totals while not reviewed. When a scan is both failed and legacy, Failed wins. |
-| Legacy scan (ended, no `processing_summary.coverage`; a merge into it adds only `merged_runs`, `lib/tasks.py:163-164,207`) | "Coverage unknown" in the header and on the strip for the scan's own videos, meaning those uploaded before it was requested. |
+| Legacy scan (ended, no `processing_summary.coverage`; a merge into it adds only `merged_runs`, `lib/tasks.py:163-164,207`) | "Coverage unknown" in the header and on the strip for the scan's own videos: its one video for a single-video scan, or the videos uploaded before it was requested for a collection scan. |
 | Image-only scan | No timeline or player; spans become a frame list. |
 | Source video unavailable or not playable | Saved finding frames instead of the player, with the reason (for example, the browser cannot play the format). |
-| Child run already merged | Redirect to the master scan named in `processing_summary.merged_into`, but only when the child holds no findings. A child that holds findings from a nested merge (see Separate reports) opens a page that shows only the runs it holds, with a notice that links to its master for its own videos. |
+| Child run already merged | Redirect to the master scan named in `processing_summary.merged_into`, but only when the child holds no findings and no merged runs. A child that holds findings or merged runs from a nested merge (see Separate reports) opens a page that shows only the merged runs it holds, with a notice that links to its master for its own videos. |
 
 **Video picker** when the scan covers more than one video. A single-video scan
 can cover more, because it stores its collection (`app/api/label.py:97`):
@@ -440,12 +443,15 @@ can cover more, because it stores its collection (`app/api/label.py:97`):
   has its own one-entry `class_prompts`; a duplicate has none and a `version`
   of 2 or more. Results does not list duplicates as runs.
 
-The picker lists every video that the scan or its merged runs cover. For a
+The picker lists every video that the scan or its merged runs cover, including
+videos from nested merges found through `GET /status?project_id=`. For a
 collection scan, it lists every video in the collection
 (`GET /projects/{project_id}/videos`), not only the videos the scan recorded.
-Each entry comes from the shared state function, so it matches the video's
-Footage chip. When that state is "Coverage unknown" because of a nested merge,
-the entry links to the child run that holds the evidence.
+Each entry comes from the shared state function, applied to this scan and the
+runs it holds. It matches the Footage chip when this scan is the scan the chip
+describes; otherwise the entry also links to that scan. When the state is
+"Coverage unknown" because of a nested merge, the entry links to the child run
+that holds the evidence.
 
 **Player.** The existing `SourceVideoPlayer`, with renewable source URLs. Wave 5
 adds optional props for a time callback and an external seek. Review's use of
@@ -605,7 +611,9 @@ Rules:
   the tray has shown leaves the active set, the tray calls
   `GET /status/{job_id}` once and keeps the finished item, with its final state,
   until the user dismisses it. Finished items live in memory for the current
-  tab only; after a reload, Home and Scans show recent results.
+  tab only; after a reload, Home and Scans show recent results. A failed item
+  reads its status again on window focus, because "Mark failed" is not always
+  final (see Separate reports).
 - Elapsed times count from `created_at`. No start-time column exists, so the
   copy says "since the scan was requested", not "running for". Jobs store naive
   UTC times (`lib/db.py:164`), so the wave 4 field carries an explicit UTC
@@ -950,14 +958,15 @@ Collection P has videos V1 and V2 unless stated.
     run out (`lib/tasks.py:86-99`).
 20. A single-video scan from before collections existed (null `project_id`,
     null `processing_summary`).
-21. A scan revoked in Settings › Queue before its task started, or while it
-    waited to retry, which leaves the job in a running status
-    (`app/api/admin.py:257-266`).
+21. A scan revoked or marked failed in Settings › Queue, after which the job
+    stays in a running or retrying status (`app/api/admin.py:257-266`).
 22. An exemplar scan, then an upload whose auto-scan searches the text of the
     exemplar's class name.
 23. A collection scan whose whole pipeline fails after it writes its summary,
     for example on a model-load error (`labeler/text_labeler.py:278,364-369`),
     so it has coverage data and no entries.
+24. A duplicate of a completed scan, then an upload whose auto-scan merges
+    into the duplicate.
 
 ## Risks and limits
 
@@ -1055,11 +1064,14 @@ separate work:
   `app/api/upload.py:100-107`).
 - On Waldo's solo-pool workers (`Makefile:50-51,90-96`,
   `scripts/entrypoint.sh:15,17`), "Revoke" and "Mark failed" in Settings ›
-  Queue cannot stop a running task (`app/api/admin.py:259-261`). Revoke can
-  leave a job in a running status when its task had not started or was
-  waiting to retry. Mark failed sets the status at once, but the run continues,
-  and its final update replaces `failed` with `completed` or `partial`
-  (`labeler/text_labeler.py:344-358`).
+  Queue cannot stop a running task (`app/api/admin.py:259-261`). The page offers
+  them only for jobs stuck in `pending` or `labeling` for more than 10 minutes
+  (`app/api/admin.py:188-197`). Mark failed sets the status at once, but the
+  run continues, and its final update writes the run's own status
+  (`labeler/text_labeler.py:344-358`, `labeler/video_labeler.py:948-962`).
+  Revoke can leave a job in a running status when its task had not started.
+  From reading the code (not run), a revoked run that later hits a retryable
+  error may stay `retrying`, because Celery drops the retry of a revoked task.
 - "Import from a collection" starts auto-scans with no warning, and reports
   every linked video as auto-labeled even when no auto-scan starts
   (`app/api/upload.py:182-183`).
@@ -1067,9 +1079,11 @@ separate work:
   source player sought the nonzero-start MP4 fixture to 0.600 s where
   Chromium seeks to 0.667 s (`ui/e2e/source-video-inspection.spec.ts:192,197`).
   CI runs the suite only in Chromium, and WebKit cannot decode the WebM fixture
-  that most video tests use. On October 31, 2026 the owner approved a separate
-  fix PR, after this design and wave 0 merge. Results reuses this player, so
-  wave 5 starts after that fix.
+  that most video tests use. On October 31, 2026 the owner chose to fix this in
+  a separate PR after this design and wave 0 merge. That PR also fixes the copy
+  buttons in `ui/src/pages/deploy/EndpointsTab.tsx:75`, which call
+  `navigator.clipboard` with no fallback and fail on the plain-HTTP Tailscale
+  address. Results reuses this player, so wave 5 starts after that fix.
 - Dead code: `ui/src/components/Nav.tsx`, `ui/src/components/AnnotationOverlay.tsx`
   and the unused `zustand` dependency.
 - Legacy browser specs: `ui/e2e/waldo.spec.ts` is stale, and
