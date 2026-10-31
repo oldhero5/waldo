@@ -181,8 +181,9 @@ Rules:
 - A scan's display name is `job.name` when set, otherwise
   "<object words> — <collection or file name>", built in the browser. The user
   can rename it through the existing `PATCH /jobs/{job_id}`.
-- Model scores appear as "score 0.87" on new screens and in the CSV, with the
-  hint "model score, not a probability". Review keeps its current percentage
+- Model scores appear as "score 0.87" on new screens and as `score_0_to_1` in
+  the CSV. New screens, the CSV export panel and the docs give the hint "model
+  score, not a probability". Review keeps its current percentage
   until a wave lists that change as a contract edit.
 
 ## Information architecture
@@ -274,17 +275,20 @@ flowchart LR
 - Each video row shows file name, duration when known, upload date and one scan
   chip. A scan "has an entry for" a video when it is a single-video scan for
   that video, or its per-video coverage or one of its merged runs lists the
-  video. The first rule that applies sets the chip:
+  video. A child run that has merged (`processing_summary.merged_into`) counts
+  as part of its master scan, not as a separate scan. The chip is set this way:
   1. "Scanning · truck" while a scan for this video, or a collection-scope scan
      for its collection, runs.
-  2. "Not examined in last scan" when the newest finished collection-scope scan
-     for its collection has no entry for it, for example because the video was
-     added after that scan.
-  3. "Failed in last scan" when this video's entry in the newest finished scan
-     that has an entry for it failed.
-  4. "Scanned · truck" or "2 scans" when finished scans have entries for it.
-     The chip names what was searched, so it never reads as "fully examined".
-  5. "Not scanned" otherwise.
+  2. Otherwise, take the newest finished scan that has an entry for the video
+     or is a collection-scope scan of its collection. Then:
+     - no entry for the video: "Not examined in last scan", for example because
+       the video was added after that scan and nothing has merged for it;
+     - the video's entry failed: "Failed in last scan";
+     - the video's entry finished: "Scanned · truck", or "2 scans" when more
+       than one finished scan has an entry for it. The chip names only the
+       object words searched in this video, so it never reads as "fully
+       examined".
+  3. "Not scanned" when no such scan exists.
 - Row actions: "Scan" (primary when not scanned), "Results" (newest scan),
   "Try in Playground".
 - Standalone images show as one "Images (n)" row, not as a video named
@@ -357,11 +361,13 @@ flowchart LR
 The answer for one scan, and the analyst's main place to judge findings.
 
 **Header.** Scan display name, object words, scope, state badge, and one
-coverage sentence per run. The scope reads "1 video", "1 video, plus N added by
-automatic scans", or "N of M videos in this collection examined". M counts the
-collection's videos without the standalone-images placeholder
-(`app/api/upload.py:336-343`), which the picker lists as "Images (n)". A failed
-video does not count as examined. Coverage sentences, for example:
+coverage sentence per run. The scope reads "1 video", "1 video, plus N from
+later runs", or "N of M videos in this collection examined". A later run
+searched only its own classes, so lanes for the classes it did not search say
+"Not searched". N and M leave out the standalone-images placeholder
+(`app/api/upload.py:336-343`; the list endpoint returns it,
+`app/api/upload.py:432`), which the picker lists as "Images (n)". A failed video
+does not count as examined. Coverage sentences, for example:
 
 - "truck: examined one frame every 1 s, minimum score 0.35, 0:00–10:00. Frames
   between were not examined."
@@ -382,9 +388,16 @@ video does not count as examined. Coverage sentences, for example:
 | Child run already merged | Redirect to the master scan named in `processing_summary.merged_into`. |
 
 **Video picker** when the scan covers more than one video. A single-video scan
-can cover more: it stores its collection (`app/api/label.py:97`), and an
-auto-scan merges into the newest completed scan in the collection of any scope
-(`app/api/upload.py:77-82`, `lib/tasks.py:158-162`).
+can cover more, because it stores its collection (`app/api/label.py:97`):
+
+- An auto-scan merges into the newest completed scan in the collection of any
+  scope (`app/api/upload.py:77-82`, `lib/tasks.py:159-162`). It searches the
+  master's classes (`app/api/upload.py:103-104`).
+- "Scan for another object" creates a collection-scope child that searches
+  every video in the collection for the new class only, and merges it into the
+  scan (`app/api/review.py:378-396`, `labeler/text_labeler.py:227-231`).
+
+The picker entries:
 
 - For a collection scan, the picker lists every video in the collection from
   `GET /projects/{project_id}/videos`, not only the videos the scan recorded.
@@ -670,7 +683,7 @@ Do not build a primitive with no consumer.
 | Button, IconButton (requires an accessible name), PageHeader (extends `PageLayout`, adds `document.title`), StatusBadge with one `statusMeta(status)` that covers partial, retrying and cancelled; Dialog on native `<dialog>` (the small-screen drawer); Menu and Popover (the account menu) | 3 |
 | Field (label, hint, error) around Input and Select; ProgressBar with `role="progressbar"`; QueryState with Skeleton, EmptyState and ErrorState with Retry | 4 |
 | Timeline | 5 |
-| ConfirmDialog (bulk confirms); Slider with a value readout ("Reject below") | 7 |
+| ConfirmDialog (bulk confirms, large-scan confirm); Slider with a value readout ("Reject below", minimum score) | The first of waves 7–10 to need it |
 | Tabs and SegmentedControl (buttons with `aria-pressed` where tests pin buttons); NumberInput; Textarea | as needed |
 
 Each native dialog is replaced in the wave that rebuilds its page. The global
@@ -766,7 +779,7 @@ endpoint returns; it lists the change in its plan and PR.
 | Wave | Change | Reason |
 | --- | --- | --- |
 | 4 | `JobStatus.project_id`, `JobStatus.created_at` (ISO 8601 with an explicit UTC offset, tested with a non-UTC browser time zone), `JobStatus.class_prompts` | Scan chips per video; upload and elapsed times; coverage per object lane. Collection scans return `video_id` as the string "None" today (`app/api/status.py:65`). |
-| 4 | `VideoOut.created_at` gains an explicit UTC offset; it stays ISO 8601. Today it is a naive `isoformat()` of a UTC time (`app/api/upload.py:442`, `lib/db.py:38`). The wave 4 plan checks other readers first. | Footage upload dates and the duplicate notice show the right day outside UTC |
+| 4 | `VideoOut.created_at` gains an explicit UTC offset; it stays ISO 8601. Today it is a naive `isoformat()` of a UTC time (`app/api/upload.py:442`, `lib/db.py:114`). The wave 4 plan checks other readers first. | Footage upload dates and the duplicate notice show the right day outside UTC |
 | 4 | `GET /status?project_id=` | Scan state for one collection without the 500-job list |
 | 4 | `UploadResponse.duplicate`, `UploadResponse.auto_label_job_id` | Honest upload notices |
 | 5 (optional) | A total video count for running scans | "1 of 5 videos finished" instead of "1 video finished" |
@@ -871,7 +884,8 @@ can overturn any of them when reading this document.
    stored client task registry, no preview items and no separate activity page.
    Finished scans come from one status lookup when a scan leaves the active set
    and stay in memory for the tab. The independent reviewer offered this or a
-   "finished in the last N minutes" filter; this one needs no backend change.
+   "finished in the last N minutes" filter; this one needs no backend change
+   beyond the active-only filter.
 10. The sidebar has two modes (full rail and drawer), not three.
 11. The Scans list is today's Datasets page with new copy, not a rebuild.
 12. Each primitive is built in the wave that first uses it, and each native
