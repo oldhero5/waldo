@@ -16,10 +16,14 @@ import { TABS, type TabKey } from "./deploy/shared";
 
 // Lazy-load each tab so a user opening Endpoints doesn't pay for the
 // 700-line CompareDemo or the inference monitoring chart bundle.
-const EndpointsTab = lazy(() => import("./deploy/EndpointsTab").then((m) => ({ default: m.EndpointsTab })));
+const EndpointsTab = lazy(() =>
+  import("./deploy/EndpointsTab").then((m) => ({ default: m.EndpointsTab })),
+);
 const TestTab = lazy(() => import("./deploy/TestTab").then((m) => ({ default: m.TestTab })));
 const ModelsTab = lazy(() => import("./deploy/ModelsTab").then((m) => ({ default: m.ModelsTab })));
-const MonitorTab = lazy(() => import("./deploy/MonitorTab").then((m) => ({ default: m.MonitorTab })));
+const MonitorTab = lazy(() =>
+  import("./deploy/MonitorTab").then((m) => ({ default: m.MonitorTab })),
+);
 
 export default function DeployPage() {
   const { tab } = useParams<{ tab?: string }>();
@@ -44,7 +48,9 @@ export default function DeployPage() {
   return (
     <div className="max-w-5xl mx-auto mt-6 px-4 sm:px-6 pb-16">
       <div className="mb-5">
-        <p className="eyebrow" style={{ marginBottom: 4 }}>Production</p>
+        <p className="eyebrow" style={{ marginBottom: 4 }}>
+          Production
+        </p>
         <h1
           className="text-2xl font-bold flex items-center gap-2"
           style={{ color: "var(--text-primary)" }}
@@ -68,7 +74,10 @@ export default function DeployPage() {
             Model activated and ready for inference.
           </span>
           <button
-            onClick={() => { handleTabChange("test"); setJustActivated(false); }}
+            onClick={() => {
+              handleTabChange("test");
+              setJustActivated(false);
+            }}
             className="px-4 py-1.5 text-white rounded-lg text-sm font-medium"
             style={{ backgroundColor: "var(--success)" }}
           >
@@ -79,7 +88,13 @@ export default function DeployPage() {
 
       <TabBar activeTab={activeTab} onTabChange={handleTabChange} />
 
-      <Suspense fallback={<div className="text-center py-8 text-sm" style={{ color: "var(--text-muted)" }}>Loading…</div>}>
+      <Suspense
+        fallback={
+          <div className="text-center py-8 text-sm" style={{ color: "var(--text-muted)" }}>
+            Loading…
+          </div>
+        }
+      >
         {activeTab === "endpoints" && <EndpointsTab />}
         {activeTab === "test" && <TestTab status={status} />}
         {activeTab === "models" && <ModelsTab onActivated={() => setJustActivated(true)} />}

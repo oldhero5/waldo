@@ -18,10 +18,24 @@ import JobCoverage from "../components/JobCoverage";
 import { hasTrainingArtifact, isTerminalJobStatus } from "../lib/jobStatus";
 import { classColor, hslToHex } from "../lib/annotationColors";
 import StatsPanel from "../components/StatsPanel";
-import { Keyboard, CheckCheck, XCircle, ChevronLeft, ChevronRight, Filter, Maximize2 } from "lucide-react";
+import {
+  Keyboard,
+  CheckCheck,
+  XCircle,
+  ChevronLeft,
+  ChevronRight,
+  Filter,
+  Maximize2,
+} from "lucide-react";
 
 /** Canvas-based annotation overlay — renders polygons + labels at pixel resolution (not SVG). */
-const FrameOverlay = React.memo(function FrameOverlay({ annotations, hoveredId }: { annotations: AnnotationOut[]; hoveredId: string | null }) {
+const FrameOverlay = React.memo(function FrameOverlay({
+  annotations,
+  hoveredId,
+}: {
+  annotations: AnnotationOut[];
+  hoveredId: string | null;
+}) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -48,14 +62,20 @@ const FrameOverlay = React.memo(function FrameOverlay({ annotations, hoveredId }
     for (const ann of annotations) {
       if (!ann.polygon || ann.polygon.length < 6) continue;
       const isHovered = ann.id === hoveredId;
-      const color = ann.status === "accepted" ? "#22c55e" : ann.status === "rejected" ? "#ef4444" : hslToHex(classColor(ann.class_name));
+      const color =
+        ann.status === "accepted"
+          ? "#22c55e"
+          : ann.status === "rejected"
+            ? "#ef4444"
+            : hslToHex(classColor(ann.class_name));
 
       // Polygon
       ctx.beginPath();
       for (let i = 0; i < ann.polygon.length; i += 2) {
         const px = ann.polygon[i] * W;
         const py = ann.polygon[i + 1] * H;
-        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
       }
       ctx.closePath();
       ctx.fillStyle = color + (isHovered ? "55" : "33");
@@ -67,10 +87,14 @@ const FrameOverlay = React.memo(function FrameOverlay({ annotations, hoveredId }
       ctx.setLineDash([]);
 
       // Label — same method as AnnotationCanvas (pixel-based)
-      let minY = Infinity, labelX = 0;
+      let minY = Infinity,
+        labelX = 0;
       for (let i = 0; i < ann.polygon.length; i += 2) {
         const py = ann.polygon[i + 1] * H;
-        if (py < minY) { minY = py; labelX = ann.polygon[i] * W; }
+        if (py < minY) {
+          minY = py;
+          labelX = ann.polygon[i] * W;
+        }
       }
       const label = `${ann.class_name} ${ann.confidence != null ? (ann.confidence * 100).toFixed(0) + "%" : ""}`;
       ctx.font = "bold 11px system-ui, sans-serif";
@@ -100,8 +124,13 @@ function useLazyVisible(rootMargin = "200px"): [React.RefObject<HTMLDivElement |
     if (!el) return;
     if (visible) return; // once visible, stay rendered
     const obs = new IntersectionObserver(
-      ([entry]) => { if (entry.isIntersecting) { setVisible(true); obs.disconnect(); } },
-      { rootMargin }
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setVisible(true);
+          obs.disconnect();
+        }
+      },
+      { rootMargin },
     );
     obs.observe(el);
     return () => obs.disconnect();
@@ -132,7 +161,16 @@ interface FrameCardProps {
 
 /** Frame card with IntersectionObserver-gated FrameOverlay — canvas only mounts when visible. */
 const LazyFrameCard = React.memo(function LazyFrameCard({
-  frameId, frameAnns, hoveredAnn, focusedIdx, flatAnnotations, annotationRefs, onInspect, onFocus, onHover, onReview,
+  frameId,
+  frameAnns,
+  hoveredAnn,
+  focusedIdx,
+  flatAnnotations,
+  annotationRefs,
+  onInspect,
+  onFocus,
+  onHover,
+  onReview,
 }: FrameCardProps) {
   const [cardRef, inView] = useLazyVisible("300px");
   const first = frameAnns[0];
@@ -143,7 +181,10 @@ const LazyFrameCard = React.memo(function LazyFrameCard({
       className="surface overflow-hidden"
       style={{ borderRadius: "var(--radius-lg)" }}
     >
-      <div className="relative group cursor-pointer" onClick={() => first.frame_url && onInspect(frameId, first.id)}>
+      <div
+        className="relative group cursor-pointer"
+        onClick={() => first.frame_url && onInspect(frameId, first.id)}
+      >
         <div className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
           <span
             className="flex items-center gap-1 px-2 py-1 text-xs rounded-lg backdrop-blur"
@@ -153,7 +194,13 @@ const LazyFrameCard = React.memo(function LazyFrameCard({
           </span>
         </div>
         {first.frame_url && (
-          <RenewableFrameImage frameId={frameId} initialUrl={first.frame_url} alt="Frame preview" className="block w-full" loading="lazy" />
+          <RenewableFrameImage
+            frameId={frameId}
+            initialUrl={first.frame_url}
+            alt="Frame preview"
+            className="block w-full"
+            loading="lazy"
+          />
         )}
         {inView && <FrameOverlay annotations={frameAnns} hoveredId={hoveredAnn} />}
       </div>
@@ -172,7 +219,11 @@ const LazyFrameCard = React.memo(function LazyFrameCard({
               }}
               className="flex items-center justify-between text-sm px-2.5 py-2 rounded-lg transition-colors cursor-pointer"
               style={{
-                backgroundColor: isFocused ? "var(--accent-soft)" : hoveredAnn === a.id ? "var(--bg-surface-hover)" : undefined,
+                backgroundColor: isFocused
+                  ? "var(--accent-soft)"
+                  : hoveredAnn === a.id
+                    ? "var(--bg-surface-hover)"
+                    : undefined,
                 border: isFocused ? "1px solid var(--accent)" : "1px solid transparent",
               }}
               onClick={() => onFocus(globalIdx)}
@@ -184,17 +235,35 @@ const LazyFrameCard = React.memo(function LazyFrameCard({
                   className="inline-block w-3 h-3 rounded-sm shrink-0"
                   style={{
                     backgroundColor:
-                      a.status === "accepted" ? "var(--success)"
-                        : a.status === "rejected" ? "var(--danger)" : "var(--accent)",
+                      a.status === "accepted"
+                        ? "var(--success)"
+                        : a.status === "rejected"
+                          ? "var(--danger)"
+                          : "var(--accent)",
                   }}
                 />
-                <span className="font-medium" style={{ color: "var(--text-primary)" }}>{a.class_name}</span>
-                {a.track_id != null && <span className="text-xs" title={`Local to this job and source video ${a.source_video_id || "unknown"}`}>Track #{a.track_id}</span>}
+                <span className="font-medium" style={{ color: "var(--text-primary)" }}>
+                  {a.class_name}
+                </span>
+                {a.track_id != null && (
+                  <span
+                    className="text-xs"
+                    title={`Local to this job and source video ${a.source_video_id || "unknown"}`}
+                  >
+                    Track #{a.track_id}
+                  </span>
+                )}
                 <span className="text-xs" style={{ color: "var(--text-muted)" }}>
                   {findingTime(a).compactLabel}
                 </span>
                 {a.confidence != null && (
-                  <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-muted)" }}>
+                  <span
+                    style={{
+                      fontFamily: "var(--font-mono)",
+                      fontSize: 12,
+                      color: "var(--text-muted)",
+                    }}
+                  >
                     {(a.confidence * 100).toFixed(0)}%
                   </span>
                 )}
@@ -202,11 +271,17 @@ const LazyFrameCard = React.memo(function LazyFrameCard({
                   className="text-xs px-1.5 py-0.5 rounded"
                   style={{
                     backgroundColor:
-                      a.status === "accepted" ? "var(--success-soft)"
-                        : a.status === "rejected" ? "var(--danger-soft)" : "var(--bg-inset)",
+                      a.status === "accepted"
+                        ? "var(--success-soft)"
+                        : a.status === "rejected"
+                          ? "var(--danger-soft)"
+                          : "var(--bg-inset)",
                     color:
-                      a.status === "accepted" ? "var(--success)"
-                        : a.status === "rejected" ? "var(--danger)" : "var(--text-muted)",
+                      a.status === "accepted"
+                        ? "var(--success)"
+                        : a.status === "rejected"
+                          ? "var(--danger)"
+                          : "var(--text-muted)",
                     fontFamily: "var(--font-mono)",
                     fontSize: 10,
                   }}
@@ -215,23 +290,49 @@ const LazyFrameCard = React.memo(function LazyFrameCard({
                 </span>
               </span>
               <div className="flex gap-1.5">
-                <button aria-label={`Inspect finding ${a.id}`} onClick={(e) => { e.stopPropagation(); onInspect(frameId, a.id); }} className="px-2.5 py-1 rounded text-xs" style={{ color: "var(--accent)" }}>Inspect</button>
                 <button
-                  onClick={(e) => { e.stopPropagation(); onReview(a.id, "accepted"); }}
+                  aria-label={`Inspect finding ${a.id}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onInspect(frameId, a.id);
+                  }}
+                  className="px-2.5 py-1 rounded text-xs"
+                  style={{ color: "var(--accent)" }}
+                >
+                  Inspect
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onReview(a.id, "accepted");
+                  }}
                   className="px-2.5 py-1 rounded text-xs font-medium transition-colors"
-                  style={a.status === "accepted"
-                    ? { backgroundColor: "var(--success)", color: "#fff" }
-                    : { backgroundColor: "var(--bg-surface)", border: "1px solid var(--border-subtle)", color: "var(--text-secondary)" }
+                  style={
+                    a.status === "accepted"
+                      ? { backgroundColor: "var(--success)", color: "#fff" }
+                      : {
+                          backgroundColor: "var(--bg-surface)",
+                          border: "1px solid var(--border-subtle)",
+                          color: "var(--text-secondary)",
+                        }
                   }
                 >
                   Accept
                 </button>
                 <button
-                  onClick={(e) => { e.stopPropagation(); onReview(a.id, "rejected"); }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onReview(a.id, "rejected");
+                  }}
                   className="px-2.5 py-1 rounded text-xs font-medium transition-colors"
-                  style={a.status === "rejected"
-                    ? { backgroundColor: "var(--danger)", color: "#fff" }
-                    : { backgroundColor: "var(--bg-surface)", border: "1px solid var(--border-subtle)", color: "var(--text-secondary)" }
+                  style={
+                    a.status === "rejected"
+                      ? { backgroundColor: "var(--danger)", color: "#fff" }
+                      : {
+                          backgroundColor: "var(--bg-surface)",
+                          border: "1px solid var(--border-subtle)",
+                          color: "var(--text-secondary)",
+                        }
                   }
                 >
                   Reject
@@ -263,7 +364,8 @@ export default function ReviewPage() {
     queryKey: ["job", jobId],
     queryFn: () => getJobStatus(jobId!),
     enabled: !!jobId,
-    refetchInterval: (query) => query.state.data && !isTerminalJobStatus(query.state.data.status) ? 2000 : false,
+    refetchInterval: (query) =>
+      query.state.data && !isTerminalJobStatus(query.state.data.status) ? 2000 : false,
   });
 
   const { data: annotations } = useQuery({
@@ -280,46 +382,78 @@ export default function ReviewPage() {
 
   const { data: sources, isError: sourcesError } = useQuery({
     queryKey: ["savedSources", jobId, job?.status],
-    queryFn: () => listSavedSources(jobId!), enabled: !!jobId, retry: false,
+    queryFn: () => listSavedSources(jobId!),
+    enabled: !!jobId,
+    retry: false,
   });
-  const sourceOptions = useMemo(() => [...new Set(annotations?.map((a) => a.source_video_id).filter((id): id is string => !!id) || [])].sort(), [annotations]);
-  const classOptions = useMemo(() => [...new Set(annotations?.map((a) => a.class_name) || [])].sort(), [annotations]);
-  const inScope = useCallback((a: AnnotationOut) =>
-    (sourceFilter === "all" || a.source_video_id === sourceFilter) &&
-    (classFilter === "all" || a.class_name === classFilter) &&
-    (confFilter === 0 || (a.confidence != null && a.confidence >= confFilter)), [sourceFilter, classFilter, confFilter]);
+  const sourceOptions = useMemo(
+    () =>
+      [
+        ...new Set(
+          annotations?.map((a) => a.source_video_id).filter((id): id is string => !!id) || [],
+        ),
+      ].sort(),
+    [annotations],
+  );
+  const classOptions = useMemo(
+    () => [...new Set(annotations?.map((a) => a.class_name) || [])].sort(),
+    [annotations],
+  );
+  const inScope = useCallback(
+    (a: AnnotationOut) =>
+      (sourceFilter === "all" || a.source_video_id === sourceFilter) &&
+      (classFilter === "all" || a.class_name === classFilter) &&
+      (confFilter === 0 || (a.confidence != null && a.confidence >= confFilter)),
+    [sourceFilter, classFilter, confFilter],
+  );
   const openInspector = useCallback((frameId: string, annotationId: string) => {
-    setInspectFrameId(frameId); setInspectAnnotationId(annotationId);
+    setInspectFrameId(frameId);
+    setInspectAnnotationId(annotationId);
   }, []);
 
-  const handleReview = useCallback(async (annotationId: string, status: string) => {
-    try {
-      await updateAnnotation(annotationId, { status });
-    } catch (e) {
-      console.error("Failed to update annotation:", e);
-    }
-    queryClient.invalidateQueries({ queryKey: ["annotations", jobId] });
-    queryClient.invalidateQueries({ queryKey: ["stats", jobId] });
-  }, [queryClient, jobId]);
+  const handleReview = useCallback(
+    async (annotationId: string, status: string) => {
+      try {
+        await updateAnnotation(annotationId, { status });
+      } catch (e) {
+        console.error("Failed to update annotation:", e);
+      }
+      queryClient.invalidateQueries({ queryKey: ["annotations", jobId] });
+      queryClient.invalidateQueries({ queryKey: ["stats", jobId] });
+    },
+    [queryClient, jobId],
+  );
 
   // Filter by confidence + status
-  const filtered = useMemo(() => annotations?.filter((a) => {
-    if (!inScope(a)) return false;
-    if (statusFilter !== "all" && a.status !== statusFilter) return false;
-    return true;
-  }).sort((left, right) => {
-    const sourceOrder = (left.source_video_id || "").localeCompare(right.source_video_id || "");
-    if (sourceOrder) return sourceOrder;
-    const leftTime = left.timestamp_s != null && Number.isFinite(left.timestamp_s) ? left.timestamp_s : Infinity;
-    const rightTime = right.timestamp_s != null && Number.isFinite(right.timestamp_s) ? right.timestamp_s : Infinity;
-    if (leftTime !== rightTime) return leftTime - rightTime;
-    return left.frame_id.localeCompare(right.frame_id) || left.id.localeCompare(right.id);
-  }), [annotations, inScope, statusFilter]);
+  const filtered = useMemo(
+    () =>
+      annotations
+        ?.filter((a) => {
+          if (!inScope(a)) return false;
+          if (statusFilter !== "all" && a.status !== statusFilter) return false;
+          return true;
+        })
+        .sort((left, right) => {
+          const sourceOrder = (left.source_video_id || "").localeCompare(
+            right.source_video_id || "",
+          );
+          if (sourceOrder) return sourceOrder;
+          const leftTime =
+            left.timestamp_s != null && Number.isFinite(left.timestamp_s)
+              ? left.timestamp_s
+              : Infinity;
+          const rightTime =
+            right.timestamp_s != null && Number.isFinite(right.timestamp_s)
+              ? right.timestamp_s
+              : Infinity;
+          if (leftTime !== rightTime) return leftTime - rightTime;
+          return left.frame_id.localeCompare(right.frame_id) || left.id.localeCompare(right.id);
+        }),
+    [annotations, inScope, statusFilter],
+  );
 
   // Count by status (unfiltered by status, but filtered by confidence)
-  const confFiltered = annotations?.filter(
-    inScope
-  );
+  const confFiltered = annotations?.filter(inScope);
   const statusCounts = {
     all: confFiltered?.length || 0,
     pending: confFiltered?.filter((a) => a.status === "pending").length || 0,
@@ -342,7 +476,7 @@ export default function ReviewPage() {
   const totalPages = Math.ceil(frameEntries.length / FRAMES_PER_PAGE);
   const visibleFrames = frameEntries.slice(
     framePage * FRAMES_PER_PAGE,
-    (framePage + 1) * FRAMES_PER_PAGE
+    (framePage + 1) * FRAMES_PER_PAGE,
   );
 
   // Flat list for keyboard nav
@@ -353,7 +487,7 @@ export default function ReviewPage() {
     if (!filtered) return;
     const pending = filtered.filter((a) => a.status === "pending");
     const results = await Promise.allSettled(
-      pending.map((a) => updateAnnotation(a.id, { status: "accepted" }))
+      pending.map((a) => updateAnnotation(a.id, { status: "accepted" })),
     );
     const failed = results.filter((r) => r.status === "rejected").length;
     if (failed > 0) console.error(`${failed} annotation(s) failed to accept`);
@@ -364,10 +498,10 @@ export default function ReviewPage() {
   const handleBulkRejectLowConf = useCallback(async () => {
     if (!filtered) return;
     const lowConf = filtered.filter(
-      (a) => a.status === "pending" && a.confidence != null && a.confidence < 0.5
+      (a) => a.status === "pending" && a.confidence != null && a.confidence < 0.5,
     );
     const results = await Promise.allSettled(
-      lowConf.map((a) => updateAnnotation(a.id, { status: "rejected" }))
+      lowConf.map((a) => updateAnnotation(a.id, { status: "rejected" })),
     );
     const failed = results.filter((r) => r.status === "rejected").length;
     if (failed > 0) console.error(`${failed} annotation(s) failed to reject`);
@@ -379,7 +513,9 @@ export default function ReviewPage() {
   const jumpToNextPending = useCallback(() => {
     if (!annotations) return;
     const pendingFrames = new Set<string>();
-    annotations.forEach((a) => { if (a.status === "pending") pendingFrames.add(a.frame_id); });
+    annotations.forEach((a) => {
+      if (a.status === "pending") pendingFrames.add(a.frame_id);
+    });
     const allFrameEntries = Array.from(byFrame.entries());
     const startIdx = (framePage + 1) * FRAMES_PER_PAGE;
     for (let i = startIdx; i < allFrameEntries.length; i++) {
@@ -399,13 +535,21 @@ export default function ReviewPage() {
   // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (inspectFrameId || (e.target instanceof HTMLElement && e.target.closest("input, textarea, select, button, video"))) return;
+      if (
+        inspectFrameId ||
+        (e.target instanceof HTMLElement &&
+          e.target.closest("input, textarea, select, button, video"))
+      )
+        return;
       if (e.key === "ArrowDown" || e.key === "j") {
         e.preventDefault();
         setFocusedIdx((i) => {
           const next = Math.min(i + 1, flatAnnotations.length - 1);
           const ann = flatAnnotations[next];
-          if (ann) annotationRefs.current.get(ann.id)?.scrollIntoView({ behavior: "smooth", block: "center" });
+          if (ann)
+            annotationRefs.current
+              .get(ann.id)
+              ?.scrollIntoView({ behavior: "smooth", block: "center" });
           return next;
         });
       } else if (e.key === "ArrowUp" || e.key === "k") {
@@ -413,7 +557,10 @@ export default function ReviewPage() {
         setFocusedIdx((i) => {
           const next = Math.max(i - 1, 0);
           const ann = flatAnnotations[next];
-          if (ann) annotationRefs.current.get(ann.id)?.scrollIntoView({ behavior: "smooth", block: "center" });
+          if (ann)
+            annotationRefs.current
+              .get(ann.id)
+              ?.scrollIntoView({ behavior: "smooth", block: "center" });
           return next;
         });
       } else if (e.key === "a" && focusedIdx >= 0 && focusedIdx < flatAnnotations.length) {
@@ -434,20 +581,29 @@ export default function ReviewPage() {
 
   return (
     <div className="min-h-screen pb-20">
-
       <div className="max-w-6xl mx-auto mt-8 px-4">
         {/* Header */}
         <div className="flex justify-between items-start mb-6">
           <div>
-            <p className="eyebrow" style={{ marginBottom: 4 }}>Annotation review</p>
-            <h1 className="text-2xl font-bold" style={{ color: "var(--text-primary)" }}>Review Labels</h1>
+            <p className="eyebrow" style={{ marginBottom: 4 }}>
+              Annotation review
+            </p>
+            <h1 className="text-2xl font-bold" style={{ color: "var(--text-primary)" }}>
+              Review Labels
+            </h1>
             {job && (
               <p className="text-sm mt-1" style={{ color: "var(--text-secondary)" }}>
                 {job.name || job.text_prompt || "Exemplar"} &middot; {job.status}
                 {job.result_url && (
                   <>
-                    {" "}&middot;{" "}
-                    <RenewableDownloadLink jobId={jobId!} url={job.result_url} className="hover:underline" style={{ color: "var(--accent)" }}>
+                    {" "}
+                    &middot;{" "}
+                    <RenewableDownloadLink
+                      jobId={jobId!}
+                      url={job.result_url}
+                      className="hover:underline"
+                      style={{ color: "var(--accent)" }}
+                    >
                       Download
                     </RenewableDownloadLink>
                   </>
@@ -469,31 +625,47 @@ export default function ReviewPage() {
         {/* Status filter tabs */}
         {job && <JobCoverage job={job} />}
         {annotations?.some((annotation) => annotation.track_id != null) && (
-          <p className="text-sm mb-4" style={{ color: "var(--text-muted)" }}>Track IDs are local to this job and source video; they do not identify physical assets.</p>
+          <p className="text-sm mb-4" style={{ color: "var(--text-muted)" }}>
+            Track IDs are local to this job and source video; they do not identify physical assets.
+          </p>
         )}
 
         <div className="flex flex-wrap items-center gap-1 mb-4">
           {STATUS_FILTERS.map((f) => (
             <button
               key={f.value}
-              onClick={() => { setStatusFilter(f.value); setFramePage(0); }}
+              onClick={() => {
+                setStatusFilter(f.value);
+                setFramePage(0);
+              }}
               className="px-3 py-1.5 rounded-md text-sm transition-colors"
-              style={statusFilter === f.value
-                ? { backgroundColor: "var(--text-primary)", color: "var(--bg-page)" }
-                : { backgroundColor: "var(--bg-inset)", color: "var(--text-secondary)" }
+              style={
+                statusFilter === f.value
+                  ? { backgroundColor: "var(--text-primary)", color: "var(--bg-page)" }
+                  : { backgroundColor: "var(--bg-inset)", color: "var(--text-secondary)" }
               }
             >
               {f.label}
-              <span className="ml-1.5" style={{ opacity: 0.6, fontFamily: "var(--font-mono)", fontSize: 11 }}>
+              <span
+                className="ml-1.5"
+                style={{ opacity: 0.6, fontFamily: "var(--font-mono)", fontSize: 11 }}
+              >
                 {statusCounts[f.value as keyof typeof statusCounts]}
               </span>
             </button>
           ))}
           {statusCounts.pending > 0 && statusFilter !== "pending" && (
             <button
-              onClick={() => { setStatusFilter("pending"); setFramePage(0); }}
+              onClick={() => {
+                setStatusFilter("pending");
+                setFramePage(0);
+              }}
               className="ml-2 flex items-center gap-1 px-3 py-1.5 rounded-md text-sm"
-              style={{ backgroundColor: "var(--warning-soft)", border: "1px solid var(--warning)", color: "var(--warning)" }}
+              style={{
+                backgroundColor: "var(--warning-soft)",
+                border: "1px solid var(--warning)",
+                color: "var(--warning)",
+              }}
             >
               <Filter size={12} />
               Show {statusCounts.pending} needing review
@@ -501,34 +673,88 @@ export default function ReviewPage() {
           )}
         </div>
 
-        {sourcesError && <p role="status" className="text-sm mb-3">Source names could not be loaded. Saved findings remain available.</p>}
-        {annotations && annotations.length >= 10000 && <p role="status" className="text-sm mb-3">Showing the first 10,000 saved findings. Filters and bulk actions apply to these loaded findings.</p>}
+        {sourcesError && (
+          <p role="status" className="text-sm mb-3">
+            Source names could not be loaded. Saved findings remain available.
+          </p>
+        )}
+        {annotations && annotations.length >= 10000 && (
+          <p role="status" className="text-sm mb-3">
+            Showing the first 10,000 saved findings. Filters and bulk actions apply to these loaded
+            findings.
+          </p>
+        )}
         <div className="flex flex-wrap gap-3 mb-4">
-          <label>Source clip <select aria-label="Source clip" value={sourceFilter} onChange={(e) => { setSourceFilter(e.target.value); setFramePage(0); setFocusedIdx(-1); }} className="surface px-2 py-1 rounded">
-            <option value="all">All sources</option>
-            {sourceOptions.map((id) => <option key={id} value={id}>{sources?.find((source) => source.id === id)?.filename || id}</option>)}
-          </select></label>
-          <label>Class <select aria-label="Class" value={classFilter} onChange={(e) => { setClassFilter(e.target.value); setFramePage(0); setFocusedIdx(-1); }} className="surface px-2 py-1 rounded">
-            <option value="all">All classes</option>
-            {classOptions.map((name) => <option key={name}>{name}</option>)}
-          </select></label>
+          <label>
+            Source clip{" "}
+            <select
+              aria-label="Source clip"
+              value={sourceFilter}
+              onChange={(e) => {
+                setSourceFilter(e.target.value);
+                setFramePage(0);
+                setFocusedIdx(-1);
+              }}
+              className="surface px-2 py-1 rounded"
+            >
+              <option value="all">All sources</option>
+              {sourceOptions.map((id) => (
+                <option key={id} value={id}>
+                  {sources?.find((source) => source.id === id)?.filename || id}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Class{" "}
+            <select
+              aria-label="Class"
+              value={classFilter}
+              onChange={(e) => {
+                setClassFilter(e.target.value);
+                setFramePage(0);
+                setFocusedIdx(-1);
+              }}
+              className="surface px-2 py-1 rounded"
+            >
+              <option value="all">All classes</option>
+              {classOptions.map((name) => (
+                <option key={name}>{name}</option>
+              ))}
+            </select>
+          </label>
         </div>
         {/* Toolbar */}
-        <div className="flex flex-wrap items-center gap-3 mb-5 pb-4" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+        <div
+          className="flex flex-wrap items-center gap-3 mb-5 pb-4"
+          style={{ borderBottom: "1px solid var(--border-subtle)" }}
+        >
           <button
             onClick={handleBulkAccept}
             disabled={pendingCount === 0}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm disabled:opacity-40"
-            style={{ backgroundColor: "var(--success-soft)", border: "1px solid var(--success)", color: "var(--success)" }}
+            style={{
+              backgroundColor: "var(--success-soft)",
+              border: "1px solid var(--success)",
+              color: "var(--success)",
+            }}
           >
             <CheckCheck size={14} />
             Accept All ({pendingCount})
           </button>
           <button
             onClick={handleBulkRejectLowConf}
-            disabled={!filtered?.some((a) => a.status === "pending" && a.confidence != null && a.confidence < 0.5)}
+            disabled={
+              !filtered?.some(
+                (a) => a.status === "pending" && a.confidence != null && a.confidence < 0.5,
+              )
+            }
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm disabled:opacity-40"
-            style={{ backgroundColor: "var(--danger-soft)", border: "1px solid var(--danger)", color: "var(--danger)" }}
+            style={{
+              backgroundColor: "var(--danger-soft)",
+              border: "1px solid var(--danger)",
+              color: "var(--danger)",
+            }}
           >
             <XCircle size={14} />
             Reject &lt;50%
@@ -537,27 +763,64 @@ export default function ReviewPage() {
             onClick={jumpToNextPending}
             disabled={pendingCount === 0}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm disabled:opacity-40"
-            style={{ backgroundColor: "var(--accent-soft)", border: "1px solid var(--accent)", color: "var(--accent)" }}
+            style={{
+              backgroundColor: "var(--accent-soft)",
+              border: "1px solid var(--accent)",
+              color: "var(--accent)",
+            }}
           >
             Next Pending
           </button>
 
           <div className="flex items-center gap-2 ml-auto">
-            <label className="eyebrow" style={{ fontSize: 10 }}>Min conf</label>
+            <label className="eyebrow" style={{ fontSize: 10 }}>
+              Min conf
+            </label>
             <input
-              aria-label="Minimum confidence" type="range" min={0} max={1} step={0.05} value={confFilter}
-              onChange={(e) => { setConfFilter(Number(e.target.value)); setFramePage(0); }}
+              aria-label="Minimum confidence"
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={confFilter}
+              onChange={(e) => {
+                setConfFilter(Number(e.target.value));
+                setFramePage(0);
+              }}
               className="w-24"
             />
-            <span style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text-muted)", width: 28, textAlign: "right" }}>
+            <span
+              style={{
+                fontSize: 11,
+                fontFamily: "var(--font-mono)",
+                color: "var(--text-muted)",
+                width: 28,
+                textAlign: "right",
+              }}
+            >
               {confFilter > 0 ? `${(confFilter * 100).toFixed(0)}%` : "All"}
             </span>
           </div>
 
-          <div className="flex items-center gap-1.5 pl-3" style={{ borderLeft: "1px solid var(--border-subtle)", color: "var(--text-muted)", fontSize: 11 }}>
+          <div
+            className="flex items-center gap-1.5 pl-3"
+            style={{
+              borderLeft: "1px solid var(--border-subtle)",
+              color: "var(--text-muted)",
+              fontSize: 11,
+            }}
+          >
             <Keyboard size={11} />
             {["A accept", "R reject", "N next", "\u2191\u2193 nav"].map((hint) => (
-              <span key={hint} className="px-1 py-0.5 rounded" style={{ backgroundColor: "var(--bg-inset)", fontFamily: "var(--font-mono)", fontSize: 10 }}>
+              <span
+                key={hint}
+                className="px-1 py-0.5 rounded"
+                style={{
+                  backgroundColor: "var(--bg-inset)",
+                  fontFamily: "var(--font-mono)",
+                  fontSize: 10,
+                }}
+              >
                 {hint}
               </span>
             ))}
@@ -575,10 +838,14 @@ export default function ReviewPage() {
 
             {/* Frame pagination */}
             {frameEntries.length > FRAMES_PER_PAGE && (
-              <div className="flex items-center justify-between text-sm pb-2" style={{ color: "var(--text-muted)" }}>
+              <div
+                className="flex items-center justify-between text-sm pb-2"
+                style={{ color: "var(--text-muted)" }}
+              >
                 <span style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>
                   Frames {framePage * FRAMES_PER_PAGE + 1}&ndash;
-                  {Math.min((framePage + 1) * FRAMES_PER_PAGE, frameEntries.length)} of {frameEntries.length}
+                  {Math.min((framePage + 1) * FRAMES_PER_PAGE, frameEntries.length)} of{" "}
+                  {frameEntries.length}
                 </span>
                 <div className="flex items-center gap-1">
                   <button
@@ -596,16 +863,23 @@ export default function ReviewPage() {
                         key={i}
                         onClick={() => setFramePage(i)}
                         className="w-7 h-7 rounded text-xs"
-                        style={i === framePage
-                          ? { backgroundColor: "var(--text-primary)", color: "var(--bg-page)", fontFamily: "var(--font-mono)" }
-                          : { color: "var(--text-secondary)", fontFamily: "var(--font-mono)" }
+                        style={
+                          i === framePage
+                            ? {
+                                backgroundColor: "var(--text-primary)",
+                                color: "var(--bg-page)",
+                                fontFamily: "var(--font-mono)",
+                              }
+                            : { color: "var(--text-secondary)", fontFamily: "var(--font-mono)" }
                         }
                       >
                         {i + 1}
                       </button>
                     ))
                   ) : (
-                    <span style={{ fontSize: 12, fontFamily: "var(--font-mono)", padding: "0 8px" }}>
+                    <span
+                      style={{ fontSize: 12, fontFamily: "var(--font-mono)", padding: "0 8px" }}
+                    >
                       {framePage + 1}/{totalPages}
                     </span>
                   )}
@@ -640,64 +914,92 @@ export default function ReviewPage() {
           </div>
 
           {/* Stats sidebar */}
-          <div className="sticky top-4">
-            {stats && <StatsPanel stats={stats} />}
-          </div>
+          <div className="sticky top-4">{stats && <StatsPanel stats={stats} />}</div>
         </div>
       </div>
 
       {/* Sticky train bar — show after >50% reviewed */}
-      {job && hasTrainingArtifact(job) && acceptedCount > 0 && annotations && (acceptedCount + (annotations.filter((a) => a.status === "rejected").length)) > annotations.length * 0.5 && (
-        <div
-          className="fixed bottom-0 left-0 right-0 py-3 px-6 flex items-center justify-between z-50"
-          style={{ backgroundColor: "var(--success)", color: "#fff" }}
-        >
-          <span className="text-sm">
-            <strong>{acceptedCount}</strong> accepted, <strong>{globalPendingCount}</strong> remaining to review.
-            {globalPendingCount === 0 && " All reviewed!"}
-          </span>
-          <Link
-            to={`/train/${jobId}`}
-            className="px-5 py-2 rounded-lg text-sm font-medium"
-            style={{ backgroundColor: "#fff", color: "var(--success)" }}
+      {job &&
+        hasTrainingArtifact(job) &&
+        acceptedCount > 0 &&
+        annotations &&
+        acceptedCount + annotations.filter((a) => a.status === "rejected").length >
+          annotations.length * 0.5 && (
+          <div
+            className="fixed bottom-0 left-0 right-0 py-3 px-6 flex items-center justify-between z-50"
+            style={{ backgroundColor: "var(--success)", color: "#fff" }}
           >
-            Train Model
-          </Link>
-        </div>
-      )}
+            <span className="text-sm">
+              <strong>{acceptedCount}</strong> accepted, <strong>{globalPendingCount}</strong>{" "}
+              remaining to review.
+              {globalPendingCount === 0 && " All reviewed!"}
+            </span>
+            <Link
+              to={`/train/${jobId}`}
+              className="px-5 py-2 rounded-lg text-sm font-medium"
+              style={{ backgroundColor: "#fff", color: "var(--success)" }}
+            >
+              Train Model
+            </Link>
+          </div>
+        )}
 
       {/* Full-screen annotation inspector */}
-      {inspectFrameId && byFrame.has(inspectFrameId) && (() => {
-        const frameAnns = byFrame.get(inspectFrameId)!;
-        const frameUrl = frameAnns[0]?.frame_url;
-        if (!frameUrl) return null;
+      {inspectFrameId &&
+        byFrame.has(inspectFrameId) &&
+        (() => {
+          const frameAnns = byFrame.get(inspectFrameId)!;
+          const frameUrl = frameAnns[0]?.frame_url;
+          if (!frameUrl) return null;
 
-        const allFrameIds = frameEntries.map(([id]) => id);
-        const currentIdx = allFrameIds.indexOf(inspectFrameId);
-        const allClasses = [...new Set(annotations?.map((a) => a.class_name) || [])].sort();
+          const allFrameIds = frameEntries.map(([id]) => id);
+          const currentIdx = allFrameIds.indexOf(inspectFrameId);
+          const allClasses = [...new Set(annotations?.map((a) => a.class_name) || [])].sort();
 
-        return (
-          <AnnotationCanvas
-            imageUrl={frameUrl}
-            initialAnnotationId={inspectAnnotationId}
-            onSelectionChange={setInspectAnnotationId}
-            sourcePanel={<SourceVideoPlayer jobId={jobId!} annotation={frameAnns.find((a) => a.id === inspectAnnotationId) || frameAnns[0]} source={sources?.find((source) => source.id === frameAnns[0].source_video_id)} />}
-            frameId={inspectFrameId}
-            jobId={jobId!}
-            annotations={frameAnns}
-            classes={allClasses}
-            onAccept={(id) => handleReview(id, "accepted")}
-            onReject={(id) => handleReview(id, "rejected")}
-            onClose={() => setInspectFrameId(null)}
-            onPrev={currentIdx > 0 ? () => openInspector(allFrameIds[currentIdx - 1], byFrame.get(allFrameIds[currentIdx - 1])![0].id) : undefined}
-            onNext={currentIdx < allFrameIds.length - 1 ? () => openInspector(allFrameIds[currentIdx + 1], byFrame.get(allFrameIds[currentIdx + 1])![0].id) : undefined}
-            onAnnotationCreated={() => {
-              queryClient.invalidateQueries({ queryKey: ["annotations", jobId] });
-              queryClient.invalidateQueries({ queryKey: ["stats", jobId] });
-            }}
-          />
-        );
-      })()}
+          return (
+            <AnnotationCanvas
+              imageUrl={frameUrl}
+              initialAnnotationId={inspectAnnotationId}
+              onSelectionChange={setInspectAnnotationId}
+              sourcePanel={
+                <SourceVideoPlayer
+                  jobId={jobId!}
+                  annotation={frameAnns.find((a) => a.id === inspectAnnotationId) || frameAnns[0]}
+                  source={sources?.find((source) => source.id === frameAnns[0].source_video_id)}
+                />
+              }
+              frameId={inspectFrameId}
+              jobId={jobId!}
+              annotations={frameAnns}
+              classes={allClasses}
+              onAccept={(id) => handleReview(id, "accepted")}
+              onReject={(id) => handleReview(id, "rejected")}
+              onClose={() => setInspectFrameId(null)}
+              onPrev={
+                currentIdx > 0
+                  ? () =>
+                      openInspector(
+                        allFrameIds[currentIdx - 1],
+                        byFrame.get(allFrameIds[currentIdx - 1])![0].id,
+                      )
+                  : undefined
+              }
+              onNext={
+                currentIdx < allFrameIds.length - 1
+                  ? () =>
+                      openInspector(
+                        allFrameIds[currentIdx + 1],
+                        byFrame.get(allFrameIds[currentIdx + 1])![0].id,
+                      )
+                  : undefined
+              }
+              onAnnotationCreated={() => {
+                queryClient.invalidateQueries({ queryKey: ["annotations", jobId] });
+                queryClient.invalidateQueries({ queryKey: ["stats", jobId] });
+              }}
+            />
+          );
+        })()}
     </div>
   );
 }

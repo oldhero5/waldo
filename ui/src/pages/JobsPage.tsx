@@ -49,13 +49,10 @@ export default function JobsPage() {
 
   return (
     <div className="min-h-screen">
-
       <div className="max-w-4xl mx-auto mt-8 px-4">
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-2xl font-bold text-gray-900">Jobs</h1>
-          {jobs && (
-            <span className="text-sm text-gray-400">{jobs.length} total</span>
-          )}
+          {jobs && <span className="text-sm text-gray-400">{jobs.length} total</span>}
         </div>
 
         {/* Filter pills */}
@@ -63,7 +60,10 @@ export default function JobsPage() {
           {FILTERS.map((f) => (
             <button
               key={f.value}
-              onClick={() => { setFilter(f.value); setShowCount(PAGE_SIZE); }}
+              onClick={() => {
+                setFilter(f.value);
+                setShowCount(PAGE_SIZE);
+              }}
               className={`px-3 py-1.5 rounded-md text-sm transition-colors ${
                 filter === f.value
                   ? "bg-gray-900 text-white"
@@ -97,9 +97,7 @@ export default function JobsPage() {
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <span className="font-medium">
-                      {job.text_prompt || "Exemplar"}
-                    </span>
+                    <span className="font-medium">{job.text_prompt || "Exemplar"}</span>
                     <span
                       className={`px-2 py-0.5 rounded text-xs ${STATUS_COLORS[job.status] || "bg-gray-100"}`}
                     >
@@ -125,9 +123,7 @@ export default function JobsPage() {
                   </div>
                 )}
                 {job.error_message && (
-                  <p className="mt-1 text-red-600 text-xs">
-                    {job.error_message}
-                  </p>
+                  <p className="mt-1 text-red-600 text-xs">{job.error_message}</p>
                 )}
               </Link>
             );

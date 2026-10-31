@@ -33,9 +33,25 @@ export default function WorkflowsPage() {
       {/* Experimental banner */}
       <div
         className="flex items-center gap-2 rounded-lg px-4 py-2.5 mb-4"
-        style={{ backgroundColor: "var(--warning-soft)", border: "1px solid var(--warning)", color: "var(--warning)", fontSize: 13 }}
+        style={{
+          backgroundColor: "var(--warning-soft)",
+          border: "1px solid var(--warning)",
+          color: "var(--warning)",
+          fontSize: 13,
+        }}
       >
-        <span style={{ fontFamily: "var(--font-mono)", fontSize: 10, letterSpacing: "0.06em", textTransform: "uppercase", padding: "1px 5px", borderRadius: 4, backgroundColor: "var(--warning)", color: "#fff" }}>
+        <span
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: 10,
+            letterSpacing: "0.06em",
+            textTransform: "uppercase",
+            padding: "1px 5px",
+            borderRadius: 4,
+            backgroundColor: "var(--warning)",
+            color: "#fff",
+          }}
+        >
           beta
         </span>
         Workflows is experimental. Features may change as the design evolves.
@@ -43,8 +59,13 @@ export default function WorkflowsPage() {
 
       <div className="flex items-center justify-between mb-6">
         <div>
-          <p className="eyebrow" style={{ marginBottom: 4 }}>Pipeline builder</p>
-          <h1 className="text-2xl font-bold flex items-center gap-2" style={{ color: "var(--text-primary)" }}>
+          <p className="eyebrow" style={{ marginBottom: 4 }}>
+            Pipeline builder
+          </p>
+          <h1
+            className="text-2xl font-bold flex items-center gap-2"
+            style={{ color: "var(--text-primary)" }}
+          >
             <Workflow size={24} />
             Workflows
           </h1>
@@ -65,7 +86,13 @@ export default function WorkflowsPage() {
       {/* Templates — click to load pre-built graph */}
       <div className="mb-8">
         <p className="eyebrow mb-3">Start from a template</p>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 12 }}>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
+            gap: 12,
+          }}
+        >
           {TEMPLATES.map((t, idx) => (
             <button
               key={t.name}
@@ -74,26 +101,70 @@ export default function WorkflowsPage() {
               style={{ padding: 16 }}
             >
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                <span style={{ width: 8, height: 8, borderRadius: "50%", backgroundColor: t.color, flexShrink: 0 }} />
-                <span style={{ fontFamily: "var(--font-serif)", fontWeight: 600, fontSize: 14, color: "var(--text-primary)" }}>
+                <span
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: "50%",
+                    backgroundColor: t.color,
+                    flexShrink: 0,
+                  }}
+                />
+                <span
+                  style={{
+                    fontFamily: "var(--font-serif)",
+                    fontWeight: 600,
+                    fontSize: 14,
+                    color: "var(--text-primary)",
+                  }}
+                >
                   {t.name}
                 </span>
               </div>
-              <p style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.5, marginBottom: 10 }}>
+              <p
+                style={{
+                  fontSize: 12,
+                  color: "var(--text-secondary)",
+                  lineHeight: 1.5,
+                  marginBottom: 10,
+                }}
+              >
                 {t.desc}
               </p>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
                 {t.tags.map((tag) => (
-                  <span key={tag} style={{
-                    fontFamily: "var(--font-mono)", fontSize: 9, padding: "2px 6px", borderRadius: 5,
-                    backgroundColor: "var(--bg-inset)", color: "var(--text-muted)",
-                  }}>
+                  <span
+                    key={tag}
+                    style={{
+                      fontFamily: "var(--font-mono)",
+                      fontSize: 9,
+                      padding: "2px 6px",
+                      borderRadius: 5,
+                      backgroundColor: "var(--bg-inset)",
+                      color: "var(--text-muted)",
+                    }}
+                  >
                     {tag}
                   </span>
                 ))}
               </div>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", marginTop: 8 }}>
-                <span style={{ fontSize: 11, color: "var(--accent)", display: "flex", alignItems: "center", gap: 4 }}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "flex-end",
+                  marginTop: 8,
+                }}
+              >
+                <span
+                  style={{
+                    fontSize: 11,
+                    color: "var(--accent)",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 4,
+                  }}
+                >
                   Use template <ArrowRight size={12} />
                 </span>
               </div>
@@ -112,18 +183,45 @@ export default function WorkflowsPage() {
                 key={wf.id}
                 to={`/workflows/${wf.slug}`}
                 className="surface surface-interactive"
-                style={{ padding: "12px 16px", display: "flex", alignItems: "center", justifyContent: "space-between" }}
+                style={{
+                  padding: "12px 16px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                }}
               >
                 <div>
-                  <p style={{ fontFamily: "var(--font-serif)", fontWeight: 600, fontSize: 14, color: "var(--text-primary)" }}>
+                  <p
+                    style={{
+                      fontFamily: "var(--font-serif)",
+                      fontWeight: 600,
+                      fontSize: 14,
+                      color: "var(--text-primary)",
+                    }}
+                  >
                     {wf.name}
                   </p>
-                  <p style={{ fontSize: 11, color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}>
+                  <p
+                    style={{
+                      fontSize: 11,
+                      color: "var(--text-muted)",
+                      fontFamily: "var(--font-mono)",
+                    }}
+                  >
                     {wf.block_count} blocks {wf.is_deployed && "· deployed"}
                   </p>
                 </div>
                 {wf.is_deployed && (
-                  <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 6, backgroundColor: "#dcfce7", color: "#16a34a", fontWeight: 600 }}>
+                  <span
+                    style={{
+                      fontSize: 10,
+                      padding: "2px 8px",
+                      borderRadius: 6,
+                      backgroundColor: "#dcfce7",
+                      color: "#16a34a",
+                      fontWeight: 600,
+                    }}
+                  >
                     LIVE
                   </span>
                 )}

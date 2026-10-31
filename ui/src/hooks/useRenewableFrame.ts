@@ -6,11 +6,16 @@ const inFlight = new Map<string, Promise<{ image_url: string }>>();
 
 // Only pending requests are shared. A subscriber leaving cannot abort a request
 // another image is still using, and settled capabilities never survive a session.
-function requestForCurrentIdentity(frameId: string, identity: string): Promise<{ image_url: string }> {
+function requestForCurrentIdentity(
+  frameId: string,
+  identity: string,
+): Promise<{ image_url: string }> {
   const key = JSON.stringify([identity, frameId]);
   const pending = inFlight.get(key);
   if (pending) return pending;
-  const request = getFrame(frameId).finally(() => { inFlight.delete(key); });
+  const request = getFrame(frameId).finally(() => {
+    inFlight.delete(key);
+  });
   inFlight.set(key, request);
   return request;
 }
@@ -18,14 +23,32 @@ function requestForCurrentIdentity(frameId: string, identity: string): Promise<{
 export function useRenewableFrame(frameId: string, initialUrl: string) {
   const { user, token } = useAuth();
   const identity = JSON.stringify([token, user?.id, user?.workspace_id, frameId]);
-  const episode = useMemo(() => ({ identity, active: false, revision: 0, attempted: false, pending: false }), [identity]);
-  const [media, setMedia] = useState({ identity, initialUrl, url: initialUrl, loadKey: 0, loading: false, error: null as string | null });
+  const episode = useMemo(
+    () => ({ identity, active: false, revision: 0, attempted: false, pending: false }),
+    [identity],
+  );
+  const [media, setMedia] = useState({
+    identity,
+    initialUrl,
+    url: initialUrl,
+    loadKey: 0,
+    loading: false,
+    error: null as string | null,
+  });
   // Changing the supplied URL is a new image load, but does not replenish the
   // failure budget for this frame/session. Successful decoding alone does that.
   if (media.identity !== identity || media.initialUrl !== initialUrl) {
-    setMedia({ identity, initialUrl, url: initialUrl, loadKey: 0, loading: media.identity === identity && episode.pending, error: null });
+    setMedia({
+      identity,
+      initialUrl,
+      url: initialUrl,
+      loadKey: 0,
+      loading: media.identity === identity && episode.pending,
+      error: null,
+    });
   }
-  const url = media.identity === identity && media.initialUrl === initialUrl ? media.url : initialUrl;
+  const url =
+    media.identity === identity && media.initialUrl === initialUrl ? media.url : initialUrl;
 
   const loadKey = media.identity === identity ? media.loadKey : 0;
   const load = useMemo(() => ({ episode, url, loadKey, active: false }), [url, loadKey, episode]);
@@ -33,12 +56,17 @@ export function useRenewableFrame(frameId: string, initialUrl: string) {
     load.active = true;
     // A new supplied URL only supersedes native image callbacks. Renewal still
     // belongs to this frame/auth episode and may recover another expired URL.
-    return () => { load.active = false; };
+    return () => {
+      load.active = false;
+    };
   }, [load]);
 
   useEffect(() => {
     episode.active = true;
-    return () => { episode.active = false; episode.revision++; };
+    return () => {
+      episode.active = false;
+      episode.revision++;
+    };
   }, [episode]);
 
   const renew = useCallback(async () => {
@@ -50,10 +78,19 @@ export function useRenewableFrame(frameId: string, initialUrl: string) {
     try {
       const frame = await requestForCurrentIdentity(frameId, identity);
       if (!episode.active || episode.revision !== revision) return;
-      setMedia((previous) => ({ ...previous, url: frame.image_url, loadKey: previous.loadKey + 1, loading: false }));
+      setMedia((previous) => ({
+        ...previous,
+        url: frame.image_url,
+        loadKey: previous.loadKey + 1,
+        loading: false,
+      }));
     } catch (error) {
       if (!episode.active || episode.revision !== revision) return;
-      setMedia((previous) => ({ ...previous, loading: false, error: error instanceof Error ? error.message : "Could not reload image." }));
+      setMedia((previous) => ({
+        ...previous,
+        loading: false,
+        error: error instanceof Error ? error.message : "Could not reload image.",
+      }));
     } finally {
       if (episode.revision === revision) episode.pending = false;
     }
@@ -64,15 +101,31 @@ export function useRenewableFrame(frameId: string, initialUrl: string) {
   const onLoad = useCallback(() => {
     if (!episode.active || !load.active) return;
     episode.attempted = false;
-    setMedia((previous) => previous.url === url ? { ...previous, loading: false, error: null } : previous);
+    setMedia((previous) =>
+      previous.url === url ? { ...previous, loading: false, error: null } : previous,
+    );
   }, [episode, load, url]);
   const onError = useCallback(() => {
     if (!episode.active || !load.active || episode.pending) return;
     if (episode.attempted) {
-      setMedia((previous) => previous.url === url ? { ...previous, loading: false, error: "Image unavailable. Try again." } : previous);
+      setMedia((previous) =>
+        previous.url === url
+          ? { ...previous, loading: false, error: "Image unavailable. Try again." }
+          : previous,
+      );
     } else {
       void renew();
     }
   }, [episode, load, renew, url]);
-  return { url, loadKey, loading: media.identity === identity && media.loading, error: media.identity === identity ? media.error : null, onLoad, onError, retry: () => { void renew(); } };
+  return {
+    url,
+    loadKey,
+    loading: media.identity === identity && media.loading,
+    error: media.identity === identity ? media.error : null,
+    onLoad,
+    onError,
+    retry: () => {
+      void renew();
+    },
+  };
 }

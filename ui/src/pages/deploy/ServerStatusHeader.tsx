@@ -11,31 +11,29 @@ export function ServerStatusHeader({ status }: { status: ServeStatus | undefined
           <span
             className={`w-2.5 h-2.5 rounded-full ${status?.loaded ? "bg-green-500" : "bg-gray-400"}`}
           />
-          <span
-            className="text-sm font-semibold"
-            style={{ color: "var(--text-primary)" }}
-          >
+          <span className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
             Inference Server
           </span>
           <span
             className="text-xs font-medium px-2 py-0.5 rounded-full"
             style={{
-              backgroundColor: status?.loaded
-                ? "var(--success-soft)"
-                : "var(--bg-inset)",
-              color: status?.loaded
-                ? "var(--success)"
-                : "var(--text-muted)",
+              backgroundColor: status?.loaded ? "var(--success-soft)" : "var(--bg-inset)",
+              color: status?.loaded ? "var(--success)" : "var(--text-muted)",
             }}
           >
             {status?.loaded ? "Active" : "Inactive"}
           </span>
         </div>
         {status?.loaded && (
-          <div className="flex items-center gap-4 text-xs" style={{ color: "var(--text-secondary)" }}>
+          <div
+            className="flex items-center gap-4 text-xs"
+            style={{ color: "var(--text-secondary)" }}
+          >
             <span>
               <span style={{ color: "var(--text-muted)" }}>Model: </span>
-              <span className="font-medium" style={{ color: "var(--text-primary)" }}>{status.model_name}</span>
+              <span className="font-medium" style={{ color: "var(--text-primary)" }}>
+                {status.model_name}
+              </span>
             </span>
             <span>
               <span style={{ color: "var(--text-muted)" }}>Variant: </span>

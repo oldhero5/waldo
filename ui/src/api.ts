@@ -48,7 +48,12 @@ export async function pollJob<T = unknown>(
       return body.result as T;
     }
     if (body.status === "failed" || body.status === "partial") {
-      throw new Error(body.error || (body.status === "partial" ? "Job only partially processed; review available evidence" : "Job failed"));
+      throw new Error(
+        body.error ||
+          (body.status === "partial"
+            ? "Job only partially processed; review available evidence"
+            : "Job failed"),
+      );
     }
     await new Promise((resolve) => setTimeout(resolve, delay));
     delay = Math.min(maxDelayMs, Math.floor(delay * 1.5));
@@ -154,10 +159,10 @@ export interface JobStats {
 export async function uploadVideo(file: File, projectName = "default"): Promise<UploadResult> {
   const form = new FormData();
   form.append("file", file);
-  const res = await authFetch(
-    `${BASE}/upload?project_name=${encodeURIComponent(projectName)}`,
-    { method: "POST", body: form }
-  );
+  const res = await authFetch(`${BASE}/upload?project_name=${encodeURIComponent(projectName)}`, {
+    method: "POST",
+    body: form,
+  });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -192,18 +197,16 @@ export interface PreviewResponse {
   mode: "sample" | "window";
 }
 
-export async function previewPrompts(
-  opts: {
-    videoId?: string;
-    projectId?: string;
-    prompts: string[];
-    maxFrames?: number;
-    threshold?: number;
-    startSec?: number;
-    durationSec?: number | null;
-    sampleFps?: number;
-  }
-): Promise<PreviewResponse> {
+export async function previewPrompts(opts: {
+  videoId?: string;
+  projectId?: string;
+  prompts: string[];
+  maxFrames?: number;
+  threshold?: number;
+  startSec?: number;
+  durationSec?: number | null;
+  sampleFps?: number;
+}): Promise<PreviewResponse> {
   // POST kicks off a Celery task and returns 202 with `{job_id, result_url}`.
   // We poll under the hood so existing callers still get a `PreviewResponse`
   // when they `await` this helper — no changes needed at the call sites.
@@ -266,17 +269,15 @@ export async function getDatasetStats(jobId: string): Promise<DatasetStats> {
   return res.json();
 }
 
-export async function startLabeling(
-  opts: {
-    videoId?: string;
-    projectId?: string;
-    textPrompt?: string;
-    classPrompts?: ClassPrompt[];
-    taskType?: string;
-    threshold?: number;
-    fps?: number;
-  }
-): Promise<LabelResult> {
+export async function startLabeling(opts: {
+  videoId?: string;
+  projectId?: string;
+  textPrompt?: string;
+  classPrompts?: ClassPrompt[];
+  taskType?: string;
+  threshold?: number;
+  fps?: number;
+}): Promise<LabelResult> {
   const res = await authFetch(`${BASE}/label`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -300,7 +301,7 @@ export async function startExemplarLabeling(
   points: number[][],
   labels: number[],
   taskType = "segment",
-  className = "object"
+  className = "object",
 ): Promise<LabelResult> {
   const res = await authFetch(`${BASE}/label/exemplar`, {
     method: "POST",
@@ -359,7 +360,10 @@ export async function listSavedSources(jobId: string): Promise<SavedSource[]> {
   return res.json();
 }
 
-export async function getSourcePlayback(jobId: string, videoId: string): Promise<{ video_id: string; url: string }> {
+export async function getSourcePlayback(
+  jobId: string,
+  videoId: string,
+): Promise<{ video_id: string; url: string }> {
   const res = await authFetch(`${BASE}/jobs/${jobId}/sources/${videoId}/playback`);
   if (!res.ok) throw new Error(await res.text());
   return res.json();
@@ -367,7 +371,7 @@ export async function getSourcePlayback(jobId: string, videoId: string): Promise
 
 export async function updateAnnotation(
   annotationId: string,
-  update: Partial<{ status: string; polygon: number[]; bbox: number[]; class_name: string }>
+  update: Partial<{ status: string; polygon: number[]; bbox: number[]; class_name: string }>,
 ): Promise<AnnotationOut> {
   const res = await authFetch(`${BASE}/annotations/${annotationId}`, {
     method: "PATCH",
@@ -404,7 +408,13 @@ export interface DatasetOverview {
   feedback_count: number;
   labeling_in_progress: number;
   in_progress_classes: string[];
-  in_progress_details: { class_name: string; status: string; processed: number; total: number; progress: number }[];
+  in_progress_details: {
+    class_name: string;
+    status: string;
+    processed: number;
+    total: number;
+    progress: number;
+  }[];
 }
 
 export async function getDatasetOverview(jobId: string): Promise<DatasetOverview> {
@@ -413,25 +423,38 @@ export async function getDatasetOverview(jobId: string): Promise<DatasetOverview
   return res.json();
 }
 
-export async function duplicateDataset(jobId: string): Promise<{ new_id: string; annotations_copied: number }> {
+export async function duplicateDataset(
+  jobId: string,
+): Promise<{ new_id: string; annotations_copied: number }> {
   const res = await authFetch(`${BASE}/jobs/${jobId}/duplicate`, { method: "POST" });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
 
-export async function listJobClasses(jobId: string): Promise<{ classes: { name: string; count: number }[] }> {
+export async function listJobClasses(
+  jobId: string,
+): Promise<{ classes: { name: string; count: number }[] }> {
   const res = await authFetch(`${BASE}/jobs/${jobId}/classes`);
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
 
-export async function deleteClass(jobId: string, className: string): Promise<{ deleted_count: number }> {
-  const res = await authFetch(`${BASE}/jobs/${jobId}/classes/${encodeURIComponent(className)}`, { method: "DELETE" });
+export async function deleteClass(
+  jobId: string,
+  className: string,
+): Promise<{ deleted_count: number }> {
+  const res = await authFetch(`${BASE}/jobs/${jobId}/classes/${encodeURIComponent(className)}`, {
+    method: "DELETE",
+  });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
 
-export async function mergeClasses(jobId: string, sourceClass: string, targetClass: string): Promise<{ updated: number }> {
+export async function mergeClasses(
+  jobId: string,
+  sourceClass: string,
+  targetClass: string,
+): Promise<{ updated: number }> {
   const res = await authFetch(`${BASE}/annotations/merge-classes`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -441,7 +464,10 @@ export async function mergeClasses(jobId: string, sourceClass: string, targetCla
   return res.json();
 }
 
-export async function renameJob(jobId: string, name: string): Promise<{ status: string; name: string | null }> {
+export async function renameJob(
+  jobId: string,
+  name: string,
+): Promise<{ status: string; name: string | null }> {
   const res = await authFetch(`${BASE}/jobs/${jobId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
@@ -451,7 +477,11 @@ export async function renameJob(jobId: string, name: string): Promise<{ status: 
   return res.json();
 }
 
-export async function addClassToDataset(jobId: string, className: string, prompt?: string): Promise<{ status: string; class_name: string }> {
+export async function addClassToDataset(
+  jobId: string,
+  className: string,
+  prompt?: string,
+): Promise<{ status: string; class_name: string }> {
   const res = await authFetch(`${BASE}/jobs/${jobId}/add-class`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -461,7 +491,10 @@ export async function addClassToDataset(jobId: string, className: string, prompt
   return res.json();
 }
 
-export async function exportDataset(jobId: string, format: string): Promise<{ download_url: string }> {
+export async function exportDataset(
+  jobId: string,
+  format: string,
+): Promise<{ download_url: string }> {
   const res = await authFetch(`${BASE}/jobs/${jobId}/export`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -471,7 +504,9 @@ export async function exportDataset(jobId: string, format: string): Promise<{ do
   return res.json();
 }
 
-export async function deleteJob(jobId: string): Promise<{ status: string; annotations_deleted: number }> {
+export async function deleteJob(
+  jobId: string,
+): Promise<{ status: string; annotations_deleted: number }> {
   const res = await authFetch(`${BASE}/jobs/${jobId}`, { method: "DELETE" });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
@@ -490,17 +525,28 @@ export async function listFrames(videoId: string): Promise<FrameOut[]> {
 }
 
 /** Get a fresh capability for the same scoped frame. */
-export async function getFrame(frameId: string, signal?: AbortSignal): Promise<{ image_url: string }> {
+export async function getFrame(
+  frameId: string,
+  signal?: AbortSignal,
+): Promise<{ image_url: string }> {
   const res = await authFetch(`${BASE}/frames/${encodeURIComponent(frameId)}`, { signal });
   if (!res.ok) throw new Error(`Could not reload image (${res.status}). Try again.`);
   return res.json();
 }
 
 /** Renew the signed object in this URL, including historical immutable exports. */
-export async function renewJobDownload(jobId: string, oldUrl: string, signal?: AbortSignal): Promise<string> {
+export async function renewJobDownload(
+  jobId: string,
+  oldUrl: string,
+  signal?: AbortSignal,
+): Promise<string> {
   const token = new URL(oldUrl, window.location.origin).searchParams.get("token");
-  if (!token) throw new Error("This download link has no token. Refresh the dataset and try again.");
-  const res = await authFetch(`${BASE}/jobs/${encodeURIComponent(jobId)}/download-url?${new URLSearchParams({ token })}`, { signal });
+  if (!token)
+    throw new Error("This download link has no token. Refresh the dataset and try again.");
+  const res = await authFetch(
+    `${BASE}/jobs/${encodeURIComponent(jobId)}/download-url?${new URLSearchParams({ token })}`,
+    { signal },
+  );
   if (!res.ok) throw new Error(`Could not renew this download (${res.status}). Try again.`);
   const body: { download_url: string } = await res.json();
   return body.download_url;
@@ -535,13 +581,13 @@ export interface ClassPrompt {
 
 export async function uploadVideoBatch(
   files: File[],
-  projectName = "default"
+  projectName = "default",
 ): Promise<{ videos: UploadResult[]; project_id: string }> {
   const form = new FormData();
   for (const file of files) form.append("files", file);
   const res = await authFetch(
     `${BASE}/upload/batch?project_name=${encodeURIComponent(projectName)}`,
-    { method: "POST", body: form }
+    { method: "POST", body: form },
   );
   if (!res.ok) throw new Error(await res.text());
   return res.json();
@@ -549,7 +595,7 @@ export async function uploadVideoBatch(
 
 export async function uploadImages(
   files: File[],
-  projectName?: string
+  projectName?: string,
 ): Promise<{ frame_ids: string[]; urls: string[]; project_id: string }> {
   const form = new FormData();
   for (const file of files) form.append("files", file);
@@ -564,7 +610,7 @@ export async function uploadImages(
 
 export async function linkVideos(
   videoIds: string[],
-  targetProjectName: string
+  targetProjectName: string,
 ): Promise<{ linked: number; auto_labeled: number }> {
   const res = await authFetch(`${BASE}/link-videos`, {
     method: "POST",
@@ -581,7 +627,10 @@ export async function listProjects(): Promise<ProjectOut[]> {
   return res.json();
 }
 
-export async function listProjectVideos(projectId: string, signal?: AbortSignal): Promise<VideoOut[]> {
+export async function listProjectVideos(
+  projectId: string,
+  signal?: AbortSignal,
+): Promise<VideoOut[]> {
   const res = await authFetch(`${BASE}/projects/${projectId}/videos`, { signal });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
@@ -627,7 +676,12 @@ export interface ModelOut {
 
 export async function startTraining(
   jobId: string,
-  opts: { name?: string; model_variant?: string; task_type?: string; hyperparameters?: Record<string, unknown> } = {}
+  opts: {
+    name?: string;
+    model_variant?: string;
+    task_type?: string;
+    hyperparameters?: Record<string, unknown>;
+  } = {},
 ): Promise<{ run_id: string; status: string; celery_task_id: string }> {
   const res = await authFetch(`${BASE}/train`, {
     method: "POST",
@@ -640,7 +694,7 @@ export async function startTraining(
 
 export async function updateTrainingRun(
   runId: string,
-  update: { tags?: string[]; notes?: string }
+  update: { tags?: string[]; notes?: string },
 ): Promise<{ status: string }> {
   const res = await authFetch(`${BASE}/train/${runId}`, {
     method: "PATCH",
@@ -744,7 +798,12 @@ export interface ServeStatus {
   class_names: string[] | null;
 }
 
-export async function predictImage(file: File, conf = 0.25, classes?: string[], modelId?: string): Promise<ImagePredictionResponse> {
+export async function predictImage(
+  file: File,
+  conf = 0.25,
+  classes?: string[],
+  modelId?: string,
+): Promise<ImagePredictionResponse> {
   const form = new FormData();
   form.append("file", file);
   let url = `${BASE}/predict/image?conf=${conf}`;
@@ -755,7 +814,11 @@ export async function predictImage(file: File, conf = 0.25, classes?: string[], 
   return res.json();
 }
 
-export async function predictSam(file: File, prompts: string[], conf = 0.15): Promise<ImagePredictionResponse> {
+export async function predictSam(
+  file: File,
+  prompts: string[],
+  conf = 0.15,
+): Promise<ImagePredictionResponse> {
   const form = new FormData();
   form.append("file", file);
   const url = `${BASE}/predict/sam?prompts=${encodeURIComponent(prompts.join(","))}&conf=${conf}`;
@@ -764,7 +827,11 @@ export async function predictSam(file: File, prompts: string[], conf = 0.15): Pr
   return res.json();
 }
 
-export async function predictSamVideo(file: File, prompts: string[], conf = 0.35): Promise<VideoPredictionResponse> {
+export async function predictSamVideo(
+  file: File,
+  prompts: string[],
+  conf = 0.35,
+): Promise<VideoPredictionResponse> {
   const form = new FormData();
   form.append("file", file);
   const url = `${BASE}/predict/sam/video?prompts=${encodeURIComponent(prompts.join(","))}&conf=${conf}`;
@@ -809,12 +876,24 @@ export type VideoSessionResult =
 
 export class InferenceStatusError extends Error {
   readonly status: number;
-  constructor(message: string, status: number) { super(message); this.status = status; }
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
 }
 
-export async function getVideoPredictionResult(sessionId: string, signal?: AbortSignal): Promise<VideoSessionResult> {
-  const res = await authFetch(`${BASE}/predict/video/result/${encodeURIComponent(sessionId)}`, { signal });
-  if (!res.ok) throw new InferenceStatusError(`Cannot check video processing status (${res.status})`, res.status);
+export async function getVideoPredictionResult(
+  sessionId: string,
+  signal?: AbortSignal,
+): Promise<VideoSessionResult> {
+  const res = await authFetch(`${BASE}/predict/video/result/${encodeURIComponent(sessionId)}`, {
+    signal,
+  });
+  if (!res.ok)
+    throw new InferenceStatusError(
+      `Cannot check video processing status (${res.status})`,
+      res.status,
+    );
   return res.json();
 }
 
@@ -826,7 +905,8 @@ export function streamPredictFrames(
   onError: (err: string) => void,
   onRecovering?: () => void,
 ): () => void {
-  let active = true, polling = false;
+  let active = true,
+    polling = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let ws: WebSocket | undefined;
   const controller = new AbortController();
@@ -834,9 +914,14 @@ export function streamPredictFrames(
     active = false;
     clearTimeout(timer);
     controller.abort();
-    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) ws.close();
+    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING))
+      ws.close();
   };
-  const finish = (action: () => void) => { if (!active) return; cleanup(); action(); };
+  const finish = (action: () => void) => {
+    if (!active) return;
+    cleanup();
+    action();
+  };
   const poll = async () => {
     if (!active || polling) return;
     clearTimeout(timer);
@@ -845,7 +930,10 @@ export function streamPredictFrames(
       const result = await getVideoPredictionResult(sessionId, controller.signal);
       if (!active) return;
       if (result.status === "completed") {
-        if (!Array.isArray(result.frames)) { finish(() => onError("Video result is missing its assessed frames")); return; }
+        if (!Array.isArray(result.frames)) {
+          finish(() => onError("Video result is missing its assessed frames"));
+          return;
+        }
         finish(() => onComplete(result.total_frames, result.frames));
       } else if (result.status === "failed") {
         finish(() => onError(result.error || "Video processing failed"));
@@ -873,7 +961,11 @@ export function streamPredictFrames(
           void poll();
         } else if (data.status === "failed") {
           finish(() => onError(data.error || "Video processing failed"));
-        } else if (Array.isArray(data.detections) && Number.isFinite(data.frame_index) && Number.isFinite(data.timestamp_s)) {
+        } else if (
+          Array.isArray(data.detections) &&
+          Number.isFinite(data.frame_index) &&
+          Number.isFinite(data.timestamp_s)
+        ) {
           onFrame({
             frame_index: data.frame_index,
             timestamp_s: data.timestamp_s,
@@ -884,15 +976,26 @@ export function streamPredictFrames(
             detections: data.detections,
           });
         }
-      } catch { onRecovering?.(); }
+      } catch {
+        onRecovering?.();
+      }
     };
-    ws.onerror = ws.onclose = () => { if (active) { onRecovering?.(); void poll(); } };
-  } catch { onRecovering?.(); }
+    ws.onerror = ws.onclose = () => {
+      if (active) {
+        onRecovering?.();
+        void poll();
+      }
+    };
+  } catch {
+    onRecovering?.();
+  }
   void poll();
   return cleanup;
 }
 
-export async function activateModel(modelId: string): Promise<{ status: string; model_id: string; name: string }> {
+export async function activateModel(
+  modelId: string,
+): Promise<{ status: string; model_id: string; name: string }> {
   const res = await authFetch(`${BASE}/models/${modelId}/activate`, { method: "POST" });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
@@ -963,7 +1066,7 @@ export async function segmentPoints(
   frameId: string,
   points: number[][],
   labels: number[],
-  threshold = 0.3
+  threshold = 0.3,
 ): Promise<SegmentPointsResponse> {
   const res = await authFetch(`${BASE}/label/segment-points`, {
     method: "POST",
@@ -1011,7 +1114,6 @@ export async function submitFeedbackBatch(items: FeedbackIn[]): Promise<Feedback
   return res.json();
 }
 
-
 // ── Deployment Targets ──────────────────────────────────────────
 
 export interface DeploymentTarget {
@@ -1050,7 +1152,14 @@ export async function createTarget(data: {
 
 export async function updateTarget(
   targetId: string,
-  data: Partial<{ name: string; location_label: string; target_type: string; model_id: string; config: Record<string, unknown>; is_active: boolean }>
+  data: Partial<{
+    name: string;
+    location_label: string;
+    target_type: string;
+    model_id: string;
+    config: Record<string, unknown>;
+    is_active: boolean;
+  }>,
 ): Promise<{ status: string }> {
   const res = await authFetch(`${BASE}/targets/${targetId}`, {
     method: "PATCH",
@@ -1066,7 +1175,6 @@ export async function deleteTarget(targetId: string): Promise<{ status: string }
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
-
 
 // ── Inference Metrics ───────────────────────────────────────────
 
@@ -1116,15 +1224,18 @@ export async function getMetricsSummary(window: string = "1h"): Promise<MetricsS
   return res.json();
 }
 
-
 // ── Model Promotion ─────────────────────────────────────────────
 
-export async function promoteModel(modelId: string, alias: string = "champion"): Promise<{ status: string; alias: string }> {
-  const res = await authFetch(`${BASE}/models/${modelId}/promote?alias=${alias}`, { method: "POST" });
+export async function promoteModel(
+  modelId: string,
+  alias: string = "champion",
+): Promise<{ status: string; alias: string }> {
+  const res = await authFetch(`${BASE}/models/${modelId}/promote?alias=${alias}`, {
+    method: "POST",
+  });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
-
 
 // ── Deployment Experiments (Blue-Green) ─────────────────────────
 
@@ -1165,12 +1276,16 @@ export async function createExperiment(data: {
   return res.json();
 }
 
-export async function completeExperiment(experimentId: string, winner: string): Promise<{ status: string }> {
-  const res = await authFetch(`${BASE}/experiments/${experimentId}/complete?winner=${winner}`, { method: "POST" });
+export async function completeExperiment(
+  experimentId: string,
+  winner: string,
+): Promise<{ status: string }> {
+  const res = await authFetch(`${BASE}/experiments/${experimentId}/complete?winner=${winner}`, {
+    method: "POST",
+  });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
-
 
 // ── Edge Devices ────────────────────────────────────────────────
 
@@ -1212,7 +1327,6 @@ export async function registerDevice(data: {
   return res.json();
 }
 
-
 // ── Comparison Runs (Benchmark History) ─────────────────────────
 
 export interface ComparisonRun {
@@ -1242,7 +1356,9 @@ export async function listComparisons(): Promise<ComparisonRun[]> {
   return res.json();
 }
 
-export async function saveComparison(data: Omit<ComparisonRun, "id" | "created_at">): Promise<{ id: string }> {
+export async function saveComparison(
+  data: Omit<ComparisonRun, "id" | "created_at">,
+): Promise<{ id: string }> {
   const res = await authFetch(`${BASE}/comparisons`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1257,7 +1373,6 @@ export async function deleteComparison(id: string): Promise<{ status: string }> 
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
-
 
 // ── Background Comparison Task ──────────────────────────────────
 
@@ -1278,7 +1393,8 @@ export async function startComparison(
   const form = new FormData();
   form.append("file", file);
   let url = `${BASE}/comparisons/run?model_a_id=${encodeURIComponent(modelAId)}&model_b_id=${encodeURIComponent(modelBId)}&conf=${conf}`;
-  if (samPrompts && samPrompts.length > 0) url += `&sam_prompts=${encodeURIComponent(samPrompts.join(","))}`;
+  if (samPrompts && samPrompts.length > 0)
+    url += `&sam_prompts=${encodeURIComponent(samPrompts.join(","))}`;
   const res = await authFetch(url, { method: "POST", body: form });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
@@ -1289,15 +1405,31 @@ export interface CompareResultResponse {
   session_id: string;
   error?: string;
   results?: {
-    a: { dets: DetectionOut[]; frames: FrameResultOut[] | null; latency: number; error: string | null };
-    b: { dets: DetectionOut[]; frames: FrameResultOut[] | null; latency: number; error: string | null };
+    a: {
+      dets: DetectionOut[];
+      frames: FrameResultOut[] | null;
+      latency: number;
+      error: string | null;
+    };
+    b: {
+      dets: DetectionOut[];
+      frames: FrameResultOut[] | null;
+      latency: number;
+      error: string | null;
+    };
   };
 }
 
-export async function getComparisonResult(sessionId: string, signal?: AbortSignal): Promise<CompareResultResponse> {
-  const res = await authFetch(`${BASE}/comparisons/result/${encodeURIComponent(sessionId)}`, { signal });
+export async function getComparisonResult(
+  sessionId: string,
+  signal?: AbortSignal,
+): Promise<CompareResultResponse> {
+  const res = await authFetch(`${BASE}/comparisons/result/${encodeURIComponent(sessionId)}`, {
+    signal,
+  });
   if (res.status === 202) return { status: "running", session_id: sessionId };
-  if (!res.ok) throw new InferenceStatusError(`Cannot check comparison status (${res.status})`, res.status);
+  if (!res.ok)
+    throw new InferenceStatusError(`Cannot check comparison status (${res.status})`, res.status);
   return res.json();
 }
 

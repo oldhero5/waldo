@@ -10,7 +10,16 @@
  * - Inline config display for key settings
  */
 import { Handle, Position, type NodeProps } from "@xyflow/react";
-import { Cpu, Scissors, MessageSquare, ArrowDownToLine, Eye, GitBranch, Scan, Rocket } from "lucide-react";
+import {
+  Cpu,
+  Scissors,
+  MessageSquare,
+  ArrowDownToLine,
+  Eye,
+  GitBranch,
+  Scan,
+  Rocket,
+} from "lucide-react";
 
 import type { WorkflowNode } from "../../lib/workflowTypes";
 
@@ -41,7 +50,9 @@ export default function BlockNode({ data, selected }: NodeProps<WorkflowNode>) {
   // Get the primary config value to show inline
   const configEntries = Object.entries(data.configSchema || {});
   const primaryConfig = configEntries.length > 0 ? configEntries[0] : null;
-  const primaryValue = primaryConfig ? (data.config?.[primaryConfig[0]] ?? primaryConfig[1].default) : null;
+  const primaryValue = primaryConfig
+    ? (data.config?.[primaryConfig[0]] ?? primaryConfig[1].default)
+    : null;
 
   return (
     <div
@@ -85,16 +96,18 @@ export default function BlockNode({ data, selected }: NodeProps<WorkflowNode>) {
           <Icon size={13} strokeWidth={2} />
         </div>
         <div style={{ minWidth: 0, flex: 1 }}>
-          <p style={{
-            fontFamily: "system-ui, -apple-system, sans-serif",
-            fontSize: 12,
-            fontWeight: 600,
-            color: "#1a1a1a",
-            lineHeight: 1.3,
-            whiteSpace: "nowrap",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-          }}>
+          <p
+            style={{
+              fontFamily: "system-ui, -apple-system, sans-serif",
+              fontSize: 12,
+              fontWeight: 600,
+              color: "#1a1a1a",
+              lineHeight: 1.3,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+          >
             {data.label}
           </p>
         </div>
@@ -102,65 +115,97 @@ export default function BlockNode({ data, selected }: NodeProps<WorkflowNode>) {
 
       {/* Inline config preview */}
       {primaryConfig && primaryValue != null && (
-        <div style={{
-          padding: "6px 12px",
-          backgroundColor: "#f8f8f8",
-          borderBottom: "1px solid rgba(0,0,0,0.05)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-        }}>
+        <div
+          style={{
+            padding: "6px 12px",
+            backgroundColor: "#f8f8f8",
+            borderBottom: "1px solid rgba(0,0,0,0.05)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+        >
           <span style={{ fontSize: 10, color: "#888", fontFamily: "ui-monospace, monospace" }}>
             {primaryConfig[1].label || primaryConfig[0]}
           </span>
-          <span style={{ fontSize: 10, color: "#333", fontWeight: 600, fontFamily: "ui-monospace, monospace" }}>
-            {typeof primaryValue === "number" ? primaryValue.toFixed(primaryValue < 1 ? 2 : 0) : String(primaryValue).slice(0, 20)}
+          <span
+            style={{
+              fontSize: 10,
+              color: "#333",
+              fontWeight: 600,
+              fontFamily: "ui-monospace, monospace",
+            }}
+          >
+            {typeof primaryValue === "number"
+              ? primaryValue.toFixed(primaryValue < 1 ? 2 : 0)
+              : String(primaryValue).slice(0, 20)}
           </span>
         </div>
       )}
 
       {/* Ports */}
-      <div style={{ padding: "6px 12px 8px", display: "flex", justifyContent: "space-between", gap: 8 }}>
+      <div
+        style={{
+          padding: "6px 12px 8px",
+          display: "flex",
+          justifyContent: "space-between",
+          gap: 8,
+        }}
+      >
         <div>
           {data.inputs?.map((p) => (
-            <div key={p.name} style={{
-              fontSize: 9,
-              color: "#777",
-              fontFamily: "ui-monospace, monospace",
-              display: "flex",
-              alignItems: "center",
-              gap: 3,
-              marginBottom: 2,
-              lineHeight: 1.6,
-            }}>
-              <span style={{
-                width: 5, height: 5, borderRadius: "50%",
-                backgroundColor: PORT_TYPE_COLORS[p.type] || "#999",
-                display: "inline-block",
-              }} />
+            <div
+              key={p.name}
+              style={{
+                fontSize: 9,
+                color: "#777",
+                fontFamily: "ui-monospace, monospace",
+                display: "flex",
+                alignItems: "center",
+                gap: 3,
+                marginBottom: 2,
+                lineHeight: 1.6,
+              }}
+            >
+              <span
+                style={{
+                  width: 5,
+                  height: 5,
+                  borderRadius: "50%",
+                  backgroundColor: PORT_TYPE_COLORS[p.type] || "#999",
+                  display: "inline-block",
+                }}
+              />
               {p.name}
             </div>
           ))}
         </div>
         <div style={{ textAlign: "right" }}>
           {data.outputs?.map((p) => (
-            <div key={p.name} style={{
-              fontSize: 9,
-              color: "#777",
-              fontFamily: "ui-monospace, monospace",
-              display: "flex",
-              alignItems: "center",
-              gap: 3,
-              justifyContent: "flex-end",
-              marginBottom: 2,
-              lineHeight: 1.6,
-            }}>
+            <div
+              key={p.name}
+              style={{
+                fontSize: 9,
+                color: "#777",
+                fontFamily: "ui-monospace, monospace",
+                display: "flex",
+                alignItems: "center",
+                gap: 3,
+                justifyContent: "flex-end",
+                marginBottom: 2,
+                lineHeight: 1.6,
+              }}
+            >
               {p.name}
-              <span style={{
-                width: 5, height: 5, borderRadius: "50%",
-                backgroundColor: PORT_TYPE_COLORS[p.type] || "#999",
-                display: "inline-block",
-              }} />
+              <span
+                style={{
+                  width: 5,
+                  height: 5,
+                  borderRadius: "50%",
+                  backgroundColor: PORT_TYPE_COLORS[p.type] || "#999",
+                  display: "inline-block",
+                }}
+              />
             </div>
           ))}
         </div>

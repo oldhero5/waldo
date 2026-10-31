@@ -96,7 +96,9 @@ export function EndpointsTab() {
   return (
     <div>
       <div className="mb-5">
-        <h2 className="font-semibold" style={{ color: "var(--text-primary)" }}>API Endpoints</h2>
+        <h2 className="font-semibold" style={{ color: "var(--text-primary)" }}>
+          API Endpoints
+        </h2>
         <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>
           Every trained model has a prediction API. Copy the URL, connect your app.
         </p>
@@ -112,7 +114,8 @@ export function EndpointsTab() {
             className="px-3 py-1 text-xs rounded border font-mono"
             style={{
               borderColor: selectedLang === lang ? "var(--accent)" : "var(--border-subtle)",
-              backgroundColor: selectedLang === lang ? "var(--accent-soft, #eff6ff)" : "transparent",
+              backgroundColor:
+                selectedLang === lang ? "var(--accent-soft, #eff6ff)" : "transparent",
               color: selectedLang === lang ? "var(--accent)" : "var(--text-muted)",
               fontWeight: selectedLang === lang ? 600 : 400,
             }}
@@ -123,29 +126,47 @@ export function EndpointsTab() {
       </div>
 
       {isLoading ? (
-        <p className="text-sm" style={{ color: "var(--text-muted)" }}>Loading...</p>
+        <p className="text-sm" style={{ color: "var(--text-muted)" }}>
+          Loading...
+        </p>
       ) : sorted.length > 0 ? (
         <div className="flex flex-col gap-3">
           {sorted.map((model) => {
-            const mAP = (model.metrics?.["metrics/mAP50(B)"] as number | undefined)
-              ?? (model.metrics?.["metrics/mAP50(M)"] as number | undefined);
+            const mAP =
+              (model.metrics?.["metrics/mAP50(B)"] as number | undefined) ??
+              (model.metrics?.["metrics/mAP50(M)"] as number | undefined);
             const imgEndpoint = `${baseUrl}/api/v1/predict/image?model_id=${model.id}`;
             const vidEndpoint = `${baseUrl}/api/v1/predict/video?model_id=${model.id}`;
             const snippet = snippetsByModel.get(model.id) || "";
 
             return (
-              <div key={model.id} className="surface p-4" style={{ border: model.is_active ? "1px solid var(--success)" : undefined }}>
+              <div
+                key={model.id}
+                className="surface p-4"
+                style={{ border: model.is_active ? "1px solid var(--success)" : undefined }}
+              >
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
-                    {model.is_active && <span className="w-2 h-2 rounded-full" style={{ backgroundColor: "var(--success)" }} />}
-                    <span className="font-semibold text-[15px]" style={{ fontFamily: "var(--font-serif)", color: "var(--text-primary)" }}>
+                    {model.is_active && (
+                      <span
+                        className="w-2 h-2 rounded-full"
+                        style={{ backgroundColor: "var(--success)" }}
+                      />
+                    )}
+                    <span
+                      className="font-semibold text-[15px]"
+                      style={{ fontFamily: "var(--font-serif)", color: "var(--text-primary)" }}
+                    >
                       {model.name}
                     </span>
                     <span className="text-[11px] font-mono" style={{ color: "var(--text-muted)" }}>
                       {model.model_variant}
                     </span>
                     {model.is_active && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded font-medium" style={{ backgroundColor: "var(--success)", color: "#fff" }}>
+                      <span
+                        className="text-[10px] px-1.5 py-0.5 rounded font-medium"
+                        style={{ backgroundColor: "var(--success)", color: "#fff" }}
+                      >
                         active
                       </span>
                     )}
@@ -165,12 +186,24 @@ export function EndpointsTab() {
                     { label: "Image", url: imgEndpoint, id: `img-${model.id}` },
                     { label: "Video", url: vidEndpoint, id: `vid-${model.id}` },
                   ].map((ep) => (
-                    <div key={ep.id} className="flex items-center gap-2 px-3 py-1.5 rounded-lg"
-                      style={{ backgroundColor: "var(--bg-inset)", border: "1px solid var(--border-subtle)" }}>
-                      <span className="text-[9px] font-mono shrink-0 w-9" style={{ color: "var(--text-muted)" }}>
+                    <div
+                      key={ep.id}
+                      className="flex items-center gap-2 px-3 py-1.5 rounded-lg"
+                      style={{
+                        backgroundColor: "var(--bg-inset)",
+                        border: "1px solid var(--border-subtle)",
+                      }}
+                    >
+                      <span
+                        className="text-[9px] font-mono shrink-0 w-9"
+                        style={{ color: "var(--text-muted)" }}
+                      >
                         {ep.label}
                       </span>
-                      <code className="flex-1 text-[11px] font-mono overflow-x-auto whitespace-nowrap" style={{ color: "var(--text-primary)" }}>
+                      <code
+                        className="flex-1 text-[11px] font-mono overflow-x-auto whitespace-nowrap"
+                        style={{ color: "var(--text-primary)" }}
+                      >
                         {ep.url}
                       </code>
                       <button
@@ -190,8 +223,15 @@ export function EndpointsTab() {
                 </div>
 
                 <div className="relative">
-                  <pre className="font-mono text-[11px] p-3 rounded-lg overflow-auto"
-                    style={{ backgroundColor: "#1a1a2e", color: "#4ade80", lineHeight: 1.5, maxHeight: 140 }}>
+                  <pre
+                    className="font-mono text-[11px] p-3 rounded-lg overflow-auto"
+                    style={{
+                      backgroundColor: "#1a1a2e",
+                      color: "#4ade80",
+                      lineHeight: 1.5,
+                      maxHeight: 140,
+                    }}
+                  >
                     {snippet}
                   </pre>
                   <button
@@ -212,14 +252,20 @@ export function EndpointsTab() {
       ) : (
         <div className="surface text-center py-12">
           <Camera size={36} className="mx-auto mb-3" style={{ color: "var(--text-muted)" }} />
-          <p className="text-sm mb-1" style={{ color: "var(--text-secondary)" }}>No trained models yet</p>
+          <p className="text-sm mb-1" style={{ color: "var(--text-secondary)" }}>
+            No trained models yet
+          </p>
           <p className="text-xs mb-4" style={{ color: "var(--text-muted)" }}>
             Train a model to get an API endpoint. Every model automatically gets a prediction URL.
           </p>
           <Link
             to="/datasets"
             className="px-4 py-2 text-white rounded-xl text-sm inline-block"
-            style={{ backgroundColor: "var(--accent)", color: "var(--text-on-accent)", textDecoration: "none" }}
+            style={{
+              backgroundColor: "var(--accent)",
+              color: "var(--text-on-accent)",
+              textDecoration: "none",
+            }}
           >
             Go to Datasets
           </Link>
@@ -228,27 +274,46 @@ export function EndpointsTab() {
 
       {/* Reference section — formerly the API tab. Kept inline because there is one source of truth now. */}
       <div className="mt-8 pt-6" style={{ borderTop: "1px solid var(--border-subtle)" }}>
-        <h3 className="text-sm font-semibold mb-1" style={{ color: "var(--text-primary)" }}>Reference</h3>
+        <h3 className="text-sm font-semibold mb-1" style={{ color: "var(--text-primary)" }}>
+          Reference
+        </h3>
         <p className="text-xs mb-4" style={{ color: "var(--text-muted)" }}>
           Authentication, response format, and the OpenAPI spec for all endpoints.
         </p>
 
         <div className="grid sm:grid-cols-2 gap-3">
           <div className="surface p-4">
-            <h4 className="text-xs font-semibold mb-2 uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>Authentication</h4>
+            <h4
+              className="text-xs font-semibold mb-2 uppercase tracking-wide"
+              style={{ color: "var(--text-muted)" }}
+            >
+              Authentication
+            </h4>
             <p className="text-xs mb-2" style={{ color: "var(--text-secondary)" }}>
               All endpoints require an API key in the Authorization header.
             </p>
-            <code className="block text-[11px] font-mono p-2 rounded" style={{ backgroundColor: "var(--bg-inset)", color: "var(--text-primary)" }}>
+            <code
+              className="block text-[11px] font-mono p-2 rounded"
+              style={{ backgroundColor: "var(--bg-inset)", color: "var(--text-primary)" }}
+            >
               Authorization: Bearer wld_YOUR_KEY
             </code>
-            <Link to="/settings" className="text-xs hover:underline mt-2 inline-block" style={{ color: "var(--accent)" }}>
+            <Link
+              to="/settings"
+              className="text-xs hover:underline mt-2 inline-block"
+              style={{ color: "var(--accent)" }}
+            >
               Manage API keys &rarr;
             </Link>
           </div>
 
           <div className="surface p-4">
-            <h4 className="text-xs font-semibold mb-2 uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>OpenAPI Spec</h4>
+            <h4
+              className="text-xs font-semibold mb-2 uppercase tracking-wide"
+              style={{ color: "var(--text-muted)" }}
+            >
+              OpenAPI Spec
+            </h4>
             <p className="text-xs mb-2" style={{ color: "var(--text-secondary)" }}>
               Full schema and interactive docs for every endpoint.
             </p>
@@ -264,12 +329,20 @@ export function EndpointsTab() {
           </div>
 
           <div className="surface p-4">
-            <h4 className="text-xs font-semibold mb-2 uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>Response Format</h4>
+            <h4
+              className="text-xs font-semibold mb-2 uppercase tracking-wide"
+              style={{ color: "var(--text-muted)" }}
+            >
+              Response Format
+            </h4>
             <p className="text-xs mb-2" style={{ color: "var(--text-secondary)" }}>
               Image prediction returns detections with bbox, class, confidence.
             </p>
-            <pre className="text-[10px] font-mono p-2 rounded overflow-x-auto" style={{ backgroundColor: "var(--bg-inset)", color: "var(--text-primary)" }}>
-{`{
+            <pre
+              className="text-[10px] font-mono p-2 rounded overflow-x-auto"
+              style={{ backgroundColor: "var(--bg-inset)", color: "var(--text-primary)" }}
+            >
+              {`{
   "detections": [
     {
       "class_name": "person",
@@ -283,11 +356,19 @@ export function EndpointsTab() {
           </div>
 
           <div className="surface p-4">
-            <h4 className="text-xs font-semibold mb-2 uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>Video Streaming</h4>
+            <h4
+              className="text-xs font-semibold mb-2 uppercase tracking-wide"
+              style={{ color: "var(--text-muted)" }}
+            >
+              Video Streaming
+            </h4>
             <p className="text-xs mb-2" style={{ color: "var(--text-secondary)" }}>
               Videos under 500 frames return synchronously. Longer videos stream over WebSocket.
             </p>
-            <code className="block text-[11px] font-mono p-2 rounded" style={{ backgroundColor: "var(--bg-inset)", color: "var(--text-primary)" }}>
+            <code
+              className="block text-[11px] font-mono p-2 rounded"
+              style={{ backgroundColor: "var(--bg-inset)", color: "var(--text-primary)" }}
+            >
               ws://.../api/v1/predict/stream/{`{session_id}`}
             </code>
           </div>

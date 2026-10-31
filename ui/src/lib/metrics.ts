@@ -18,7 +18,7 @@ const METRIC_LABELS: Record<string, string> = {
   "train/seg_loss": "Train Seg Loss",
   "train/cls_loss": "Train Class Loss",
   "train/dfl_loss": "Train DFL Loss",
-  "fitness": "Fitness",
+  fitness: "Fitness",
 };
 
 export function humanizeMetricKey(key: string): string {
@@ -41,7 +41,9 @@ export function formatMetricValue(key: string, value: number): string {
 }
 
 /** Pick the most important metrics for summary display. */
-export function pickKeyMetrics(metrics: Record<string, number>): { label: string; value: string; key: string }[] {
+export function pickKeyMetrics(
+  metrics: Record<string, number>,
+): { label: string; value: string; key: string }[] {
   const priority = [
     "metrics/mAP50(B)",
     "metrics/precision(B)",

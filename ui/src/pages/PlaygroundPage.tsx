@@ -46,7 +46,6 @@ type PreviewConfig = Readonly<{
 }>;
 type CompletedPreview = { runId: number; config: PreviewConfig; result: PreviewResponse };
 
-
 function hashHue(s: string): number {
   let h = 0;
   for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
@@ -252,16 +251,20 @@ function PreviewPlayer({
     const controller = new AbortController();
     // Reissue an authorized capability when this completed run needs playback.
     // The immutable run identity must survive edits to the preview draft.
-    void listProjectVideos(projectId, controller.signal).then((videos) => {
-      if (controller.signal.aborted) return;
-      const url = videos.find((video) => video.id === videoId)?.url;
-      if (!url) throw new Error("Source video URL is unavailable");
-      setVideoUrl(url);
-    }).catch((error: unknown) => {
-      if (!controller.signal.aborted) setPlaybackError(error instanceof Error ? error.message : String(error));
-    }).finally(() => {
-      if (!controller.signal.aborted) setLoadingSource(false);
-    });
+    void listProjectVideos(projectId, controller.signal)
+      .then((videos) => {
+        if (controller.signal.aborted) return;
+        const url = videos.find((video) => video.id === videoId)?.url;
+        if (!url) throw new Error("Source video URL is unavailable");
+        setVideoUrl(url);
+      })
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted)
+          setPlaybackError(error instanceof Error ? error.message : String(error));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoadingSource(false);
+      });
     return () => controller.abort();
   }, [projectId, videoId, sourceAttempt]);
 
@@ -298,7 +301,11 @@ function PreviewPlayer({
     const index = assessedFrameAt(result.frames, currentTime);
     const frame = index < 0 ? null : result.frames[index];
     if (!frame || seeking || loadingSource || playbackError || !decodedSize) return null;
-    if (decodedSize && Math.abs(frame.width / frame.height - decodedSize.width / decodedSize.height) > 0.005) return null;
+    if (
+      decodedSize &&
+      Math.abs(frame.width / frame.height - decodedSize.width / decodedSize.height) > 0.005
+    )
+      return null;
     return frame;
   }, [result.frames, currentTime, seeking, decodedSize, loadingSource, playbackError]);
 
@@ -307,7 +314,10 @@ function PreviewPlayer({
     if (!video) return;
     return watchVideoPresentation(video, (time) => {
       // Commit the SVG in the decoded-frame callback before the browser paints that frame.
-      flushSync(() => { setCurrentTime(time); setRequestedTime(null); });
+      flushSync(() => {
+        setCurrentTime(time);
+        setRequestedTime(null);
+      });
       if (time >= windowEnd && !video.paused) video.currentTime = startSec;
     });
   }, [videoUrl, startSec, windowEnd]);
@@ -319,7 +329,6 @@ function PreviewPlayer({
     if (v.currentTime >= windowEnd - 0.01) {
       v.currentTime = startSec;
     }
-
   };
 
   const togglePlay = () => {
@@ -344,7 +353,6 @@ function PreviewPlayer({
     setRequestedTime(target);
     setSeeking(true);
     v.currentTime = target;
-
   };
 
   // Zoom to a detection: pause, seek to its frame, transform the stage so
@@ -362,69 +370,62 @@ function PreviewPlayer({
   // recipe is: translate by (container_center - bbox_center_in_container),
   // then scale around center. Both are expressed as fractions of the
   // container (× 100 → percentages) so we don't need live viewport pixels.
-  const zoomToDetection = useCallback(
-    (track: TrackEntry) => {
-      const v = videoRef.current;
-      if (!v) return;
-      v.pause();
-      setPlaying(false);
-      setRequestedTime(track.bestFrame.timestamp_s);
-      setSeeking(true);
-      v.currentTime = track.bestFrame.timestamp_s;
+  const zoomToDetection = useCallback((track: TrackEntry) => {
+    const v = videoRef.current;
+    if (!v) return;
+    v.pause();
+    setPlaying(false);
+    setRequestedTime(track.bestFrame.timestamp_s);
+    setSeeking(true);
+    v.currentTime = track.bestFrame.timestamp_s;
 
-      setSelectedTrackId(track.trackId);
+    setSelectedTrackId(track.trackId);
 
-      const d = track.bestDetection;
+    const d = track.bestDetection;
 
-      // Prefer the polygon's bounds (tighter than the bbox when the mask
-      // doesn't fill its axis-aligned box). Fall back to the bbox.
-      let x1: number, y1: number, x2: number, y2: number;
-      if (d.polygon && d.polygon.length >= 6) {
-        x1 = Infinity;
-        y1 = Infinity;
-        x2 = -Infinity;
-        y2 = -Infinity;
-        for (let i = 0; i < d.polygon.length; i += 2) {
-          const px = d.polygon[i] * track.bestFrame.width;
-          const py = d.polygon[i + 1] * track.bestFrame.height;
-          if (px < x1) x1 = px;
-          if (py < y1) y1 = py;
-          if (px > x2) x2 = px;
-          if (py > y2) y2 = py;
-        }
-      } else if (d.bbox && d.bbox.length >= 4) {
-        [x1, y1, x2, y2] = d.bbox;
-      } else {
-        return;
+    // Prefer the polygon's bounds (tighter than the bbox when the mask
+    // doesn't fill its axis-aligned box). Fall back to the bbox.
+    let x1: number, y1: number, x2: number, y2: number;
+    if (d.polygon && d.polygon.length >= 6) {
+      x1 = Infinity;
+      y1 = Infinity;
+      x2 = -Infinity;
+      y2 = -Infinity;
+      for (let i = 0; i < d.polygon.length; i += 2) {
+        const px = d.polygon[i] * track.bestFrame.width;
+        const py = d.polygon[i + 1] * track.bestFrame.height;
+        if (px < x1) x1 = px;
+        if (py < y1) y1 = py;
+        if (px > x2) x2 = px;
+        if (py > y2) y2 = py;
       }
+    } else if (d.bbox && d.bbox.length >= 4) {
+      [x1, y1, x2, y2] = d.bbox;
+    } else {
+      return;
+    }
 
-      const frameW = track.bestFrame.width;
-      const frameH = track.bestFrame.height;
+    const frameW = track.bestFrame.width;
+    const frameH = track.bestFrame.height;
 
-      // Normalized bbox in [0,1] within the video's intrinsic coords —
-      // also equals the bbox in container-local fractional coords because
-      // the container's aspect ratio matches the video (no letterboxing).
-      const cxNorm = ((x1 + x2) / 2) / frameW;
-      const cyNorm = ((y1 + y2) / 2) / frameH;
-      const bboxWNorm = Math.max(1e-4, (x2 - x1) / frameW);
-      const bboxHNorm = Math.max(1e-4, (y2 - y1) / frameH);
+    // Normalized bbox in [0,1] within the video's intrinsic coords —
+    // also equals the bbox in container-local fractional coords because
+    // the container's aspect ratio matches the video (no letterboxing).
+    const cxNorm = (x1 + x2) / 2 / frameW;
+    const cyNorm = (y1 + y2) / 2 / frameH;
+    const bboxWNorm = Math.max(1e-4, (x2 - x1) / frameW);
+    const bboxHNorm = Math.max(1e-4, (y2 - y1) / frameH);
 
-      const targetFraction = 0.55; // bbox fills ~55% of the shorter axis
-      const scale = Math.min(
-        targetFraction / bboxWNorm,
-        targetFraction / bboxHNorm,
-        8
-      );
+    const targetFraction = 0.55; // bbox fills ~55% of the shorter axis
+    const scale = Math.min(targetFraction / bboxWNorm, targetFraction / bboxHNorm, 8);
 
-      // T = C - P, where C = (0.5, 0.5) and P = (cxNorm, cyNorm).
-      // Convert to CSS translate percentages of the element's own box.
-      const txPct = (0.5 - cxNorm) * 100;
-      const tyPct = (0.5 - cyNorm) * 100;
+    // T = C - P, where C = (0.5, 0.5) and P = (cxNorm, cyNorm).
+    // Convert to CSS translate percentages of the element's own box.
+    const txPct = (0.5 - cxNorm) * 100;
+    const tyPct = (0.5 - cyNorm) * 100;
 
-      setZoom({ scale, txPct, tyPct });
-    },
-    []
-  );
+    setZoom({ scale, txPct, tyPct });
+  }, []);
 
   const resetZoom = () => {
     setZoom(null);
@@ -451,11 +452,19 @@ function PreviewPlayer({
 
   return (
     <div className="space-y-3">
-      {loadingSource && <p role="status" className="text-sm" style={{ color: "var(--text-muted)" }}>Loading source video…</p>}
+      {loadingSource && (
+        <p role="status" className="text-sm" style={{ color: "var(--text-muted)" }}>
+          Loading source video…
+        </p>
+      )}
       {playbackError && (
         <div className="surface p-3 space-y-2">
-          <p role="alert" className="text-sm" style={{ color: "var(--danger)" }}>{playbackError}</p>
-          <button onClick={retryPlayback} className="btn-secondary px-3 py-2 text-sm">Retry source playback</button>
+          <p role="alert" className="text-sm" style={{ color: "var(--danger)" }}>
+            {playbackError}
+          </p>
+          <button onClick={retryPlayback} className="btn-secondary px-3 py-2 text-sm">
+            Retry source playback
+          </button>
         </div>
       )}
       <div
@@ -467,14 +476,26 @@ function PreviewPlayer({
           position: "relative",
         }}
       >
-        <p className="text-xs mb-2" style={{ color: "var(--text-muted)" }}>Masks appear only on assessed frames; intermediate video frames have no inferred mask.</p>
-        {result.frames.some((frame) => frame.timestamp_method && frame.timestamp_method !== "source_pts") && <p className="text-xs mb-2" style={{ color: "var(--warning)" }}>Source timestamps are approximate; exact playback masks are unavailable.</p>}
+        <p className="text-xs mb-2" style={{ color: "var(--text-muted)" }}>
+          Masks appear only on assessed frames; intermediate video frames have no inferred mask.
+        </p>
+        {result.frames.some(
+          (frame) => frame.timestamp_method && frame.timestamp_method !== "source_pts",
+        ) && (
+          <p className="text-xs mb-2" style={{ color: "var(--warning)" }}>
+            Source timestamps are approximate; exact playback masks are unavailable.
+          </p>
+        )}
         {/* Stage: video + overlay, transformed together for zoom */}
         <div
           style={{
             position: "relative",
             width: "100%",
-            aspectRatio: decodedSize ? `${decodedSize.width} / ${decodedSize.height}` : result.frames[0] ? `${result.frames[0].width} / ${result.frames[0].height}` : "16 / 9",
+            aspectRatio: decodedSize
+              ? `${decodedSize.width} / ${decodedSize.height}`
+              : result.frames[0]
+                ? `${result.frames[0].width} / ${result.frames[0].height}`
+                : "16 / 9",
             overflow: "hidden",
           }}
         >
@@ -494,42 +515,44 @@ function PreviewPlayer({
               willChange: "transform",
             }}
           >
-            {videoUrl && <video
-              ref={videoRef}
-              src={videoUrl}
-              onTimeUpdate={onTimeUpdate}
-              onLoadedMetadata={(event) => {
-                const video = event.currentTarget;
-                video.currentTime = Math.max(startSec, Math.min(windowEnd, resumeTime.current));
-                setDecodedSize({ width: video.videoWidth, height: video.videoHeight });
-              }}
-              onLoadedData={(event) => {
-                retriedSource.current = false;
-                setDecodedSize({ width: event.currentTarget.videoWidth, height: event.currentTarget.videoHeight });
-                setSeeking(event.currentTarget.seeking);
-              }}
-              onError={onSourceError}
-              onSeeking={() => setSeeking(true)}
-              onSeeked={() => setSeeking(false)}
-              onPlay={() => setPlaying(true)}
-              onPause={() => setPlaying(false)}
-              playsInline
-              muted
-              preload="auto"
-              style={{
-                position: "absolute",
-                inset: 0,
-                width: "100%",
-                height: "100%",
-                objectFit: "contain",
-                display: "block",
-              }}
-            />}
-            {activeFrame && (
-              <DetectionOverlay
-                frame={activeFrame}
-                selectedTrackId={selectedTrackId}
+            {videoUrl && (
+              <video
+                ref={videoRef}
+                src={videoUrl}
+                onTimeUpdate={onTimeUpdate}
+                onLoadedMetadata={(event) => {
+                  const video = event.currentTarget;
+                  video.currentTime = Math.max(startSec, Math.min(windowEnd, resumeTime.current));
+                  setDecodedSize({ width: video.videoWidth, height: video.videoHeight });
+                }}
+                onLoadedData={(event) => {
+                  retriedSource.current = false;
+                  setDecodedSize({
+                    width: event.currentTarget.videoWidth,
+                    height: event.currentTarget.videoHeight,
+                  });
+                  setSeeking(event.currentTarget.seeking);
+                }}
+                onError={onSourceError}
+                onSeeking={() => setSeeking(true)}
+                onSeeked={() => setSeeking(false)}
+                onPlay={() => setPlaying(true)}
+                onPause={() => setPlaying(false)}
+                playsInline
+                muted
+                preload="auto"
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "contain",
+                  display: "block",
+                }}
               />
+            )}
+            {activeFrame && (
+              <DetectionOverlay frame={activeFrame} selectedTrackId={selectedTrackId} />
             )}
           </div>
 
@@ -582,15 +605,11 @@ function PreviewPlayer({
             left: 0,
             right: 0,
             padding: "14px 14px 10px",
-            background:
-              "linear-gradient(to top, rgba(0,0,0,0.85), rgba(0,0,0,0))",
+            background: "linear-gradient(to top, rgba(0,0,0,0.85), rgba(0,0,0,0))",
             pointerEvents: "none",
           }}
         >
-          <div
-            className="flex items-center gap-3 mb-2"
-            style={{ pointerEvents: "auto" }}
-          >
+          <div className="flex items-center gap-3 mb-2" style={{ pointerEvents: "auto" }}>
             <button
               onClick={togglePlay}
               aria-label={playing ? "Pause preview" : "Play preview"}
@@ -715,14 +734,9 @@ function PreviewPlayer({
 
       {/* Detection list — click a row to zoom */}
       {tracks.length > 0 && (
-        <div
-          className="surface p-4"
-          style={{ borderRadius: "var(--radius-lg)" }}
-        >
+        <div className="surface p-4" style={{ borderRadius: "var(--radius-lg)" }}>
           <div className="flex items-center justify-between mb-2">
-            <p className="eyebrow">
-              Detected objects ({tracks.length} unique)
-            </p>
+            <p className="eyebrow">Detected objects ({tracks.length} unique)</p>
             {zoom && (
               <button
                 onClick={resetZoom}
@@ -745,12 +759,8 @@ function PreviewPlayer({
                   aria-pressed={selected}
                   className="flex items-center gap-3 px-3 py-2 rounded-lg text-left"
                   style={{
-                    backgroundColor: selected
-                      ? "var(--accent-soft)"
-                      : "var(--bg-inset)",
-                    border: selected
-                      ? "1px solid var(--accent)"
-                      : "1px solid transparent",
+                    backgroundColor: selected ? "var(--accent-soft)" : "var(--bg-inset)",
+                    border: selected ? "1px solid var(--accent)" : "1px solid transparent",
                   }}
                 >
                   <div
@@ -782,9 +792,8 @@ function PreviewPlayer({
                         fontFamily: "var(--font-mono)",
                       }}
                     >
-                      t={t.bestFrame.timestamp_s.toFixed(2)}s ·{" "}
-                      {t.frameCount} frame{t.frameCount === 1 ? "" : "s"} ·{" "}
-                      {(t.bestScore * 100).toFixed(0)}%
+                      t={t.bestFrame.timestamp_s.toFixed(2)}s · {t.frameCount} frame
+                      {t.frameCount === 1 ? "" : "s"} · {(t.bestScore * 100).toFixed(0)}%
                     </div>
                   </div>
                   <ZoomIn size={13} style={{ color: "var(--text-muted)" }} />
@@ -835,26 +844,29 @@ export default function PlaygroundPage() {
   const running = pendingPreview !== null;
   const result = completedPreview?.result ?? null;
 
-  useEffect(() => () => {
-    // API jobs may finish after this view is discarded or unmounted.
-    activeRequest.current = null;
-    activePromotion.current = null;
-  }, []);
+  useEffect(
+    () => () => {
+      // API jobs may finish after this view is discarded or unmounted.
+      activeRequest.current = null;
+      activePromotion.current = null;
+    },
+    [],
+  );
   const [error, setError] = useState<string | null>(null);
 
-  const validPrompts = prompts
-    .map((p) => p.value.trim())
-    .filter((v) => v.length > 0);
+  const validPrompts = prompts.map((p) => p.value.trim()).filter((v) => v.length > 0);
 
   const canRun =
-    !!currentVideo &&
-    validPrompts.length > 0 &&
-    durationSec > 0 &&
-    !running &&
-    !promoting;
+    !!currentVideo && validPrompts.length > 0 && durationSec > 0 && !running && !promoting;
 
   const handleRun = async () => {
-    if (!canRun || !currentVideo || activeRequest.current !== null || activePromotion.current !== null) return;
+    if (
+      !canRun ||
+      !currentVideo ||
+      activeRequest.current !== null ||
+      activePromotion.current !== null
+    )
+      return;
     const runId = ++requestSequence.current;
     const config: PreviewConfig = Object.freeze({
       projectId: effectiveProject,
@@ -919,20 +931,21 @@ export default function PlaygroundPage() {
   };
 
   const displayedConfig = completedPreview?.config;
-  const draftChanged = displayedConfig && (
-    displayedConfig.videoId !== effectiveVideo ||
-    JSON.stringify(displayedConfig.prompts) !== JSON.stringify(validPrompts) ||
-    displayedConfig.threshold !== threshold || displayedConfig.startSec !== startSec ||
-    displayedConfig.durationSec !== durationSec || displayedConfig.sampleFps !== sampleFps
-  );
+  const draftChanged =
+    displayedConfig &&
+    (displayedConfig.videoId !== effectiveVideo ||
+      JSON.stringify(displayedConfig.prompts) !== JSON.stringify(validPrompts) ||
+      displayedConfig.threshold !== threshold ||
+      displayedConfig.startSec !== startSec ||
+      displayedConfig.durationSec !== durationSec ||
+      displayedConfig.sampleFps !== sampleFps);
 
   // Summary stats derived from result
   const perPromptCounts = useMemo(() => {
     if (!result) return [] as { label: string; count: number }[];
     const m = new Map<string, number>();
     for (const f of result.frames)
-      for (const d of f.detections)
-        m.set(d.label, (m.get(d.label) ?? 0) + 1);
+      for (const d of f.detections) m.set(d.label, (m.get(d.label) ?? 0) + 1);
     return Array.from(m.entries())
       .map(([label, count]) => ({ label, count }))
       .sort((a, b) => b.count - a.count);
@@ -952,8 +965,8 @@ export default function PlaygroundPage() {
           Video prompt preview
         </h1>
         <p className="mb-8" style={{ color: "var(--text-secondary)", maxWidth: 700 }}>
-          Test prompts on a sampled window and inspect detections in the source footage.
-          Preview results depend on the configured backend and sampling settings.
+          Test prompts on a sampled window and inspect detections in the source footage. Preview
+          results depend on the configured backend and sampling settings.
         </p>
 
         <div className="grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-6">
@@ -962,9 +975,13 @@ export default function PlaygroundPage() {
             className="surface p-5 space-y-5"
             style={{ borderRadius: "var(--radius-lg)", alignSelf: "start" }}
           >
-            <p className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>Preview draft</p>
+            <p className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
+              Preview draft
+            </p>
             <div>
-              <label htmlFor="preview-collection" className="eyebrow block mb-1.5">Collection</label>
+              <label htmlFor="preview-collection" className="eyebrow block mb-1.5">
+                Collection
+              </label>
               <select
                 id="preview-collection"
                 value={effectiveProject}
@@ -990,7 +1007,9 @@ export default function PlaygroundPage() {
             </div>
 
             <div>
-              <label htmlFor="preview-video" className="eyebrow block mb-1.5">Video</label>
+              <label htmlFor="preview-video" className="eyebrow block mb-1.5">
+                Video
+              </label>
               <select
                 id="preview-video"
                 value={effectiveVideo}
@@ -1029,7 +1048,9 @@ export default function PlaygroundPage() {
             </div>
 
             <div>
-              <label htmlFor={`preview-prompt-${prompts[0].id}`} className="eyebrow block mb-1.5">Prompts</label>
+              <label htmlFor={`preview-prompt-${prompts[0].id}`} className="eyebrow block mb-1.5">
+                Prompts
+              </label>
               <div className="space-y-2">
                 {prompts.map((p, i) => (
                   <div key={p.id} className="flex gap-2">
@@ -1046,9 +1067,7 @@ export default function PlaygroundPage() {
                       onKeyDown={(e) => {
                         if (e.key === "Enter" && canRun) handleRun();
                       }}
-                      placeholder={
-                        i === 0 ? "pothole" : "add another class (optional)"
-                      }
+                      placeholder={i === 0 ? "pothole" : "add another class (optional)"}
                       className="flex-1 rounded-lg px-3 py-2 text-sm outline-none"
                       style={{
                         border: "1px solid var(--border-default)",
@@ -1058,9 +1077,7 @@ export default function PlaygroundPage() {
                     />
                     {prompts.length > 1 && (
                       <button
-                        onClick={() =>
-                          setPrompts(prompts.filter((x) => x.id !== p.id))
-                        }
+                        onClick={() => setPrompts(prompts.filter((x) => x.id !== p.id))}
                         className="px-2 rounded-lg"
                         style={{
                           border: "1px solid var(--border-default)",
@@ -1075,10 +1092,7 @@ export default function PlaygroundPage() {
                 ))}
                 <button
                   onClick={() =>
-                    setPrompts([
-                      ...prompts,
-                      { id: (prompts.at(-1)?.id ?? 0) + 1, value: "" },
-                    ])
+                    setPrompts([...prompts, { id: (prompts.at(-1)?.id ?? 0) + 1, value: "" }])
                   }
                   className="flex items-center gap-1.5 text-xs"
                   style={{ color: "var(--accent)" }}
@@ -1090,7 +1104,9 @@ export default function PlaygroundPage() {
 
             <div>
               <div className="flex items-center justify-between mb-1.5">
-                <label htmlFor="preview-threshold" className="eyebrow">Confidence threshold</label>
+                <label htmlFor="preview-threshold" className="eyebrow">
+                  Confidence threshold
+                </label>
                 <span
                   style={{
                     fontFamily: "var(--font-mono)",
@@ -1118,14 +1134,15 @@ export default function PlaygroundPage() {
                   marginTop: 4,
                 }}
               >
-                Higher = fewer but more confident detections. Start ~0.35 and
-                tune.
+                Higher = fewer but more confident detections. Start ~0.35 and tune.
               </p>
             </div>
 
             <div>
               <div className="flex items-center justify-between mb-1.5">
-                <label htmlFor="preview-start" className="eyebrow">Start time</label>
+                <label htmlFor="preview-start" className="eyebrow">
+                  Start time
+                </label>
                 <span
                   style={{
                     fontFamily: "var(--font-mono)",
@@ -1150,7 +1167,9 @@ export default function PlaygroundPage() {
 
             <div>
               <div className="flex items-center justify-between mb-1.5">
-                <label htmlFor="preview-duration" className="eyebrow">Window duration</label>
+                <label htmlFor="preview-duration" className="eyebrow">
+                  Window duration
+                </label>
                 <span
                   style={{
                     fontFamily: "var(--font-mono)",
@@ -1182,13 +1201,15 @@ export default function PlaygroundPage() {
                 }}
               >
                 <Info size={10} className="mt-[1px] shrink-0" />
-                Preview track IDs connect detections across sampled frames in this window;
-                full labeling jobs may use different sampling settings.
+                Preview track IDs connect detections across sampled frames in this window; full
+                labeling jobs may use different sampling settings.
               </p>
             </div>
 
             <div>
-              <span id="preview-sample-rate" className="eyebrow block mb-1.5">Sample rate</span>
+              <span id="preview-sample-rate" className="eyebrow block mb-1.5">
+                Sample rate
+              </span>
               <div className="flex gap-1.5" role="group" aria-labelledby="preview-sample-rate">
                 {[1, 2, 4, 8].map((f) => (
                   <button
@@ -1281,8 +1302,8 @@ export default function PlaygroundPage() {
                   Pick a video and prompts, then Run preview
                 </p>
                 <p style={{ fontSize: 13, marginTop: 6 }}>
-                  Choose a window and sample rate to inspect a short preview.
-                  Processing time depends on the configured backend and available hardware.
+                  Choose a window and sample rate to inspect a short preview. Processing time
+                  depends on the configured backend and available hardware.
                 </p>
               </div>
             )}
@@ -1314,36 +1335,51 @@ export default function PlaygroundPage() {
                   }}
                 >
                   {pendingPreview?.videoName} · {pendingPreview?.prompts.join(", ")}
-                  {" · "}{formatTime(pendingPreview?.startSec ?? 0)}–{formatTime((pendingPreview?.startSec ?? 0) + (pendingPreview?.durationSec ?? 0))}
+                  {" · "}
+                  {formatTime(pendingPreview?.startSec ?? 0)}–
+                  {formatTime((pendingPreview?.startSec ?? 0) + (pendingPreview?.durationSec ?? 0))}
                 </p>
-                <button onClick={discardPreview} className="mt-4 text-sm underline" style={{ color: "var(--text-secondary)" }}>Discard preview</button>
-                <p className="text-xs mt-2" style={{ color: "var(--text-muted)" }}>Processing may continue on the server.</p>
+                <button
+                  onClick={discardPreview}
+                  className="mt-4 text-sm underline"
+                  style={{ color: "var(--text-secondary)" }}
+                >
+                  Discard preview
+                </button>
+                <p className="text-xs mt-2" style={{ color: "var(--text-muted)" }}>
+                  Processing may continue on the server.
+                </p>
               </div>
             )}
 
             {result && displayedConfig && (
               <div className="space-y-4">
                 <section className="surface p-4" aria-label="Displayed preview">
-                  <h2 className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>Displayed preview</h2>
-                  <p className="text-sm mt-1" style={{ color: "var(--text-secondary)" }}>{displayedConfig.videoName} · {displayedConfig.prompts.join(", ")}</p>
-                  <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
-                    {formatTime(displayedConfig.startSec)}–{formatTime(displayedConfig.startSec + displayedConfig.durationSec)} · {displayedConfig.sampleFps} fps · threshold {displayedConfig.threshold.toFixed(2)}
+                  <h2 className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
+                    Displayed preview
+                  </h2>
+                  <p className="text-sm mt-1" style={{ color: "var(--text-secondary)" }}>
+                    {displayedConfig.videoName} · {displayedConfig.prompts.join(", ")}
                   </p>
-                  {draftChanged && <p className="text-xs mt-2" style={{ color: "var(--text-primary)" }}>Draft changes are not included in this preview.</p>}
+                  <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
+                    {formatTime(displayedConfig.startSec)}–
+                    {formatTime(displayedConfig.startSec + displayedConfig.durationSec)} ·{" "}
+                    {displayedConfig.sampleFps} fps · threshold{" "}
+                    {displayedConfig.threshold.toFixed(2)}
+                  </p>
+                  {draftChanged && (
+                    <p className="text-xs mt-2" style={{ color: "var(--text-primary)" }}>
+                      Draft changes are not included in this preview.
+                    </p>
+                  )}
                 </section>
                 {/* Summary bar */}
                 <div
                   className="surface p-4 flex flex-wrap items-center gap-6"
                   style={{ borderRadius: "var(--radius-lg)" }}
                 >
-                  <Stat
-                    label="Frames processed"
-                    value={result.frames.length.toString()}
-                  />
-                  <Stat
-                    label="Total detections"
-                    value={result.total_detections.toString()}
-                  />
+                  <Stat label="Frames processed" value={result.frames.length.toString()} />
+                  <Stat label="Total detections" value={result.total_detections.toString()} />
                   <Stat
                     label="Unique tracked objects"
                     value={result.unique_track_count.toString()}
@@ -1382,7 +1418,8 @@ export default function PlaygroundPage() {
                       Happy with this result?{" "}
                       <span style={{ color: "var(--text-secondary)" }}>
                         Label the entire video from the displayed preview using its prompts,
-                        threshold, and sample rate. The preview time window does not limit the full job.
+                        threshold, and sample rate. The preview time window does not limit the full
+                        job.
                       </span>
                     </div>
                     <button
@@ -1396,7 +1433,11 @@ export default function PlaygroundPage() {
                         fontSize: 13,
                       }}
                     >
-                      {promoting ? <Loader2 size={14} className="animate-spin" /> : <Rocket size={14} />}
+                      {promoting ? (
+                        <Loader2 size={14} className="animate-spin" />
+                      ) : (
+                        <Rocket size={14} />
+                      )}
                       {promoting ? "Starting job…" : "Start full job"}
                     </button>
                   </div>
@@ -1432,15 +1473,7 @@ export default function PlaygroundPage() {
   );
 }
 
-function Stat({
-  label,
-  value,
-  accent,
-}: {
-  label: string;
-  value: string;
-  accent?: boolean;
-}) {
+function Stat({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
   return (
     <div>
       <div className="eyebrow">{label}</div>

@@ -14,7 +14,16 @@ import {
   activateModel,
 } from "../api";
 import TaskSelector from "../components/TaskSelector";
-import { Info, AlertTriangle, StopCircle, TrendingDown, Eye, RotateCcw, CheckCircle, Sparkles } from "lucide-react";
+import {
+  Info,
+  AlertTriangle,
+  StopCircle,
+  TrendingDown,
+  Eye,
+  RotateCcw,
+  CheckCircle,
+  Sparkles,
+} from "lucide-react";
 import LineChart from "../components/LineChart";
 import { humanizeMetricKey, formatMetricValue } from "../lib/metrics";
 
@@ -65,7 +74,11 @@ export default function TrainPage() {
   const [metricHistory, setMetricHistory] = useState<Record<string, number>[]>([]);
   const [valPreview, setValPreview] = useState<string | null>(null);
   const [overfitWarning, setOverfitWarning] = useState<string | null>(null);
-  const [batchProgress, setBatchProgress] = useState<{ batch: number; total: number; losses: Record<string, number> } | null>(null);
+  const [batchProgress, setBatchProgress] = useState<{
+    batch: number;
+    total: number;
+    losses: Record<string, number>;
+  } | null>(null);
   const [stopping, setStopping] = useState(false);
   const [previewExpanded, setPreviewExpanded] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
@@ -120,9 +133,11 @@ export default function TrainPage() {
     queryFn: listModels,
   });
 
-  const runId = submittedRunId || (!showNewRun
-    ? directRun?.run_id || allRuns?.find((run) => run.job_id === jobId)?.run_id || null
-    : null);
+  const runId =
+    submittedRunId ||
+    (!showNewRun
+      ? directRun?.run_id || allRuns?.find((run) => run.job_id === jobId)?.run_id || null
+      : null);
   const taskType = directRun?.task_type || job?.task_type || requestedTaskType;
   const variant = selectedVariant || variants?.defaults?.[taskType] || "";
 
@@ -165,7 +180,10 @@ export default function TrainPage() {
 
       // Terminal status events flush immediately and are never debounced
       if (data.status === "completed" || data.status === "failed") {
-        if (chartFlushTimer.current) { clearTimeout(chartFlushTimer.current); chartFlushTimer.current = null; }
+        if (chartFlushTimer.current) {
+          clearTimeout(chartFlushTimer.current);
+          chartFlushTimer.current = null;
+        }
         flushChartBuffer();
         return;
       }
@@ -182,7 +200,11 @@ export default function TrainPage() {
       if (data.val_preview) setValPreview(data.val_preview);
       if (data.warning) setOverfitWarning(data.warning);
       if (data.batch != null && data.total_batches) {
-        setBatchProgress({ batch: data.batch, total: data.total_batches, losses: data.batch_losses || {} });
+        setBatchProgress({
+          batch: data.batch,
+          total: data.total_batches,
+          losses: data.batch_losses || {},
+        });
       }
       // Clear batch progress on epoch end (when we get full metrics)
       if (data.loss_history) setBatchProgress(null);
@@ -191,14 +213,19 @@ export default function TrainPage() {
     return () => {
       ws.close();
       wsRef.current = null;
-      if (chartFlushTimer.current) { clearTimeout(chartFlushTimer.current); chartFlushTimer.current = null; }
+      if (chartFlushTimer.current) {
+        clearTimeout(chartFlushTimer.current);
+        chartFlushTimer.current = null;
+      }
     };
   }, [runId, runStatus?.status]);
 
   // Esc to close lightbox
   useEffect(() => {
     if (!previewExpanded) return;
-    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") setPreviewExpanded(false); };
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setPreviewExpanded(false);
+    };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [previewExpanded]);
@@ -222,7 +249,11 @@ export default function TrainPage() {
         task_type: taskType,
         model_variant: variant,
         hyperparameters: {
-          epochs, batch: batchSize, imgsz, patience, augmentation: augPreset,
+          epochs,
+          batch: batchSize,
+          imgsz,
+          patience,
+          augmentation: augPreset,
           ...(resumeFrom ? { resume_from: resumeFrom } : {}),
         },
       });
@@ -231,14 +262,25 @@ export default function TrainPage() {
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
     }
-  }, [effectiveJobId, taskType, variant, epochs, batchSize, imgsz, patience, augPreset, resumeFrom]);
+  }, [
+    effectiveJobId,
+    taskType,
+    variant,
+    epochs,
+    batchSize,
+    imgsz,
+    patience,
+    augPreset,
+    resumeFrom,
+  ]);
 
   const metrics = runStatus?.metrics || wsMetrics;
   const progress = runStatus ? (runStatus.epoch_current / runStatus.total_epochs) * 100 : 0;
 
   // Use persisted history from API when WS history is empty (completed runs)
-  const effectiveLossHistory = lossHistory.length > 0 ? lossHistory : (runStatus?.loss_history || []);
-  const effectiveMetricHistory = metricHistory.length > 0 ? metricHistory : (runStatus?.metric_history || []);
+  const effectiveLossHistory = lossHistory.length > 0 ? lossHistory : runStatus?.loss_history || [];
+  const effectiveMetricHistory =
+    metricHistory.length > 0 ? metricHistory : runStatus?.metric_history || [];
 
   // Filter variants by task type
   const filteredVariants = variants
@@ -256,15 +298,24 @@ export default function TrainPage() {
 
   return (
     <div className="min-h-screen">
-
       <div className="max-w-4xl mx-auto mt-8 px-4">
-        <p className="eyebrow" style={{ marginBottom: 4 }}>Model training</p>
-        <h1 className="text-2xl font-bold mb-2" style={{ color: "var(--text-primary)" }}>Train Model</h1>
+        <p className="eyebrow" style={{ marginBottom: 4 }}>
+          Model training
+        </p>
+        <h1 className="text-2xl font-bold mb-2" style={{ color: "var(--text-primary)" }}>
+          Train Model
+        </h1>
         {job && (
           <p className="text-sm mb-6" style={{ color: "var(--text-secondary)" }}>
-            Dataset: {job.name || job.text_prompt || "exemplar"} &middot; {job.total_frames} recorded frames
+            Dataset: {job.name || job.text_prompt || "exemplar"} &middot; {job.total_frames}{" "}
+            recorded frames
             {job.annotation_count != null && <> &middot; {job.annotation_count} annotations</>}
-            {job.class_count != null && job.class_count > 0 && <> &middot; {job.class_count} class{job.class_count !== 1 ? "es" : ""}</>}
+            {job.class_count != null && job.class_count > 0 && (
+              <>
+                {" "}
+                &middot; {job.class_count} class{job.class_count !== 1 ? "es" : ""}
+              </>
+            )}
           </p>
         )}
 
@@ -273,19 +324,16 @@ export default function TrainPage() {
           <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg p-3 mb-5 text-sm text-amber-800">
             <AlertTriangle size={16} className="mt-0.5 shrink-0" />
             <span>
-              This dataset has only <strong>{frameCount}</strong> frames.
-              For best results, aim for 100-200+ labeled frames per class.
-              Training may still work but accuracy will be limited.
+              This dataset has only <strong>{frameCount}</strong> frames. For best results, aim for
+              100-200+ labeled frames per class. Training may still work but accuracy will be
+              limited.
             </span>
           </div>
         )}
 
         {/* Pre-flight dataset quality panel — class balance, imbalance, recommendations */}
         {!runId && datasetStats && datasetStats.total_annotations > 0 && (
-          <div
-            className="surface p-5 mb-5"
-            style={{ borderRadius: "var(--radius-lg)" }}
-          >
+          <div className="surface p-5 mb-5" style={{ borderRadius: "var(--radius-lg)" }}>
             <div className="flex items-center justify-between mb-3">
               <p className="eyebrow">Dataset quality</p>
               <button
@@ -305,7 +353,14 @@ export default function TrainPage() {
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
               <div>
                 <span className="eyebrow block">Annotated</span>
-                <span style={{ fontFamily: "var(--font-serif)", fontSize: 20, fontWeight: 700, color: "var(--text-primary)" }}>
+                <span
+                  style={{
+                    fontFamily: "var(--font-serif)",
+                    fontSize: 20,
+                    fontWeight: 700,
+                    color: "var(--text-primary)",
+                  }}
+                >
                   {datasetStats.annotated_frames}
                 </span>
                 <span style={{ fontSize: 11, color: "var(--text-muted)", marginLeft: 4 }}>
@@ -314,13 +369,27 @@ export default function TrainPage() {
               </div>
               <div>
                 <span className="eyebrow block">Annotations</span>
-                <span style={{ fontFamily: "var(--font-serif)", fontSize: 20, fontWeight: 700, color: "var(--text-primary)" }}>
+                <span
+                  style={{
+                    fontFamily: "var(--font-serif)",
+                    fontSize: 20,
+                    fontWeight: 700,
+                    color: "var(--text-primary)",
+                  }}
+                >
                   {datasetStats.total_annotations}
                 </span>
               </div>
               <div>
                 <span className="eyebrow block">Classes</span>
-                <span style={{ fontFamily: "var(--font-serif)", fontSize: 20, fontWeight: 700, color: "var(--text-primary)" }}>
+                <span
+                  style={{
+                    fontFamily: "var(--font-serif)",
+                    fontSize: 20,
+                    fontWeight: 700,
+                    color: "var(--text-primary)",
+                  }}
+                >
                   {datasetStats.class_count}
                 </span>
               </div>
@@ -331,7 +400,8 @@ export default function TrainPage() {
                     fontFamily: "var(--font-serif)",
                     fontSize: 20,
                     fontWeight: 700,
-                    color: datasetStats.imbalance_ratio >= 5 ? "var(--warning)" : "var(--text-primary)",
+                    color:
+                      datasetStats.imbalance_ratio >= 5 ? "var(--warning)" : "var(--text-primary)",
                   }}
                 >
                   {datasetStats.imbalance_ratio.toFixed(1)}×
@@ -434,16 +504,28 @@ export default function TrainPage() {
                 </span>
               </span>
               <span>
-                epochs=<span style={{ color: "var(--text-secondary)" }}>{datasetStats.recommended_epochs}</span>
+                epochs=
+                <span style={{ color: "var(--text-secondary)" }}>
+                  {datasetStats.recommended_epochs}
+                </span>
               </span>
               <span>
-                batch=<span style={{ color: "var(--text-secondary)" }}>{datasetStats.recommended_batch}</span>
+                batch=
+                <span style={{ color: "var(--text-secondary)" }}>
+                  {datasetStats.recommended_batch}
+                </span>
               </span>
               <span>
-                imgsz=<span style={{ color: "var(--text-secondary)" }}>{datasetStats.recommended_imgsz}</span>
+                imgsz=
+                <span style={{ color: "var(--text-secondary)" }}>
+                  {datasetStats.recommended_imgsz}
+                </span>
               </span>
               <span>
-                aug=<span style={{ color: "var(--text-secondary)" }}>{datasetStats.recommended_augmentation}</span>
+                aug=
+                <span style={{ color: "var(--text-secondary)" }}>
+                  {datasetStats.recommended_augmentation}
+                </span>
               </span>
             </div>
           </div>
@@ -467,9 +549,18 @@ export default function TrainPage() {
                         setImgsz(p.imgsz);
                       }}
                       className="px-4 py-1.5 rounded-lg text-sm transition-colors"
-                      style={active
-                        ? { backgroundColor: "var(--text-primary)", color: "var(--bg-page)", border: "1px solid var(--text-primary)" }
-                        : { backgroundColor: "var(--bg-surface)", color: "var(--text-secondary)", border: "1px solid var(--border-default)" }
+                      style={
+                        active
+                          ? {
+                              backgroundColor: "var(--text-primary)",
+                              color: "var(--bg-page)",
+                              border: "1px solid var(--text-primary)",
+                            }
+                          : {
+                              backgroundColor: "var(--bg-surface)",
+                              color: "var(--text-secondary)",
+                              border: "1px solid var(--border-default)",
+                            }
                       }
                     >
                       {p.label}
@@ -481,9 +572,17 @@ export default function TrainPage() {
 
             <div>
               <label className="eyebrow block mb-1">Task Type</label>
-              {job?.task_type || directRun?.task_type
-                ? <p className="text-sm">Dataset output: {taskType}</p>
-                : <TaskSelector value={taskType} onChange={(value) => { setRequestedTaskType(value); setVariant(""); }} />}
+              {job?.task_type || directRun?.task_type ? (
+                <p className="text-sm">Dataset output: {taskType}</p>
+              ) : (
+                <TaskSelector
+                  value={taskType}
+                  onChange={(value) => {
+                    setRequestedTaskType(value);
+                    setVariant("");
+                  }}
+                />
+              )}
             </div>
 
             <div>
@@ -491,10 +590,17 @@ export default function TrainPage() {
               <select
                 value={variant}
                 onChange={(e) => setVariant(e.target.value)}
-                className="rounded-lg px-3 py-2 text-sm w-full outline-none" style={{ border: "1px solid var(--border-default)", backgroundColor: "var(--bg-inset)", color: "var(--text-primary)" }}
+                className="rounded-lg px-3 py-2 text-sm w-full outline-none"
+                style={{
+                  border: "1px solid var(--border-default)",
+                  backgroundColor: "var(--bg-inset)",
+                  color: "var(--text-primary)",
+                }}
               >
                 {filteredVariants.map((v) => (
-                  <option key={v} value={v}>{humanizeVariant(v)}</option>
+                  <option key={v} value={v}>
+                    {humanizeVariant(v)}
+                  </option>
                 ))}
               </select>
             </div>
@@ -508,14 +614,21 @@ export default function TrainPage() {
               <select
                 value={resumeFrom}
                 onChange={(e) => setResumeFrom(e.target.value)}
-                className="rounded-lg px-3 py-2 text-sm w-full outline-none" style={{ border: "1px solid var(--border-default)", backgroundColor: "var(--bg-inset)", color: "var(--text-primary)" }}
+                className="rounded-lg px-3 py-2 text-sm w-full outline-none"
+                style={{
+                  border: "1px solid var(--border-default)",
+                  backgroundColor: "var(--bg-inset)",
+                  color: "var(--text-primary)",
+                }}
               >
                 <option value="">Pretrained (start fresh)</option>
-                {existingModels?.filter((m) => m.task_type === taskType).map((m) => (
-                  <option key={m.id} value={m.id}>
-                    Fine-tune: {m.name} ({m.model_variant})
-                  </option>
-                ))}
+                {existingModels
+                  ?.filter((m) => m.task_type === taskType)
+                  .map((m) => (
+                    <option key={m.id} value={m.id}>
+                      Fine-tune: {m.name} ({m.model_variant})
+                    </option>
+                  ))}
               </select>
               {resumeFrom && (
                 <p className="text-xs text-blue-600 mt-1">
@@ -534,7 +647,12 @@ export default function TrainPage() {
                   type="number"
                   value={epochs}
                   onChange={(e) => setEpochs(Number(e.target.value))}
-                  className="rounded-lg px-3 py-2 text-sm w-full outline-none" style={{ border: "1px solid var(--border-default)", backgroundColor: "var(--bg-inset)", color: "var(--text-primary)" }}
+                  className="rounded-lg px-3 py-2 text-sm w-full outline-none"
+                  style={{
+                    border: "1px solid var(--border-default)",
+                    backgroundColor: "var(--bg-inset)",
+                    color: "var(--text-primary)",
+                  }}
                 />
               </div>
               <div>
@@ -547,7 +665,12 @@ export default function TrainPage() {
                   value={patience}
                   onChange={(e) => setPatience(Number(e.target.value))}
                   min={1}
-                  className="rounded-lg px-3 py-2 text-sm w-full outline-none" style={{ border: "1px solid var(--border-default)", backgroundColor: "var(--bg-inset)", color: "var(--text-primary)" }}
+                  className="rounded-lg px-3 py-2 text-sm w-full outline-none"
+                  style={{
+                    border: "1px solid var(--border-default)",
+                    backgroundColor: "var(--bg-inset)",
+                    color: "var(--text-primary)",
+                  }}
                 />
               </div>
               <div>
@@ -559,7 +682,12 @@ export default function TrainPage() {
                   type="number"
                   value={batchSize}
                   onChange={(e) => setBatchSize(Number(e.target.value))}
-                  className="rounded-lg px-3 py-2 text-sm w-full outline-none" style={{ border: "1px solid var(--border-default)", backgroundColor: "var(--bg-inset)", color: "var(--text-primary)" }}
+                  className="rounded-lg px-3 py-2 text-sm w-full outline-none"
+                  style={{
+                    border: "1px solid var(--border-default)",
+                    backgroundColor: "var(--bg-inset)",
+                    color: "var(--text-primary)",
+                  }}
                 />
               </div>
               <div>
@@ -571,7 +699,12 @@ export default function TrainPage() {
                   type="number"
                   value={imgsz}
                   onChange={(e) => setImgsz(Number(e.target.value))}
-                  className="rounded-lg px-3 py-2 text-sm w-full outline-none" style={{ border: "1px solid var(--border-default)", backgroundColor: "var(--bg-inset)", color: "var(--text-primary)" }}
+                  className="rounded-lg px-3 py-2 text-sm w-full outline-none"
+                  style={{
+                    border: "1px solid var(--border-default)",
+                    backgroundColor: "var(--bg-inset)",
+                    color: "var(--text-primary)",
+                  }}
                 />
               </div>
             </div>
@@ -583,17 +716,35 @@ export default function TrainPage() {
                 <Tooltip text="Controls how training images are transformed. Stronger augmentation makes models more robust to lighting, angles, and occlusion — but trains slower." />
               </label>
               <div className="space-y-2">
-                {([
-                  { value: "minimal", label: "Minimal", desc: "No mosaic or mixup. Fastest training, least robust." },
-                  { value: "standard", label: "Standard (Recommended)", desc: "Mosaic + mixup + rotation + copy-paste. Good balance of speed and robustness." },
-                  { value: "aggressive", label: "Aggressive", desc: "Heavy augmentation: strong rotation, perspective warp, multi-scale. Best for out-of-distribution robustness." },
-                ] as const).map((opt) => (
+                {(
+                  [
+                    {
+                      value: "minimal",
+                      label: "Minimal",
+                      desc: "No mosaic or mixup. Fastest training, least robust.",
+                    },
+                    {
+                      value: "standard",
+                      label: "Standard (Recommended)",
+                      desc: "Mosaic + mixup + rotation + copy-paste. Good balance of speed and robustness.",
+                    },
+                    {
+                      value: "aggressive",
+                      label: "Aggressive",
+                      desc: "Heavy augmentation: strong rotation, perspective warp, multi-scale. Best for out-of-distribution robustness.",
+                    },
+                  ] as const
+                ).map((opt) => (
                   <label
                     key={opt.value}
                     className="flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-colors"
                     style={{
-                      border: augPreset === opt.value ? "2px solid var(--accent)" : "2px solid var(--border-subtle)",
-                      backgroundColor: augPreset === opt.value ? "var(--accent-soft)" : "transparent",
+                      border:
+                        augPreset === opt.value
+                          ? "2px solid var(--accent)"
+                          : "2px solid var(--border-subtle)",
+                      backgroundColor:
+                        augPreset === opt.value ? "var(--accent-soft)" : "transparent",
                     }}
                   >
                     <input
@@ -606,7 +757,9 @@ export default function TrainPage() {
                     />
                     <div>
                       <span className="text-sm font-medium">{opt.label}</span>
-                      <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>{opt.desc}</p>
+                      <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>
+                        {opt.desc}
+                      </p>
                     </div>
                   </label>
                 ))}
@@ -631,41 +784,73 @@ export default function TrainPage() {
             <div className="surface p-5" style={{ borderRadius: "var(--radius-lg)" }}>
               <div className="flex justify-between items-center mb-2">
                 <div>
-                  <span className="font-medium capitalize" style={{ color: "var(--text-primary)" }}>{runStatus.status}</span>
+                  <span className="font-medium capitalize" style={{ color: "var(--text-primary)" }}>
+                    {runStatus.status}
+                  </span>
                   {runStatus.status === "training" && batchProgress && batchProgress.total > 0 && (
-                    <span style={{ fontSize: 12, color: "var(--text-muted)", fontFamily: "var(--font-mono)", marginLeft: 8 }}>
-                      Batch {batchProgress.batch}/{batchProgress.total} ({Math.round((batchProgress.batch / batchProgress.total) * 100)}%)
+                    <span
+                      style={{
+                        fontSize: 12,
+                        color: "var(--text-muted)",
+                        fontFamily: "var(--font-mono)",
+                        marginLeft: 8,
+                      }}
+                    >
+                      Batch {batchProgress.batch}/{batchProgress.total} (
+                      {Math.round((batchProgress.batch / batchProgress.total) * 100)}%)
                     </span>
                   )}
                   {runStatus.status === "preparing" && (
-                    <span style={{ fontSize: 12, color: "var(--text-muted)", marginLeft: 8 }}>Preparing dataset...</span>
+                    <span style={{ fontSize: 12, color: "var(--text-muted)", marginLeft: 8 }}>
+                      Preparing dataset...
+                    </span>
                   )}
                 </div>
                 <div className="flex items-center gap-3">
-                  <span style={{ fontSize: 13, color: "var(--text-secondary)", fontFamily: "var(--font-mono)" }}>
+                  <span
+                    style={{
+                      fontSize: 13,
+                      color: "var(--text-secondary)",
+                      fontFamily: "var(--font-mono)",
+                    }}
+                  >
                     Epoch {runStatus.epoch_current}/{runStatus.total_epochs}
                     {/* ETA estimate from epoch timing */}
-                    {runStatus.status === "training" && runStatus.epoch_current > 1 && runStatus.started_at && (() => {
-                      const elapsed = (statusUpdatedAt - new Date(runStatus.started_at).getTime()) / 1000;
-                      const secPerEpoch = elapsed / runStatus.epoch_current;
-                      const remaining = (runStatus.total_epochs - runStatus.epoch_current) * secPerEpoch;
-                      const mins = Math.round(remaining / 60);
-                      return (
-                        <span style={{ color: "var(--text-muted)", marginLeft: 8, fontSize: 11 }}>
-                          ~{mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h ${mins % 60}m`} remaining
-                        </span>
-                      );
-                    })()}
+                    {runStatus.status === "training" &&
+                      runStatus.epoch_current > 1 &&
+                      runStatus.started_at &&
+                      (() => {
+                        const elapsed =
+                          (statusUpdatedAt - new Date(runStatus.started_at).getTime()) / 1000;
+                        const secPerEpoch = elapsed / runStatus.epoch_current;
+                        const remaining =
+                          (runStatus.total_epochs - runStatus.epoch_current) * secPerEpoch;
+                        const mins = Math.round(remaining / 60);
+                        return (
+                          <span style={{ color: "var(--text-muted)", marginLeft: 8, fontSize: 11 }}>
+                            ~{mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h ${mins % 60}m`}{" "}
+                            remaining
+                          </span>
+                        );
+                      })()}
                   </span>
                   {runStatus.status === "training" && (
                     <button
                       onClick={async () => {
                         setStopping(true);
-                        try { await stopTraining(runId!); } catch (e) { console.error(e); }
+                        try {
+                          await stopTraining(runId!);
+                        } catch (e) {
+                          console.error(e);
+                        }
                       }}
                       disabled={stopping}
                       className="flex items-center gap-1 px-3 py-1 rounded-lg text-xs disabled:opacity-50"
-                      style={{ backgroundColor: "var(--danger-soft)", color: "var(--danger)", border: "1px solid var(--danger)" }}
+                      style={{
+                        backgroundColor: "var(--danger-soft)",
+                        color: "var(--danger)",
+                        border: "1px solid var(--danger)",
+                      }}
                     >
                       <StopCircle size={12} />
                       {stopping ? "Stopping..." : "Stop Early"}
@@ -674,7 +859,10 @@ export default function TrainPage() {
                 </div>
               </div>
               {/* Epoch progress */}
-              <div className="w-full rounded-full h-2 mb-1" style={{ backgroundColor: "var(--bg-inset)" }}>
+              <div
+                className="w-full rounded-full h-2 mb-1"
+                style={{ backgroundColor: "var(--bg-inset)" }}
+              >
                 <div
                   className="h-2 rounded-full transition-all"
                   style={{ width: `${progress}%`, backgroundColor: "var(--accent)" }}
@@ -683,17 +871,34 @@ export default function TrainPage() {
               {/* Batch sub-progress within current epoch */}
               {runStatus.status === "training" && batchProgress && batchProgress.total > 0 && (
                 <div className="mt-2">
-                  <div className="w-full rounded-full h-1.5" style={{ backgroundColor: "var(--bg-inset)" }}>
+                  <div
+                    className="w-full rounded-full h-1.5"
+                    style={{ backgroundColor: "var(--bg-inset)" }}
+                  >
                     <div
                       className="h-1.5 rounded-full transition-all"
-                      style={{ width: `${(batchProgress.batch / batchProgress.total) * 100}%`, backgroundColor: "var(--accent)" }}
+                      style={{
+                        width: `${(batchProgress.batch / batchProgress.total) * 100}%`,
+                        backgroundColor: "var(--accent)",
+                      }}
                     />
                   </div>
                   {Object.keys(batchProgress.losses).length > 0 && (
-                    <div className="flex gap-4 mt-2" style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                    <div
+                      className="flex gap-4 mt-2"
+                      style={{ fontSize: 11, color: "var(--text-muted)" }}
+                    >
                       {Object.entries(batchProgress.losses).map(([k, v]) => (
                         <span key={k}>
-                          {k.replace("train/", "")}: <span style={{ fontFamily: "var(--font-mono)", color: "var(--text-secondary)" }}>{v.toFixed(3)}</span>
+                          {k.replace("train/", "")}:{" "}
+                          <span
+                            style={{
+                              fontFamily: "var(--font-mono)",
+                              color: "var(--text-secondary)",
+                            }}
+                          >
+                            {v.toFixed(3)}
+                          </span>
                         </span>
                       ))}
                     </div>
@@ -716,8 +921,26 @@ export default function TrainPage() {
                     { label: "Augment", value: runStatus.hyperparameters.augmentation ?? "-" },
                   ].map((p) => (
                     <div key={p.label}>
-                      <span className="block" style={{ fontSize: 10, fontFamily: "var(--font-mono)", textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--text-muted)" }}>{p.label}</span>
-                      <span style={{ fontSize: 14, fontWeight: 600, fontFamily: "var(--font-serif)", color: "var(--text-primary)" }}>
+                      <span
+                        className="block"
+                        style={{
+                          fontSize: 10,
+                          fontFamily: "var(--font-mono)",
+                          textTransform: "uppercase",
+                          letterSpacing: "0.05em",
+                          color: "var(--text-muted)",
+                        }}
+                      >
+                        {p.label}
+                      </span>
+                      <span
+                        style={{
+                          fontSize: 14,
+                          fontWeight: 600,
+                          fontFamily: "var(--font-serif)",
+                          color: "var(--text-primary)",
+                        }}
+                      >
                         {String(p.value)}
                       </span>
                     </div>
@@ -728,7 +951,14 @@ export default function TrainPage() {
 
             {/* Overfitting warning */}
             {overfitWarning && (
-              <div className="flex items-start gap-2 rounded-lg p-3 text-sm" style={{ backgroundColor: "var(--warning-soft)", border: "1px solid var(--warning)", color: "var(--warning)" }}>
+              <div
+                className="flex items-start gap-2 rounded-lg p-3 text-sm"
+                style={{
+                  backgroundColor: "var(--warning-soft)",
+                  border: "1px solid var(--warning)",
+                  color: "var(--warning)",
+                }}
+              >
                 <TrendingDown size={16} className="mt-0.5 shrink-0" />
                 <div>
                   <span className="font-medium">Overfitting detected: </span>
@@ -745,115 +975,150 @@ export default function TrainPage() {
               <div className="surface p-5" style={{ borderRadius: "var(--radius-lg)" }}>
                 <p className="eyebrow mb-2">Training Curves</p>
                 <p className="text-sm" style={{ color: "var(--text-muted)" }}>
-                  Epoch-by-epoch curves are not available for this run (trained before curve tracking was added).
+                  Epoch-by-epoch curves are not available for this run (trained before curve
+                  tracking was added).
                 </p>
               </div>
             )}
 
             {/* Loss curves */}
-            {effectiveLossHistory.length > 1 && (() => {
-              // Find best epoch (lowest val box loss)
-              let bestLossEpoch = -1;
-              let bestLossVal = Infinity;
-              effectiveLossHistory.forEach((row, i) => {
-                for (const [k, v] of Object.entries(row)) {
-                  if (k.includes("val") && k.includes("box_loss") && v < bestLossVal) {
-                    bestLossVal = v;
-                    bestLossEpoch = i;
+            {effectiveLossHistory.length > 1 &&
+              (() => {
+                // Find best epoch (lowest val box loss)
+                let bestLossEpoch = -1;
+                let bestLossVal = Infinity;
+                effectiveLossHistory.forEach((row, i) => {
+                  for (const [k, v] of Object.entries(row)) {
+                    if (k.includes("val") && k.includes("box_loss") && v < bestLossVal) {
+                      bestLossVal = v;
+                      bestLossEpoch = i;
+                    }
                   }
-                }
-              });
-              const allKeys = Object.keys(effectiveLossHistory[0] || {}).filter((k) => k !== "epoch");
-              const lossSeries = allKeys.map((k) => {
-                const isVal = k.startsWith("val/");
-                const shortName = k.replace("val/", "").replace("train/", "");
-                return {
-                  key: k,
-                  label: `${isVal ? "Val" : "Train"} ${shortName}`,
-                  color: isVal ? "#ef4444" : "#3b82f6",
-                };
-              });
-              // Group: show box+seg+cls losses with train vs val overlay
-              const boxKeys = lossSeries.filter((s) => s.key.includes("box_loss"));
-              const segKeys = lossSeries.filter((s) => s.key.includes("seg_loss"));
-              const clsKeys = lossSeries.filter((s) => s.key.includes("cls_loss"));
-              const otherKeys = lossSeries.filter((s) =>
-                !s.key.includes("box_loss") && !s.key.includes("seg_loss") && !s.key.includes("cls_loss")
-              );
-              const groups = [
-                { title: "Box Loss", series: boxKeys },
-                { title: "Seg Loss", series: segKeys },
-                { title: "Cls Loss", series: clsKeys },
-                ...(otherKeys.length > 0 ? [{ title: "Other Loss", series: otherKeys }] : []),
-              ].filter((g) => g.series.length > 0);
+                });
+                const allKeys = Object.keys(effectiveLossHistory[0] || {}).filter(
+                  (k) => k !== "epoch",
+                );
+                const lossSeries = allKeys.map((k) => {
+                  const isVal = k.startsWith("val/");
+                  const shortName = k.replace("val/", "").replace("train/", "");
+                  return {
+                    key: k,
+                    label: `${isVal ? "Val" : "Train"} ${shortName}`,
+                    color: isVal ? "#ef4444" : "#3b82f6",
+                  };
+                });
+                // Group: show box+seg+cls losses with train vs val overlay
+                const boxKeys = lossSeries.filter((s) => s.key.includes("box_loss"));
+                const segKeys = lossSeries.filter((s) => s.key.includes("seg_loss"));
+                const clsKeys = lossSeries.filter((s) => s.key.includes("cls_loss"));
+                const otherKeys = lossSeries.filter(
+                  (s) =>
+                    !s.key.includes("box_loss") &&
+                    !s.key.includes("seg_loss") &&
+                    !s.key.includes("cls_loss"),
+                );
+                const groups = [
+                  { title: "Box Loss", series: boxKeys },
+                  { title: "Seg Loss", series: segKeys },
+                  { title: "Cls Loss", series: clsKeys },
+                  ...(otherKeys.length > 0 ? [{ title: "Other Loss", series: otherKeys }] : []),
+                ].filter((g) => g.series.length > 0);
 
-              return (
-                <div className="surface p-5" style={{ borderRadius: "var(--radius-lg)" }}>
-                  <p className="eyebrow mb-3">Loss Curves</p>
-                  <div className={`grid gap-4 ${groups.length > 1 ? "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3" : ""}`}>
-                    {groups.map((g) => (
-                      <div key={g.title}>
-                        <p className="eyebrow mb-1">{g.title}</p>
-                        <LineChart data={effectiveLossHistory} series={g.series} height={120} bestEpoch={bestLossEpoch >= 0 ? bestLossEpoch : undefined} />
-                      </div>
-                    ))}
+                return (
+                  <div className="surface p-5" style={{ borderRadius: "var(--radius-lg)" }}>
+                    <p className="eyebrow mb-3">Loss Curves</p>
+                    <div
+                      className={`grid gap-4 ${groups.length > 1 ? "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3" : ""}`}
+                    >
+                      {groups.map((g) => (
+                        <div key={g.title}>
+                          <p className="eyebrow mb-1">{g.title}</p>
+                          <LineChart
+                            data={effectiveLossHistory}
+                            series={g.series}
+                            height={120}
+                            bestEpoch={bestLossEpoch >= 0 ? bestLossEpoch : undefined}
+                          />
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              );
-            })()}
+                );
+              })()}
 
             {/* Accuracy metrics */}
-            {effectiveMetricHistory.length > 1 && (() => {
-              // Find best epoch (highest mAP50)
-              let bestMetricEpoch = -1;
-              let bestMetricVal = -1;
-              effectiveMetricHistory.forEach((row, i) => {
-                for (const [k, v] of Object.entries(row)) {
-                  if (k.includes("mAP50") && k.includes("(B)") && v > bestMetricVal) {
-                    bestMetricVal = v;
-                    bestMetricEpoch = i;
+            {effectiveMetricHistory.length > 1 &&
+              (() => {
+                // Find best epoch (highest mAP50)
+                let bestMetricEpoch = -1;
+                let bestMetricVal = -1;
+                effectiveMetricHistory.forEach((row, i) => {
+                  for (const [k, v] of Object.entries(row)) {
+                    if (k.includes("mAP50") && k.includes("(B)") && v > bestMetricVal) {
+                      bestMetricVal = v;
+                      bestMetricEpoch = i;
+                    }
                   }
-                }
-              });
-              const keys = Object.keys(effectiveMetricHistory[0] || {}).filter((k) => k !== "epoch");
-              const METRIC_COLORS: Record<string, string> = {
-                "precision": "#8b5cf6",
-                "recall": "#f59e0b",
-                "mAP50": "#22c55e",
-                "mAP50-95": "#14b8a6",
-              };
-              const series = keys.map((k) => {
-                const short = k.replace("metrics/", "").replace("(B)", "").replace("(M)", " mask");
-                const colorKey = Object.keys(METRIC_COLORS).find((ck) => k.includes(ck));
-                return {
-                  key: k,
-                  label: short,
-                  color: colorKey ? METRIC_COLORS[colorKey] : "#6b7280",
+                });
+                const keys = Object.keys(effectiveMetricHistory[0] || {}).filter(
+                  (k) => k !== "epoch",
+                );
+                const METRIC_COLORS: Record<string, string> = {
+                  precision: "#8b5cf6",
+                  recall: "#f59e0b",
+                  mAP50: "#22c55e",
+                  "mAP50-95": "#14b8a6",
                 };
-              });
-              // Split bbox vs mask metrics
-              const bboxSeries = series.filter((s) => s.key.includes("(B)"));
-              const maskSeries = series.filter((s) => s.key.includes("(M)"));
-              const groups = [
-                ...(bboxSeries.length > 0 ? [{ title: "Detection Metrics", series: bboxSeries }] : []),
-                ...(maskSeries.length > 0 ? [{ title: "Segmentation Metrics", series: maskSeries }] : []),
-                ...(bboxSeries.length === 0 && maskSeries.length === 0 ? [{ title: "Metrics", series }] : []),
-              ];
+                const series = keys.map((k) => {
+                  const short = k
+                    .replace("metrics/", "")
+                    .replace("(B)", "")
+                    .replace("(M)", " mask");
+                  const colorKey = Object.keys(METRIC_COLORS).find((ck) => k.includes(ck));
+                  return {
+                    key: k,
+                    label: short,
+                    color: colorKey ? METRIC_COLORS[colorKey] : "#6b7280",
+                  };
+                });
+                // Split bbox vs mask metrics
+                const bboxSeries = series.filter((s) => s.key.includes("(B)"));
+                const maskSeries = series.filter((s) => s.key.includes("(M)"));
+                const groups = [
+                  ...(bboxSeries.length > 0
+                    ? [{ title: "Detection Metrics", series: bboxSeries }]
+                    : []),
+                  ...(maskSeries.length > 0
+                    ? [{ title: "Segmentation Metrics", series: maskSeries }]
+                    : []),
+                  ...(bboxSeries.length === 0 && maskSeries.length === 0
+                    ? [{ title: "Metrics", series }]
+                    : []),
+                ];
 
-              return (
-                <div className="surface p-5" style={{ borderRadius: "var(--radius-lg)" }}>
-                  <p className="eyebrow mb-3">Accuracy Metrics</p>
-                  <div className={`grid gap-4 ${groups.length > 1 ? "grid-cols-1 sm:grid-cols-2" : ""}`}>
-                    {groups.map((g) => (
-                      <div key={g.title}>
-                        <p className="eyebrow mb-1">{g.title}</p>
-                        <LineChart data={effectiveMetricHistory} series={g.series} height={140} yMin={0} yMax={1} bestEpoch={bestMetricEpoch >= 0 ? bestMetricEpoch : undefined} />
-                      </div>
-                    ))}
+                return (
+                  <div className="surface p-5" style={{ borderRadius: "var(--radius-lg)" }}>
+                    <p className="eyebrow mb-3">Accuracy Metrics</p>
+                    <div
+                      className={`grid gap-4 ${groups.length > 1 ? "grid-cols-1 sm:grid-cols-2" : ""}`}
+                    >
+                      {groups.map((g) => (
+                        <div key={g.title}>
+                          <p className="eyebrow mb-1">{g.title}</p>
+                          <LineChart
+                            data={effectiveMetricHistory}
+                            series={g.series}
+                            height={140}
+                            yMin={0}
+                            yMax={1}
+                            bestEpoch={bestMetricEpoch >= 0 ? bestMetricEpoch : undefined}
+                          />
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              );
-            })()}
+                );
+              })()}
 
             {/* Live metrics grid */}
             {Object.keys(metrics).length > 0 && (
@@ -863,58 +1128,112 @@ export default function TrainPage() {
                   {Object.entries(metrics)
                     .filter(([k]) => !k.includes("sem_loss") && k !== "fitness")
                     .map(([k, v]) => (
-                    <div key={k} className="rounded-lg p-2.5" style={{ backgroundColor: "var(--bg-inset)" }}>
-                      <span className="eyebrow block">{humanizeMetricKey(k)}</span>
-                      <span style={{ fontFamily: "var(--font-mono)", fontSize: 14, fontWeight: 600, color: "var(--text-primary)", fontVariantNumeric: "tabular-nums" }}>
-                        {typeof v === "number" ? formatMetricValue(k, v) : String(v)}
-                      </span>
-                    </div>
-                  ))}
+                      <div
+                        key={k}
+                        className="rounded-lg p-2.5"
+                        style={{ backgroundColor: "var(--bg-inset)" }}
+                      >
+                        <span className="eyebrow block">{humanizeMetricKey(k)}</span>
+                        <span
+                          style={{
+                            fontFamily: "var(--font-mono)",
+                            fontSize: 14,
+                            fontWeight: 600,
+                            color: "var(--text-primary)",
+                            fontVariantNumeric: "tabular-nums",
+                          }}
+                        >
+                          {typeof v === "number" ? formatMetricValue(k, v) : String(v)}
+                        </span>
+                      </div>
+                    ))}
                 </div>
               </div>
             )}
 
             {/* Per-class metrics (from best_metrics — YOLO computes these) */}
-            {runStatus.best_metrics && (() => {
-              const classMetrics: { name: string; precision: number; recall: number; mAP50: number }[] = [];
-              // YOLO stores per-class as metrics/precision_class0, etc. — or in the raw metrics dict
-              // Check for per-class keys pattern
-              for (const [k, v] of Object.entries(runStatus.best_metrics)) {
-                if (k.startsWith("per_class/")) {
-                  const parts = k.replace("per_class/", "").split("/");
-                  if (parts.length === 2) {
-                    const [cls, metric] = parts;
-                    let entry = classMetrics.find((c) => c.name === cls);
-                    if (!entry) {
-                      entry = { name: cls, precision: 0, recall: 0, mAP50: 0 };
-                      classMetrics.push(entry);
+            {runStatus.best_metrics &&
+              (() => {
+                const classMetrics: {
+                  name: string;
+                  precision: number;
+                  recall: number;
+                  mAP50: number;
+                }[] = [];
+                // YOLO stores per-class as metrics/precision_class0, etc. — or in the raw metrics dict
+                // Check for per-class keys pattern
+                for (const [k, v] of Object.entries(runStatus.best_metrics)) {
+                  if (k.startsWith("per_class/")) {
+                    const parts = k.replace("per_class/", "").split("/");
+                    if (parts.length === 2) {
+                      const [cls, metric] = parts;
+                      let entry = classMetrics.find((c) => c.name === cls);
+                      if (!entry) {
+                        entry = { name: cls, precision: 0, recall: 0, mAP50: 0 };
+                        classMetrics.push(entry);
+                      }
+                      if (metric === "precision") entry.precision = v;
+                      if (metric === "recall") entry.recall = v;
+                      if (metric === "mAP50") entry.mAP50 = v;
                     }
-                    if (metric === "precision") entry.precision = v;
-                    if (metric === "recall") entry.recall = v;
-                    if (metric === "mAP50") entry.mAP50 = v;
                   }
                 }
-              }
-              if (classMetrics.length === 0) return null;
-              return (
-                <div className="surface p-4" style={{ borderRadius: "var(--radius-lg)" }}>
-                  <p className="eyebrow mb-3">Per-Class Performance</p>
-                  <div className="space-y-1.5">
-                    <div className="grid grid-cols-4 gap-2 text-xs" style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}>
-                      <span>Class</span><span className="text-right">Precision</span><span className="text-right">Recall</span><span className="text-right">mAP50</span>
-                    </div>
-                    {classMetrics.map((c) => (
-                      <div key={c.name} className="grid grid-cols-4 gap-2 text-sm" style={{ fontVariantNumeric: "tabular-nums" }}>
-                        <span style={{ color: "var(--text-primary)", fontWeight: 500 }}>{c.name}</span>
-                        <span className="text-right" style={{ fontFamily: "var(--font-mono)", color: "var(--text-secondary)" }}>{(c.precision * 100).toFixed(1)}%</span>
-                        <span className="text-right" style={{ fontFamily: "var(--font-mono)", color: "var(--text-secondary)" }}>{(c.recall * 100).toFixed(1)}%</span>
-                        <span className="text-right" style={{ fontFamily: "var(--font-mono)", color: "var(--text-secondary)" }}>{(c.mAP50 * 100).toFixed(1)}%</span>
+                if (classMetrics.length === 0) return null;
+                return (
+                  <div className="surface p-4" style={{ borderRadius: "var(--radius-lg)" }}>
+                    <p className="eyebrow mb-3">Per-Class Performance</p>
+                    <div className="space-y-1.5">
+                      <div
+                        className="grid grid-cols-4 gap-2 text-xs"
+                        style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}
+                      >
+                        <span>Class</span>
+                        <span className="text-right">Precision</span>
+                        <span className="text-right">Recall</span>
+                        <span className="text-right">mAP50</span>
                       </div>
-                    ))}
+                      {classMetrics.map((c) => (
+                        <div
+                          key={c.name}
+                          className="grid grid-cols-4 gap-2 text-sm"
+                          style={{ fontVariantNumeric: "tabular-nums" }}
+                        >
+                          <span style={{ color: "var(--text-primary)", fontWeight: 500 }}>
+                            {c.name}
+                          </span>
+                          <span
+                            className="text-right"
+                            style={{
+                              fontFamily: "var(--font-mono)",
+                              color: "var(--text-secondary)",
+                            }}
+                          >
+                            {(c.precision * 100).toFixed(1)}%
+                          </span>
+                          <span
+                            className="text-right"
+                            style={{
+                              fontFamily: "var(--font-mono)",
+                              color: "var(--text-secondary)",
+                            }}
+                          >
+                            {(c.recall * 100).toFixed(1)}%
+                          </span>
+                          <span
+                            className="text-right"
+                            style={{
+                              fontFamily: "var(--font-mono)",
+                              color: "var(--text-secondary)",
+                            }}
+                          >
+                            {(c.mAP50 * 100).toFixed(1)}%
+                          </span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              );
-            })()}
+                );
+              })()}
 
             {/* Validation/training preview image — always shown */}
             {valPreview && (
@@ -942,7 +1261,10 @@ export default function TrainPage() {
                 className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-8 cursor-pointer"
                 onClick={() => setPreviewExpanded(false)}
               >
-                <div className="relative max-w-full max-h-full" onClick={(e) => e.stopPropagation()}>
+                <div
+                  className="relative max-w-full max-h-full"
+                  onClick={(e) => e.stopPropagation()}
+                >
                   <img
                     src={`data:image/jpeg;base64,${valPreview}`}
                     alt="Model predictions (enlarged)"
@@ -962,109 +1284,158 @@ export default function TrainPage() {
             )}
 
             {/* Completed — Rich results summary */}
-            {runStatus.status === "completed" && (() => {
-              const bm = runStatus.best_metrics || {};
-              const mAP50 = bm["metrics/mAP50(B)"];
-              const mAP5095 = bm["metrics/mAP50-95(B)"];
-              const prec = bm["metrics/precision(B)"];
-              const rec = bm["metrics/recall(B)"];
-              const duration = runStatus.started_at && runStatus.completed_at
-                ? (() => {
-                    const secs = Math.round((new Date(runStatus.completed_at).getTime() - new Date(runStatus.started_at).getTime()) / 1000);
-                    return secs < 60 ? `${secs}s` : secs < 3600 ? `${Math.floor(secs / 60)}m ${secs % 60}s` : `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`;
-                  })()
-                : null;
+            {runStatus.status === "completed" &&
+              (() => {
+                const bm = runStatus.best_metrics || {};
+                const mAP50 = bm["metrics/mAP50(B)"];
+                const mAP5095 = bm["metrics/mAP50-95(B)"];
+                const prec = bm["metrics/precision(B)"];
+                const rec = bm["metrics/recall(B)"];
+                const duration =
+                  runStatus.started_at && runStatus.completed_at
+                    ? (() => {
+                        const secs = Math.round(
+                          (new Date(runStatus.completed_at).getTime() -
+                            new Date(runStatus.started_at).getTime()) /
+                            1000,
+                        );
+                        return secs < 60
+                          ? `${secs}s`
+                          : secs < 3600
+                            ? `${Math.floor(secs / 60)}m ${secs % 60}s`
+                            : `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`;
+                      })()
+                    : null;
 
-              return (
-                <div className="surface p-5" style={{ borderRadius: "var(--radius-lg)", borderColor: "var(--success)" }}>
-                  <div className="flex items-center gap-2 mb-4">
-                    <CheckCircle size={18} style={{ color: "var(--success)" }} />
-                    <span style={{ fontFamily: "var(--font-serif)", fontSize: 16, fontWeight: 700, color: "var(--text-primary)" }}>
-                      Training Complete
-                    </span>
-                    <span style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text-muted)", marginLeft: "auto" }}>
-                      {runStatus.epoch_current} epochs{duration && <> · {duration}</>}
-                    </span>
-                  </div>
-
-                  {/* Hero metrics */}
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
-                    {[
-                      { label: "mAP50", value: mAP50, hero: true },
-                      { label: "mAP50-95", value: mAP5095 },
-                      { label: "Precision", value: prec },
-                      { label: "Recall", value: rec },
-                    ].map((m) => (
-                      <div
-                        key={m.label}
-                        className="rounded-lg p-3 text-center"
-                        style={{ backgroundColor: m.hero ? "var(--success-soft)" : "var(--bg-inset)" }}
-                      >
-                        <span className="eyebrow block">{m.label}</span>
-                        <span style={{
-                          fontSize: m.hero ? 28 : 22,
-                          fontWeight: 700,
+                return (
+                  <div
+                    className="surface p-5"
+                    style={{ borderRadius: "var(--radius-lg)", borderColor: "var(--success)" }}
+                  >
+                    <div className="flex items-center gap-2 mb-4">
+                      <CheckCircle size={18} style={{ color: "var(--success)" }} />
+                      <span
+                        style={{
                           fontFamily: "var(--font-serif)",
-                          color: m.hero ? "var(--success)" : "var(--text-primary)",
-                          fontVariantNumeric: "tabular-nums",
-                        }}>
-                          {m.value != null ? `${(m.value * 100).toFixed(1)}%` : "—"}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Actions */}
-                  <div className="flex flex-wrap gap-3">
-                    <button
-                      onClick={async () => {
-                        const allModels = await listModels();
-                        const thisModel = allModels.find((m) => m.name?.includes(runStatus.name || ""));
-                        if (thisModel) {
-                          await activateModel(thisModel.id);
-                          window.location.href = "/deploy/test";
-                        } else {
-                          window.location.href = "/deploy/models";
-                        }
-                      }}
-                      className="px-4 py-2 text-white rounded-lg text-sm font-medium"
-                      style={{ backgroundColor: "var(--success)" }}
-                    >
-                      Activate &amp; Try Demo
-                    </button>
-                    <button
-                      onClick={() => { setShowNewRun(true); setRunId(null); }}
-                      className="flex items-center gap-1.5 px-4 py-2 text-white rounded-lg text-sm font-medium"
-                      style={{ backgroundColor: "var(--accent)", color: "var(--text-on-accent)" }}
-                    >
-                      <RotateCcw size={14} />
-                      Train Again
-                    </button>
-                    <Link
-                      to="/experiments"
-                      className="px-4 py-2 rounded-lg text-sm"
-                      style={{ border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}
-                    >
-                      View Experiments
-                    </Link>
-                    {runStatus.weights_url && (
-                      <a
-                        href={runStatus.weights_url}
-                        className="px-4 py-2 rounded-lg text-sm"
-                        style={{ border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}
+                          fontSize: 16,
+                          fontWeight: 700,
+                          color: "var(--text-primary)",
+                        }}
                       >
-                      Download Weights
-                    </a>
-                  )}
-                </div>
-              </div>
-              );
-            })()}
+                        Training Complete
+                      </span>
+                      <span
+                        style={{
+                          fontSize: 11,
+                          fontFamily: "var(--font-mono)",
+                          color: "var(--text-muted)",
+                          marginLeft: "auto",
+                        }}
+                      >
+                        {runStatus.epoch_current} epochs{duration && <> · {duration}</>}
+                      </span>
+                    </div>
+
+                    {/* Hero metrics */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+                      {[
+                        { label: "mAP50", value: mAP50, hero: true },
+                        { label: "mAP50-95", value: mAP5095 },
+                        { label: "Precision", value: prec },
+                        { label: "Recall", value: rec },
+                      ].map((m) => (
+                        <div
+                          key={m.label}
+                          className="rounded-lg p-3 text-center"
+                          style={{
+                            backgroundColor: m.hero ? "var(--success-soft)" : "var(--bg-inset)",
+                          }}
+                        >
+                          <span className="eyebrow block">{m.label}</span>
+                          <span
+                            style={{
+                              fontSize: m.hero ? 28 : 22,
+                              fontWeight: 700,
+                              fontFamily: "var(--font-serif)",
+                              color: m.hero ? "var(--success)" : "var(--text-primary)",
+                              fontVariantNumeric: "tabular-nums",
+                            }}
+                          >
+                            {m.value != null ? `${(m.value * 100).toFixed(1)}%` : "—"}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Actions */}
+                    <div className="flex flex-wrap gap-3">
+                      <button
+                        onClick={async () => {
+                          const allModels = await listModels();
+                          const thisModel = allModels.find((m) =>
+                            m.name?.includes(runStatus.name || ""),
+                          );
+                          if (thisModel) {
+                            await activateModel(thisModel.id);
+                            window.location.href = "/deploy/test";
+                          } else {
+                            window.location.href = "/deploy/models";
+                          }
+                        }}
+                        className="px-4 py-2 text-white rounded-lg text-sm font-medium"
+                        style={{ backgroundColor: "var(--success)" }}
+                      >
+                        Activate &amp; Try Demo
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowNewRun(true);
+                          setRunId(null);
+                        }}
+                        className="flex items-center gap-1.5 px-4 py-2 text-white rounded-lg text-sm font-medium"
+                        style={{ backgroundColor: "var(--accent)", color: "var(--text-on-accent)" }}
+                      >
+                        <RotateCcw size={14} />
+                        Train Again
+                      </button>
+                      <Link
+                        to="/experiments"
+                        className="px-4 py-2 rounded-lg text-sm"
+                        style={{
+                          border: "1px solid var(--border-default)",
+                          color: "var(--text-secondary)",
+                        }}
+                      >
+                        View Experiments
+                      </Link>
+                      {runStatus.weights_url && (
+                        <a
+                          href={runStatus.weights_url}
+                          className="px-4 py-2 rounded-lg text-sm"
+                          style={{
+                            border: "1px solid var(--border-default)",
+                            color: "var(--text-secondary)",
+                          }}
+                        >
+                          Download Weights
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
 
             {runStatus.status === "failed" && (
-              <div className="rounded-lg p-4" style={{ backgroundColor: "var(--danger-soft)", border: "1px solid var(--danger)" }}>
-                <h3 className="font-semibold mb-1" style={{ color: "var(--danger)" }}>Training Failed</h3>
-                <p className="text-sm" style={{ color: "var(--danger)" }}>{runStatus.error_message}</p>
+              <div
+                className="rounded-lg p-4"
+                style={{ backgroundColor: "var(--danger-soft)", border: "1px solid var(--danger)" }}
+              >
+                <h3 className="font-semibold mb-1" style={{ color: "var(--danger)" }}>
+                  Training Failed
+                </h3>
+                <p className="text-sm" style={{ color: "var(--danger)" }}>
+                  {runStatus.error_message}
+                </p>
               </div>
             )}
           </div>
