@@ -29,10 +29,14 @@ export default function PageLayout({
           <div className="flex justify-between items-start mb-6">
             <div>
               {title && (
-                <h1 className="text-2xl font-bold" style={{ color: "var(--text-primary)" }}>{title}</h1>
+                <h1 className="text-2xl font-bold" style={{ color: "var(--text-primary)" }}>
+                  {title}
+                </h1>
               )}
               {subtitle && (
-                <p className="text-sm mt-1" style={{ color: "var(--text-secondary)" }}>{subtitle}</p>
+                <p className="text-sm mt-1" style={{ color: "var(--text-secondary)" }}>
+                  {subtitle}
+                </p>
               )}
             </div>
             {actions && <div className="flex gap-2">{actions}</div>}

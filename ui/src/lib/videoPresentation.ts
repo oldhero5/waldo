@@ -14,8 +14,10 @@ export function sourceFrameDuration(frames: readonly TimedEvidence[], index: num
   if (explicit && explicit > 0) return explicit;
   // Older CFR results carry source indices. Never mistake the sampling gap for a frame duration.
   for (let i = 1; i < frames.length; i++) {
-    const a = frames[i - 1], b = frames[i];
-    const first = a.frame_index ?? a.frame_idx, second = b.frame_index ?? b.frame_idx;
+    const a = frames[i - 1],
+      b = frames[i];
+    const first = a.frame_index ?? a.frame_idx,
+      second = b.frame_index ?? b.frame_idx;
     if (first != null && second != null && second > first && b.timestamp_s > a.timestamp_s) {
       return (b.timestamp_s - a.timestamp_s) / (second - first);
     }
@@ -27,17 +29,22 @@ export function assessedFrameAt(frames: readonly TimedEvidence[], time: number):
   if (!Number.isFinite(time)) return -1;
   // Allow only timestamp rounding; masks must not leak onto adjacent unassessed source frames.
   const epsilon = 0.001;
-  let lo = 0, hi = frames.length;
+  let lo = 0,
+    hi = frames.length;
   while (lo < hi) {
     const mid = (lo + hi) >>> 1;
-    if (frames[mid].timestamp_s <= time + epsilon) lo = mid + 1; else hi = mid;
+    if (frames[mid].timestamp_s <= time + epsilon) lo = mid + 1;
+    else hi = mid;
   }
   const index = lo - 1;
   if (index < 0) return -1;
   const frame = frames[index];
   if (frame.timestamp_method && frame.timestamp_method !== "source_pts") return -1;
   const duration = sourceFrameDuration(frames, index);
-  return time >= frame.timestamp_s - epsilon && time < frame.timestamp_s + Math.max(duration, epsilon * 2) - epsilon ? index : -1;
+  return time >= frame.timestamp_s - epsilon &&
+    time < frame.timestamp_s + Math.max(duration, epsilon * 2) - epsilon
+    ? index
+    : -1;
 }
 
 export function compatibleSourceSize(frame: TimedEvidence, width: number, height: number): boolean {
@@ -46,9 +53,16 @@ export function compatibleSourceSize(frame: TimedEvidence, width: number, height
 }
 
 /** Observe the decoded presentation clock. currentTime/rAF can be ahead of the visible frame. */
-export function watchVideoPresentation(video: HTMLVideoElement, draw: (time: number) => void): () => void {
-  let stopped = false, callback = 0, animation = 0;
-  const ready = () => { if (!video.seeking && video.readyState >= 2) draw(video.currentTime); };
+export function watchVideoPresentation(
+  video: HTMLVideoElement,
+  draw: (time: number) => void,
+): () => void {
+  let stopped = false,
+    callback = 0,
+    animation = 0;
+  const ready = () => {
+    if (!video.seeking && video.readyState >= 2) draw(video.currentTime);
+  };
   const hasFrameCallbacks = typeof video.requestVideoFrameCallback === "function";
   const next = () => {
     callback = video.requestVideoFrameCallback((_, metadata) => {
@@ -64,8 +78,11 @@ export function watchVideoPresentation(video: HTMLVideoElement, draw: (time: num
   };
   video.addEventListener("seeked", ready);
   video.addEventListener("loadeddata", ready);
-  queueMicrotask(() => { if (!stopped) ready(); });
-  if (hasFrameCallbacks) next(); else fallback();
+  queueMicrotask(() => {
+    if (!stopped) ready();
+  });
+  if (hasFrameCallbacks) next();
+  else fallback();
   return () => {
     stopped = true;
     if (hasFrameCallbacks) video.cancelVideoFrameCallback(callback);
@@ -82,10 +99,18 @@ interface VideoSeek {
   cancel: () => void;
 }
 
-const videoSeeks = new WeakMap<HTMLVideoElement, { source: string; current?: VideoSeek; unconfirmed: boolean }>();
+const videoSeeks = new WeakMap<
+  HTMLVideoElement,
+  { source: string; current?: VideoSeek; unconfirmed: boolean }
+>();
 
 /** Caller cancellation stops capture, while bounded decoder observation can serve a same-frame retry. */
-export function seekDecodedVideo(video: HTMLVideoElement, time: number, signal: AbortSignal, sourceTimestamp: number | null): Promise<void> {
+export function seekDecodedVideo(
+  video: HTMLVideoElement,
+  time: number,
+  signal: AbortSignal,
+  sourceTimestamp: number | null,
+): Promise<void> {
   const abortError = () => new DOMException("Video seek cancelled", "AbortError");
   if (signal.aborted) return Promise.reject(abortError());
   let state = videoSeeks.get(video);
@@ -96,7 +121,12 @@ export function seekDecodedVideo(video: HTMLVideoElement, time: number, signal: 
   }
   const sameTime = Math.abs(video.currentTime - time) < 0.00001;
   let current = state.current;
-  if (!current || current.time !== time || current.sourceTimestamp !== sourceTimestamp || !sameTime) {
+  if (
+    !current ||
+    current.time !== time ||
+    current.sourceTimestamp !== sourceTimestamp ||
+    !sameTime
+  ) {
     current?.cancel();
     const owner = state;
     const seek: VideoSeek = { time, sourceTimestamp, promise: Promise.resolve(), cancel: () => {} };
@@ -106,7 +136,10 @@ export function seekDecodedVideo(video: HTMLVideoElement, time: number, signal: 
       owner.unconfirmed = true;
       seek.promise = new Promise<void>((resolve, reject) => {
         const hasFrameCallbacks = typeof video.requestVideoFrameCallback === "function";
-        let callback = 0, seeked = false, presented = !hasFrameCallbacks, active = true;
+        let callback = 0,
+          seeked = false,
+          presented = !hasFrameCallbacks,
+          active = true;
         const cleanup = () => {
           active = false;
           clearTimeout(timeout);
@@ -125,14 +158,16 @@ export function seekDecodedVideo(video: HTMLVideoElement, time: number, signal: 
           seeked = true;
           if (!presented) return;
           owner.unconfirmed = false;
-          cleanup(); resolve();
+          cleanup();
+          resolve();
         };
         const nextPresentation = () => {
           callback = video.requestVideoFrameCallback((_, metadata) => {
             if (!active) return;
             callback = 0;
             // Approximate timestamps support navigation, but carry no exact PTS/alignment claim.
-            presented = sourceTimestamp == null || Math.abs(metadata.mediaTime - sourceTimestamp) < 0.001;
+            presented =
+              sourceTimestamp == null || Math.abs(metadata.mediaTime - sourceTimestamp) < 0.001;
             if (presented && seeked) done();
             else if (!presented) nextPresentation();
           });
@@ -149,15 +184,21 @@ export function seekDecodedVideo(video: HTMLVideoElement, time: number, signal: 
     }
   }
   return new Promise((resolve, reject) => {
-    const aborted = () => { signal.removeEventListener("abort", aborted); reject(abortError()); };
+    const aborted = () => {
+      signal.removeEventListener("abort", aborted);
+      reject(abortError());
+    };
     signal.addEventListener("abort", aborted, { once: true });
-    current.promise.then(() => {
-      signal.removeEventListener("abort", aborted);
-      if (!signal.aborted) resolve();
-    }, (error: Error) => {
-      signal.removeEventListener("abort", aborted);
-      if (!signal.aborted) reject(error);
-    });
+    current.promise.then(
+      () => {
+        signal.removeEventListener("abort", aborted);
+        if (!signal.aborted) resolve();
+      },
+      (error: Error) => {
+        signal.removeEventListener("abort", aborted);
+        if (!signal.aborted) reject(error);
+      },
+    );
     if (signal.aborted) aborted();
   });
 }

@@ -53,10 +53,7 @@ function ProjectCard({ project }: { project: ProjectOut }) {
                     {v.width}x{v.height}
                   </span>
                 )}
-                <Link
-                  to={`/label/${v.id}`}
-                  className="text-blue-600 hover:underline"
-                >
+                <Link to={`/label/${v.id}`} className="text-blue-600 hover:underline">
                   Label
                 </Link>
               </div>
@@ -75,24 +72,28 @@ export default function CollectionsPage() {
   });
 
   return (
-    <PageLayout maxWidth="3xl" title="Collections" subtitle="Browse video collections. Label an entire collection at once.">
-        {isLoading && <p className="text-gray-400">Loading...</p>}
+    <PageLayout
+      maxWidth="3xl"
+      title="Collections"
+      subtitle="Browse video collections. Label an entire collection at once."
+    >
+      {isLoading && <p className="text-gray-400">Loading...</p>}
 
-        {projects && projects.length === 0 && (
-          <p className="text-gray-400">
-            No collections yet.{" "}
-            <Link to="/upload" className="text-blue-600 hover:underline">
-              Upload videos
-            </Link>{" "}
-            to get started.
-          </p>
-        )}
+      {projects && projects.length === 0 && (
+        <p className="text-gray-400">
+          No collections yet.{" "}
+          <Link to="/upload" className="text-blue-600 hover:underline">
+            Upload videos
+          </Link>{" "}
+          to get started.
+        </p>
+      )}
 
-        <div className="space-y-3">
-          {projects?.map((p) => (
-            <ProjectCard key={p.id} project={p} />
-          ))}
-        </div>
+      <div className="space-y-3">
+        {projects?.map((p) => (
+          <ProjectCard key={p.id} project={p} />
+        ))}
+      </div>
     </PageLayout>
   );
 }

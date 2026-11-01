@@ -4,7 +4,13 @@ import { ImageIcon, Loader2, Move, ZoomIn } from "lucide-react";
 import { predictImage, type DetectionOut } from "../../api";
 import { applyZoomPan, drawDetections, useZoomPan } from "./shared";
 
-export function ImageDemo({ confThreshold, classFilter }: { confThreshold: number; classFilter: Set<string> }) {
+export function ImageDemo({
+  confThreshold,
+  classFilter,
+}: {
+  confThreshold: number;
+  classFilter: Set<string>;
+}) {
   const [file, setFile] = useState<File | null>(null);
   const [detections, setDetections] = useState<DetectionOut[]>([]);
   const [loading, setLoading] = useState(false);
@@ -22,15 +28,29 @@ export function ImageDemo({ confThreshold, classFilter }: { confThreshold: numbe
     ctx.save();
     applyZoomPan(ctx, zpRef.current.zoom, zpRef.current.panX, zpRef.current.panY);
     ctx.drawImage(img, 0, 0);
-    drawDetections(ctx, detections, confThreshold, img.naturalWidth, img.naturalHeight, img.naturalWidth, img.naturalHeight, classFilter, zpRef.current.zoom);
+    drawDetections(
+      ctx,
+      detections,
+      confThreshold,
+      img.naturalWidth,
+      img.naturalHeight,
+      img.naturalWidth,
+      img.naturalHeight,
+      classFilter,
+      zpRef.current.zoom,
+    );
     ctx.restore();
   }, [detections, confThreshold, classFilter]);
 
   const { zoom, panX, panY, reset } = useZoomPan(canvasRef, redraw, Boolean(file));
   const zpRef = useRef({ zoom, panX, panY });
-  useLayoutEffect(() => { zpRef.current = { zoom, panX, panY }; }, [zoom, panX, panY]);
+  useLayoutEffect(() => {
+    zpRef.current = { zoom, panX, panY };
+  }, [zoom, panX, panY]);
 
-  useEffect(() => { redraw(); }, [redraw]);
+  useEffect(() => {
+    redraw();
+  }, [redraw]);
 
   const handlePredict = useCallback(async () => {
     if (!file) return;
@@ -40,42 +60,80 @@ export function ImageDemo({ confThreshold, classFilter }: { confThreshold: numbe
       const result = await predictImage(file, confThreshold);
       setDetections(result.detections);
     } catch (e: unknown) {
-      setError((e instanceof Error ? e.message : "Request failed"));
+      setError(e instanceof Error ? e.message : "Request failed");
     } finally {
       setLoading(false);
     }
   }, [file, confThreshold]);
 
-  const previewUrl = useMemo(() => file ? URL.createObjectURL(file) : null, [file]);
-  useEffect(() => { return () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }; }, [previewUrl]);
+  const previewUrl = useMemo(() => (file ? URL.createObjectURL(file) : null), [file]);
+  useEffect(() => {
+    return () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    };
+  }, [previewUrl]);
 
   const visibleCount = useMemo(
-    () => detections.filter((d) => d.confidence >= confThreshold && classFilter.has(d.class_name)).length,
+    () =>
+      detections.filter((d) => d.confidence >= confThreshold && classFilter.has(d.class_name))
+        .length,
     [detections, confThreshold, classFilter],
   );
 
   return (
     <div>
       <div className="flex items-center gap-3 mb-4">
-        <label className="flex items-center gap-2 px-4 py-2 border-2 border-dashed rounded-lg text-sm cursor-pointer" style={{ borderColor: "var(--border-default)", color: "var(--text-secondary)" }}>
+        <label
+          className="flex items-center gap-2 px-4 py-2 border-2 border-dashed rounded-lg text-sm cursor-pointer"
+          style={{ borderColor: "var(--border-default)", color: "var(--text-secondary)" }}
+        >
           <ImageIcon size={16} />
           Choose Image
-          <input type="file" accept="image/*" className="hidden" onChange={(e) => { setFile(e.target.files?.[0] || null); setDetections([]); reset(); }} />
+          <input
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => {
+              setFile(e.target.files?.[0] || null);
+              setDetections([]);
+              reset();
+            }}
+          />
         </label>
         {file && (
-          <button onClick={handlePredict} disabled={loading} className="px-4 py-2 bg-accent text-on-accent hover:bg-accent-hover rounded-lg text-sm disabled:opacity-40">
+          <button
+            onClick={handlePredict}
+            disabled={loading}
+            className="px-4 py-2 bg-accent text-on-accent hover:bg-accent-hover rounded-lg text-sm disabled:opacity-40"
+          >
             {loading ? "Predicting..." : "Predict"}
           </button>
         )}
       </div>
-      {error && <p className="text-sm mb-3" style={{ color: "var(--danger)" }}>{error}</p>}
+      {error && (
+        <p className="text-sm mb-3" style={{ color: "var(--danger)" }}>
+          {error}
+        </p>
+      )}
       {!previewUrl && !error && (
-        <div className="border-2 border-dashed rounded-xl p-12 text-center" style={{ borderColor: "var(--border-subtle)" }}>
+        <div
+          className="border-2 border-dashed rounded-xl p-12 text-center"
+          style={{ borderColor: "var(--border-subtle)" }}
+        >
           <ImageIcon size={48} className="mx-auto mb-3" style={{ color: "var(--text-muted)" }} />
-          <p className="text-sm mb-1" style={{ color: "var(--text-muted)" }}>Upload an image to see predictions</p>
-          <p className="text-xs flex items-center justify-center gap-3" style={{ color: "var(--text-muted)" }}>
-            <span className="flex items-center gap-1"><ZoomIn size={12} /> Scroll to zoom</span>
-            <span className="flex items-center gap-1"><Move size={12} /> Drag to pan</span>
+          <p className="text-sm mb-1" style={{ color: "var(--text-muted)" }}>
+            Upload an image to see predictions
+          </p>
+          <p
+            className="text-xs flex items-center justify-center gap-3"
+            style={{ color: "var(--text-muted)" }}
+          >
+            <span className="flex items-center gap-1">
+              <ZoomIn size={12} /> Scroll to zoom
+            </span>
+            <span className="flex items-center gap-1">
+              <Move size={12} /> Drag to pan
+            </span>
           </p>
         </div>
       )}
@@ -85,7 +143,10 @@ export function ImageDemo({ confThreshold, classFilter }: { confThreshold: numbe
           <canvas
             ref={canvasRef}
             className="max-w-full rounded-lg"
-            style={{ cursor: zoom > 1 ? "grab" : "default", border: "1px solid var(--border-subtle)" }}
+            style={{
+              cursor: zoom > 1 ? "grab" : "default",
+              border: "1px solid var(--border-subtle)",
+            }}
           />
           <ZoomIndicator zoom={zoom} onReset={reset} />
           {loading && (
@@ -98,7 +159,8 @@ export function ImageDemo({ confThreshold, classFilter }: { confThreshold: numbe
       )}
       {detections.length > 0 && (
         <p className="text-sm mt-2" style={{ color: "var(--text-muted)" }}>
-          {visibleCount} detections shown &middot; Scroll to zoom, drag to pan, double-click to reset
+          {visibleCount} detections shown &middot; Scroll to zoom, drag to pan, double-click to
+          reset
         </p>
       )}
     </div>

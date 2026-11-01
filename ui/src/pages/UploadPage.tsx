@@ -14,7 +14,9 @@ export default function UploadPage() {
   const [dragOver, setDragOver] = useState(false);
   const [searchParams] = useSearchParams();
   const [projectName, setProjectName] = useState(searchParams.get("collection") || "");
-  const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(
+    null,
+  );
   const [completed, setCompleted] = useState<UploadResult | null>(null);
   const navigate = useNavigate();
 
@@ -43,15 +45,18 @@ export default function UploadPage() {
         setUploadProgress(null);
       }
     },
-    [navigate, projectName]
+    [navigate, projectName],
   );
 
   return (
     <div className="min-h-screen">
-
       <div className="max-w-xl mx-auto mt-16 px-4">
-        <p className="eyebrow" style={{ marginBottom: 4 }}>Data ingestion</p>
-        <h1 className="text-3xl font-bold mb-2" style={{ color: "var(--text-primary)" }}>Upload Video</h1>
+        <p className="eyebrow" style={{ marginBottom: 4 }}>
+          Data ingestion
+        </p>
+        <h1 className="text-3xl font-bold mb-2" style={{ color: "var(--text-primary)" }}>
+          Upload Video
+        </h1>
         <p className="mb-8" style={{ color: "var(--text-secondary)" }}>
           Upload one or more videos to extract frames and start labeling.
         </p>
@@ -64,7 +69,11 @@ export default function UploadPage() {
             onChange={(e) => setProjectName(e.target.value)}
             placeholder="e.g. parking-lot-cam"
             className="rounded-lg px-4 py-2 w-full outline-none"
-            style={{ border: "1px solid var(--border-default)", backgroundColor: "var(--bg-inset)", color: "var(--text-primary)" }}
+            style={{
+              border: "1px solid var(--border-default)",
+              backgroundColor: "var(--bg-inset)",
+              color: "var(--text-primary)",
+            }}
             onFocus={(e) => (e.currentTarget.style.borderColor = "var(--accent)")}
             onBlur={(e) => (e.currentTarget.style.borderColor = "var(--border-default)")}
           />
@@ -76,10 +85,21 @@ export default function UploadPage() {
         <div
           className="rounded-xl p-12 text-center transition"
           style={{
-            border: dragOver ? "2px dashed var(--accent)" : completed ? "2px dashed var(--success)" : "2px dashed var(--border-default)",
-            backgroundColor: dragOver ? "var(--accent-soft)" : completed ? "var(--success-soft)" : "transparent",
+            border: dragOver
+              ? "2px dashed var(--accent)"
+              : completed
+                ? "2px dashed var(--success)"
+                : "2px dashed var(--border-default)",
+            backgroundColor: dragOver
+              ? "var(--accent-soft)"
+              : completed
+                ? "var(--success-soft)"
+                : "transparent",
           }}
-          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDragOver(true);
+          }}
           onDragLeave={() => setDragOver(false)}
           onDrop={(e) => {
             e.preventDefault();
@@ -91,8 +111,12 @@ export default function UploadPage() {
           {completed ? (
             <div>
               <CheckCircle size={40} className="mx-auto mb-3" style={{ color: "var(--success)" }} />
-              <p className="font-medium mb-1" style={{ color: "var(--success)" }}>Upload successful</p>
-              <p className="text-sm mb-4" style={{ color: "var(--text-muted)" }}>{completed.filename}</p>
+              <p className="font-medium mb-1" style={{ color: "var(--success)" }}>
+                Upload successful
+              </p>
+              <p className="text-sm mb-4" style={{ color: "var(--text-muted)" }}>
+                {completed.filename}
+              </p>
               <div className="flex gap-3 justify-center">
                 <button
                   onClick={() => navigate(`/label/${completed.videoId}`)}
@@ -104,7 +128,10 @@ export default function UploadPage() {
                 <button
                   onClick={() => setCompleted(null)}
                   className="px-4 py-2 rounded-lg text-sm"
-                  style={{ border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}
+                  style={{
+                    border: "1px solid var(--border-default)",
+                    color: "var(--text-secondary)",
+                  }}
                 >
                   Upload Another
                 </button>
@@ -112,10 +139,21 @@ export default function UploadPage() {
             </div>
           ) : uploading ? (
             <div>
-              <Upload size={32} className="mx-auto mb-3 animate-pulse" style={{ color: "var(--text-muted)" }} />
+              <Upload
+                size={32}
+                className="mx-auto mb-3 animate-pulse"
+                style={{ color: "var(--text-muted)" }}
+              />
               <p style={{ color: "var(--text-secondary)" }}>Uploading...</p>
               {uploadProgress && (
-                <p style={{ fontSize: 12, color: "var(--text-muted)", fontFamily: "var(--font-mono)", marginTop: 4 }}>
+                <p
+                  style={{
+                    fontSize: 12,
+                    color: "var(--text-muted)",
+                    fontFamily: "var(--font-mono)",
+                    marginTop: 4,
+                  }}
+                >
                   {uploadProgress.done}/{uploadProgress.total} files
                 </p>
               )}
@@ -152,7 +190,9 @@ export default function UploadPage() {
         </div>
 
         {error && (
-          <p className="mt-4 text-sm" style={{ color: "var(--danger)" }}>{error}</p>
+          <p className="mt-4 text-sm" style={{ color: "var(--danger)" }}>
+            {error}
+          </p>
         )}
       </div>
     </div>
