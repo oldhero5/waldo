@@ -3,8 +3,6 @@ title: Label & Review
 sidebar_position: 3
 ---
 
-import Demo from "@site/src/components/Demo";
-
 # Label & Review
 
 Two pages, one continuous flow: configure a labeling run, then refine the output. SAM 3 produces the boxes, the human refines.
@@ -59,14 +57,6 @@ If a playback link expires, the player makes one automatic renewal attempt.
 If playback still fails, use its retry control. The saved frame and annotation
 editor remain available. Image-only sources have no video. Browser codec
 support still applies, including for HEVC recordings.
-
-![Review page (labeled dashcam frames)](/img/screenshots/review.jpg)
-
-<Demo
-  src="/img/recordings/review.mp4"
-  poster="/img/recordings/review.poster.jpg"
-  caption="Scrolling through labeled frames in a finished SAM 3 job."
-/>
 
 ### Keyboard shortcuts
 
