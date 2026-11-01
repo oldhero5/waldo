@@ -34,8 +34,12 @@ export default function AgentPanel({ context }: { context?: string }) {
   useEffect(() => {
     if (!open) return;
     const controller = new AbortController();
-    authFetch("/api/v1/agent/health", { signal: controller.signal }).then((r) => r.ok ? r.json() : null)
-      .then((data) => { if (data) setProvider(data.provider); }).catch(() => {});
+    authFetch("/api/v1/agent/health", { signal: controller.signal })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data) setProvider(data.provider);
+      })
+      .catch(() => {});
     return () => controller.abort();
   }, [open]);
 
@@ -89,7 +93,11 @@ export default function AgentPanel({ context }: { context?: string }) {
         });
         setMessages((prev) => [
           ...prev,
-          { role: "assistant", content: acc || "(no response)", tools: tools.length ? tools : undefined },
+          {
+            role: "assistant",
+            content: acc || "(no response)",
+            tools: tools.length ? tools : undefined,
+          },
         ]);
         setStreamText("");
         setStreamTools([]);
@@ -108,16 +116,28 @@ export default function AgentPanel({ context }: { context?: string }) {
       <button
         onClick={() => setOpen(true)}
         style={{
-          position: "fixed", bottom: 24, right: 24, zIndex: 50,
-          width: 48, height: 48, borderRadius: 16,
-          backgroundColor: "var(--accent)", color: "var(--text-on-accent)",
-          display: "flex", alignItems: "center", justifyContent: "center",
+          position: "fixed",
+          bottom: 24,
+          right: 24,
+          zIndex: 50,
+          width: 48,
+          height: 48,
+          borderRadius: 16,
+          backgroundColor: "var(--accent)",
+          color: "var(--text-on-accent)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
           boxShadow: "var(--shadow-md)",
           transition: "all 160ms ease",
           border: "none",
         }}
-        onMouseEnter={(e) => { e.currentTarget.style.transform = "scale(1.05)"; }}
-        onMouseLeave={(e) => { e.currentTarget.style.transform = "scale(1)"; }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.transform = "scale(1.05)";
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.transform = "scale(1)";
+        }}
       >
         <Sparkles size={20} />
       </button>
@@ -127,98 +147,200 @@ export default function AgentPanel({ context }: { context?: string }) {
   return (
     <div
       style={{
-        position: "fixed", bottom: 24, right: 24, zIndex: 50,
-        width: 380, height: 520,
+        position: "fixed",
+        bottom: 24,
+        right: 24,
+        zIndex: 50,
+        width: 380,
+        height: 520,
         borderRadius: 20,
         backgroundColor: "var(--bg-surface)",
         border: "1px solid var(--border-subtle)",
         boxShadow: "0 22px 44px rgb(54 40 23 / 0.15)",
-        display: "flex", flexDirection: "column",
+        display: "flex",
+        flexDirection: "column",
         overflow: "hidden",
       }}
     >
-      <div style={{
-        padding: "12px 16px",
-        display: "flex", alignItems: "center", justifyContent: "space-between",
-        borderBottom: "1px solid var(--border-subtle)",
-      }}>
+      <div
+        style={{
+          padding: "12px 16px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          borderBottom: "1px solid var(--border-subtle)",
+        }}
+      >
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <Sparkles size={16} style={{ color: "var(--accent)" }} />
-          <span style={{ fontFamily: "var(--font-serif)", fontWeight: 600, fontSize: 14, color: "var(--text-primary)" }}>
+          <span
+            style={{
+              fontFamily: "var(--font-serif)",
+              fontWeight: 600,
+              fontSize: 14,
+              color: "var(--text-primary)",
+            }}
+          >
             Waldo AI · read-only
           </span>
         </div>
-        <button onClick={() => setOpen(false)} style={{ color: "var(--text-muted)", background: "none", border: "none" }}>
+        <button
+          onClick={() => setOpen(false)}
+          style={{ color: "var(--text-muted)", background: "none", border: "none" }}
+        >
           <X size={16} />
         </button>
       </div>
 
       <p style={{ margin: "8px 16px 0", fontSize: 11, color: "var(--text-muted)" }}>
-        {["openai", "anthropic", "openrouter"].includes(provider) ? `${provider}: chat and tool text leave this server.` : `Text provider: ${provider}.`}
+        {["openai", "anthropic", "openrouter"].includes(provider)
+          ? `${provider}: chat and tool text leave this server.`
+          : `Text provider: ${provider}.`}
       </p>
       <div style={{ flex: 1, overflowY: "auto", padding: "12px 16px" }}>
         {messages.length === 0 && (
-          <p style={{ fontSize: 12, color: "var(--text-muted)", textAlign: "center", marginTop: 40 }}>
-            Ask about your projects, models, or workflows. To start a labeling or training job, open the full <a href="/agent" style={{ color: "var(--accent)" }}>Agent page</a>.
+          <p
+            style={{ fontSize: 12, color: "var(--text-muted)", textAlign: "center", marginTop: 40 }}
+          >
+            Ask about your projects, models, or workflows. To start a labeling or training job, open
+            the full{" "}
+            <a href="/agent" style={{ color: "var(--accent)" }}>
+              Agent page
+            </a>
+            .
           </p>
         )}
         {messages.map((m, i) => (
-          <div key={i} style={{ marginBottom: 10, display: "flex", gap: 8, flexDirection: m.role === "user" ? "row-reverse" : "row" }}>
-            <div style={{
-              width: 24, height: 24, borderRadius: 8, flexShrink: 0,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              backgroundColor: m.role === "user" ? "var(--bg-inset)" : "var(--accent-soft)",
-            }}>
-              {m.role === "user"
-                ? <User size={12} style={{ color: "var(--text-secondary)" }} />
-                : <Bot size={12} style={{ color: "var(--accent)" }} />}
+          <div
+            key={i}
+            style={{
+              marginBottom: 10,
+              display: "flex",
+              gap: 8,
+              flexDirection: m.role === "user" ? "row-reverse" : "row",
+            }}
+          >
+            <div
+              style={{
+                width: 24,
+                height: 24,
+                borderRadius: 8,
+                flexShrink: 0,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor: m.role === "user" ? "var(--bg-inset)" : "var(--accent-soft)",
+              }}
+            >
+              {m.role === "user" ? (
+                <User size={12} style={{ color: "var(--text-secondary)" }} />
+              ) : (
+                <Bot size={12} style={{ color: "var(--accent)" }} />
+              )}
             </div>
             <div style={{ maxWidth: "80%", display: "flex", flexDirection: "column", gap: 6 }}>
               {m.tools?.map((t, idx) => (
-                <div key={idx} style={{
-                  fontSize: 10, fontFamily: "var(--font-mono)",
-                  padding: "4px 8px", borderRadius: 8,
-                  backgroundColor: "var(--bg-inset)", color: "var(--text-secondary)",
-                  display: "flex", alignItems: "center", gap: 4,
-                }}>
-                  <Wrench size={10} /> {t.name}{t.result ? " ✓" : ""}
+                <div
+                  key={idx}
+                  style={{
+                    fontSize: 10,
+                    fontFamily: "var(--font-mono)",
+                    padding: "4px 8px",
+                    borderRadius: 8,
+                    backgroundColor: "var(--bg-inset)",
+                    color: "var(--text-secondary)",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 4,
+                  }}
+                >
+                  <Wrench size={10} /> {t.name}
+                  {t.result ? " ✓" : ""}
                 </div>
               ))}
-              <div style={{
-                padding: "8px 12px", borderRadius: 14, fontSize: 13, lineHeight: 1.5,
-                backgroundColor: m.role === "user" ? "var(--accent)" : "var(--bg-inset)",
-                color: m.role === "user" ? "var(--text-on-accent)" : "var(--text-primary)",
-              }}>
-                {m.role === "assistant"
-                  ? <div className="markdown-body" style={{ fontSize: 12 }}><Markdown>{m.content}</Markdown></div>
-                  : m.content}
+              <div
+                style={{
+                  padding: "8px 12px",
+                  borderRadius: 14,
+                  fontSize: 13,
+                  lineHeight: 1.5,
+                  backgroundColor: m.role === "user" ? "var(--accent)" : "var(--bg-inset)",
+                  color: m.role === "user" ? "var(--text-on-accent)" : "var(--text-primary)",
+                }}
+              >
+                {m.role === "assistant" ? (
+                  <div className="markdown-body" style={{ fontSize: 12 }}>
+                    <Markdown>{m.content}</Markdown>
+                  </div>
+                ) : (
+                  m.content
+                )}
               </div>
             </div>
           </div>
         ))}
         {streaming && (
           <div style={{ marginBottom: 10, display: "flex", gap: 8 }}>
-            <div style={{ width: 24, height: 24, borderRadius: 8, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", backgroundColor: "var(--accent-soft)" }}>
+            <div
+              style={{
+                width: 24,
+                height: 24,
+                borderRadius: 8,
+                flexShrink: 0,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor: "var(--accent-soft)",
+              }}
+            >
               <Bot size={12} style={{ color: "var(--accent)" }} />
             </div>
             <div style={{ maxWidth: "80%", display: "flex", flexDirection: "column", gap: 6 }}>
               {streamTools.map((t, idx) => (
-                <div key={idx} style={{
-                  fontSize: 10, fontFamily: "var(--font-mono)",
-                  padding: "4px 8px", borderRadius: 8,
-                  backgroundColor: "var(--bg-inset)", color: "var(--text-secondary)",
-                  display: "flex", alignItems: "center", gap: 4,
-                }}>
-                  <Wrench size={10} /> {t.name}{t.result ? " ✓" : "…"}
+                <div
+                  key={idx}
+                  style={{
+                    fontSize: 10,
+                    fontFamily: "var(--font-mono)",
+                    padding: "4px 8px",
+                    borderRadius: 8,
+                    backgroundColor: "var(--bg-inset)",
+                    color: "var(--text-secondary)",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 4,
+                  }}
+                >
+                  <Wrench size={10} /> {t.name}
+                  {t.result ? " ✓" : "…"}
                 </div>
               ))}
               {streamText ? (
-                <div style={{ padding: "8px 12px", borderRadius: 14, fontSize: 12, lineHeight: 1.5, backgroundColor: "var(--bg-inset)", color: "var(--text-primary)" }}>
-                  <div className="markdown-body" style={{ fontSize: 12 }}><Markdown>{streamText}</Markdown></div>
+                <div
+                  style={{
+                    padding: "8px 12px",
+                    borderRadius: 14,
+                    fontSize: 12,
+                    lineHeight: 1.5,
+                    backgroundColor: "var(--bg-inset)",
+                    color: "var(--text-primary)",
+                  }}
+                >
+                  <div className="markdown-body" style={{ fontSize: 12 }}>
+                    <Markdown>{streamText}</Markdown>
+                  </div>
                   <span className="animate-pulse">|</span>
                 </div>
               ) : (
-                <div style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--text-muted)", fontSize: 12 }}>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    color: "var(--text-muted)",
+                    fontSize: 12,
+                  }}
+                >
                   <Loader2 size={12} className="animate-spin" /> Thinking…
                 </div>
               )}
@@ -233,12 +355,21 @@ export default function AgentPanel({ context }: { context?: string }) {
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(input); } }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                send(input);
+              }
+            }}
             placeholder="Ask Waldo…"
             style={{
-              flex: 1, padding: "8px 12px", borderRadius: 12, fontSize: 12,
+              flex: 1,
+              padding: "8px 12px",
+              borderRadius: 12,
+              fontSize: 12,
               border: "1px solid var(--border-default)",
-              backgroundColor: "var(--bg-inset)", color: "var(--text-primary)",
+              backgroundColor: "var(--bg-inset)",
+              color: "var(--text-primary)",
               outline: "none",
             }}
           />
@@ -246,10 +377,16 @@ export default function AgentPanel({ context }: { context?: string }) {
             onClick={() => send(input)}
             disabled={!input.trim() || streaming}
             style={{
-              width: 36, height: 36, borderRadius: 12,
-              backgroundColor: "var(--accent)", color: "var(--text-on-accent)",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              border: "none", opacity: !input.trim() || streaming ? 0.4 : 1,
+              width: 36,
+              height: 36,
+              borderRadius: 12,
+              backgroundColor: "var(--accent)",
+              color: "var(--text-on-accent)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              border: "none",
+              opacity: !input.trim() || streaming ? 0.4 : 1,
             }}
           >
             <Send size={14} />

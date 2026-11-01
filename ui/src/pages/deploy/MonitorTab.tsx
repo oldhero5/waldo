@@ -36,24 +36,29 @@ export function MonitorTab() {
   }, [metrics]);
 
   const activeKeyMetrics = useMemo(
-    () => activeModel ? pickKeyMetrics(activeModel.metrics) : [],
+    () => (activeModel ? pickKeyMetrics(activeModel.metrics) : []),
     [activeModel],
   );
 
   return (
     <div>
       <div className="flex items-center justify-between mb-5">
-        <h2 className="font-semibold" style={{ color: "var(--text-primary)" }}>Inference Metrics</h2>
+        <h2 className="font-semibold" style={{ color: "var(--text-primary)" }}>
+          Inference Metrics
+        </h2>
         <div className="flex p-0.5 rounded-lg" style={{ backgroundColor: "var(--bg-inset)" }}>
           {(["1h", "24h", "7d"] as const).map((w) => (
-            <button key={w} onClick={() => setTimeWindow(w)}
+            <button
+              key={w}
+              onClick={() => setTimeWindow(w)}
               className="px-3 py-1 text-xs rounded-md transition-all duration-150"
               style={{
                 backgroundColor: timeWindow === w ? "var(--bg-surface)" : "transparent",
                 color: timeWindow === w ? "var(--text-primary)" : "var(--text-muted)",
                 fontWeight: timeWindow === w ? 600 : 400,
                 boxShadow: timeWindow === w ? "0 1px 2px rgba(0,0,0,0.06)" : "none",
-              }}>
+              }}
+            >
               {w}
             </button>
           ))}
@@ -62,13 +67,34 @@ export function MonitorTab() {
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
         {[
-          { label: "Requests", value: s?.total_requests ?? 0, fmt: (v: number) => v.toLocaleString() },
-          { label: "Avg Latency", value: s?.avg_latency_ms ?? 0, fmt: (v: number) => `${v.toFixed(0)}ms` },
-          { label: "P95 Latency", value: s?.p95_latency_ms ?? 0, fmt: (v: number) => `${v.toFixed(0)}ms` },
-          { label: "Avg Confidence", value: s?.avg_confidence ?? 0, fmt: (v: number) => `${(v * 100).toFixed(1)}%` },
+          {
+            label: "Requests",
+            value: s?.total_requests ?? 0,
+            fmt: (v: number) => v.toLocaleString(),
+          },
+          {
+            label: "Avg Latency",
+            value: s?.avg_latency_ms ?? 0,
+            fmt: (v: number) => `${v.toFixed(0)}ms`,
+          },
+          {
+            label: "P95 Latency",
+            value: s?.p95_latency_ms ?? 0,
+            fmt: (v: number) => `${v.toFixed(0)}ms`,
+          },
+          {
+            label: "Avg Confidence",
+            value: s?.avg_confidence ?? 0,
+            fmt: (v: number) => `${(v * 100).toFixed(1)}%`,
+          },
         ].map((card) => (
           <div key={card.label} className="surface p-4">
-            <span className="text-[10px] uppercase tracking-wide block mb-1" style={{ color: "var(--text-muted)" }}>{card.label}</span>
+            <span
+              className="text-[10px] uppercase tracking-wide block mb-1"
+              style={{ color: "var(--text-muted)" }}
+            >
+              {card.label}
+            </span>
             <span className="text-xl font-bold font-mono" style={{ color: "var(--text-primary)" }}>
               {isLoading ? "..." : card.fmt(card.value)}
             </span>
@@ -78,14 +104,20 @@ export function MonitorTab() {
 
       {metrics?.timeseries && metrics.timeseries.length > 0 && (
         <div className="surface p-5 mb-6">
-          <h3 className="text-sm font-semibold mb-3" style={{ color: "var(--text-primary)" }}>Request Volume & Latency</h3>
+          <h3 className="text-sm font-semibold mb-3" style={{ color: "var(--text-primary)" }}>
+            Request Volume & Latency
+          </h3>
           <div className="flex gap-6" style={{ height: 160 }}>
             <div className="flex-1 flex items-end gap-px">
               {metrics.timeseries.map((point, i) => {
                 const h = (point.requests / maxReq) * 140;
                 const isHot = point.avg_latency_ms > (s?.p95_latency_ms ?? 999);
                 return (
-                  <div key={i} className="flex-1 flex flex-col items-center justify-end" title={`${point.timestamp?.split("T")[1]?.slice(0, 5) ?? ""}\n${point.requests} req\n${point.avg_latency_ms.toFixed(0)}ms`}>
+                  <div
+                    key={i}
+                    className="flex-1 flex flex-col items-center justify-end"
+                    title={`${point.timestamp?.split("T")[1]?.slice(0, 5) ?? ""}\n${point.requests} req\n${point.avg_latency_ms.toFixed(0)}ms`}
+                  >
                     <div
                       className="w-full rounded-t-sm transition-all duration-300"
                       style={{
@@ -99,9 +131,16 @@ export function MonitorTab() {
               })}
             </div>
           </div>
-          <div className="flex justify-between mt-2 text-[9px]" style={{ color: "var(--text-muted)" }}>
+          <div
+            className="flex justify-between mt-2 text-[9px]"
+            style={{ color: "var(--text-muted)" }}
+          >
             <span>{metrics.timeseries[0]?.timestamp?.split("T")[1]?.slice(0, 5) ?? ""}</span>
-            <span>{metrics.timeseries[metrics.timeseries.length - 1]?.timestamp?.split("T")[1]?.slice(0, 5) ?? ""}</span>
+            <span>
+              {metrics.timeseries[metrics.timeseries.length - 1]?.timestamp
+                ?.split("T")[1]
+                ?.slice(0, 5) ?? ""}
+            </span>
           </div>
         </div>
       )}
@@ -113,9 +152,20 @@ export function MonitorTab() {
           </h3>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {activeKeyMetrics.map((m) => (
-              <div key={m.key} className="rounded-lg p-3" style={{ backgroundColor: "var(--bg-inset)" }}>
-                <span className="text-[10px] uppercase tracking-wide block mb-1" style={{ color: "var(--text-muted)" }}>{m.label}</span>
-                <span className="text-lg font-bold" style={{ color: "var(--text-primary)" }}>{m.value}</span>
+              <div
+                key={m.key}
+                className="rounded-lg p-3"
+                style={{ backgroundColor: "var(--bg-inset)" }}
+              >
+                <span
+                  className="text-[10px] uppercase tracking-wide block mb-1"
+                  style={{ color: "var(--text-muted)" }}
+                >
+                  {m.label}
+                </span>
+                <span className="text-lg font-bold" style={{ color: "var(--text-primary)" }}>
+                  {m.value}
+                </span>
               </div>
             ))}
           </div>
@@ -124,15 +174,33 @@ export function MonitorTab() {
 
       {metrics?.by_class && metrics.by_class.length > 0 && (
         <div className="surface p-5 mb-6">
-          <h3 className="text-sm font-semibold mb-3" style={{ color: "var(--text-primary)" }}>Detection by Class</h3>
+          <h3 className="text-sm font-semibold mb-3" style={{ color: "var(--text-primary)" }}>
+            Detection by Class
+          </h3>
           <div className="space-y-2">
             {metrics.by_class.map((cls) => (
               <div key={cls.class_name} className="flex items-center gap-3">
-                <span className="text-xs w-24 truncate" style={{ color: "var(--text-primary)" }}>{cls.class_name}</span>
-                <div className="flex-1 rounded-full h-2" style={{ backgroundColor: "var(--bg-inset)" }}>
-                  <div className="h-full rounded-full" style={{ width: `${(cls.detection_count / maxClassCount) * 100}%`, backgroundColor: "var(--accent)" }} />
+                <span className="text-xs w-24 truncate" style={{ color: "var(--text-primary)" }}>
+                  {cls.class_name}
+                </span>
+                <div
+                  className="flex-1 rounded-full h-2"
+                  style={{ backgroundColor: "var(--bg-inset)" }}
+                >
+                  <div
+                    className="h-full rounded-full"
+                    style={{
+                      width: `${(cls.detection_count / maxClassCount) * 100}%`,
+                      backgroundColor: "var(--accent)",
+                    }}
+                  />
                 </div>
-                <span className="text-xs font-mono w-16 text-right" style={{ color: "var(--text-muted)" }}>{cls.detection_count.toLocaleString()}</span>
+                <span
+                  className="text-xs font-mono w-16 text-right"
+                  style={{ color: "var(--text-muted)" }}
+                >
+                  {cls.detection_count.toLocaleString()}
+                </span>
               </div>
             ))}
           </div>
@@ -141,12 +209,23 @@ export function MonitorTab() {
 
       {metrics?.by_model && metrics.by_model.length > 0 && (
         <div className="surface p-5 mb-6">
-          <h3 className="text-sm font-semibold mb-3" style={{ color: "var(--text-primary)" }}>By Model</h3>
+          <h3 className="text-sm font-semibold mb-3" style={{ color: "var(--text-primary)" }}>
+            By Model
+          </h3>
           <div className="space-y-2">
             {metrics.by_model.map((m) => (
-              <div key={m.model_id} className="flex items-center justify-between py-2 px-3 rounded-lg" style={{ backgroundColor: "var(--bg-inset)" }}>
-                <span className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>{m.model_name || "Unknown"}</span>
-                <div className="flex items-center gap-4 text-xs" style={{ color: "var(--text-muted)" }}>
+              <div
+                key={m.model_id}
+                className="flex items-center justify-between py-2 px-3 rounded-lg"
+                style={{ backgroundColor: "var(--bg-inset)" }}
+              >
+                <span className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>
+                  {m.model_name || "Unknown"}
+                </span>
+                <div
+                  className="flex items-center gap-4 text-xs"
+                  style={{ color: "var(--text-muted)" }}
+                >
                   <span>{m.request_count} req</span>
                   <span className="font-mono">{m.avg_latency_ms.toFixed(0)}ms</span>
                   <span className="font-mono">{(m.avg_confidence * 100).toFixed(1)}%</span>
@@ -160,7 +239,9 @@ export function MonitorTab() {
       {!isLoading && (!s || s.total_requests === 0) && (
         <div className="surface text-center py-12">
           <BarChart3 size={36} className="mx-auto mb-3" style={{ color: "var(--text-muted)" }} />
-          <p className="text-sm mb-1" style={{ color: "var(--text-secondary)" }}>No inference data yet</p>
+          <p className="text-sm mb-1" style={{ color: "var(--text-secondary)" }}>
+            No inference data yet
+          </p>
           <p className="text-xs" style={{ color: "var(--text-muted)" }}>
             Metrics appear here as soon as you run predictions via the Test tab or API
           </p>

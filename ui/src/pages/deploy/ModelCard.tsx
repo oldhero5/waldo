@@ -4,7 +4,15 @@ import { pickKeyMetrics } from "../../lib/metrics";
 
 const EXPORT_FORMATS = ["onnx", "torchscript", "coreml", "tflite", "openvino"];
 
-function ModelCardImpl({ model, onActivate, isBest }: { model: ModelOut; onActivate: (id: string) => void; isBest?: boolean }) {
+function ModelCardImpl({
+  model,
+  onActivate,
+  isBest,
+}: {
+  model: ModelOut;
+  onActivate: (id: string) => void;
+  isBest?: boolean;
+}) {
   const [exporting, setExporting] = useState(false);
   const [exportFmt, setExportFmt] = useState("onnx");
   const [exportMsg, setExportMsg] = useState("");
@@ -16,14 +24,19 @@ function ModelCardImpl({ model, onActivate, isBest }: { model: ModelOut; onActiv
       await exportModel(model.id, exportFmt);
       setExportMsg(`Export to ${exportFmt} started`);
     } catch (e: unknown) {
-      setExportMsg((e instanceof Error ? e.message : "Request failed"));
+      setExportMsg(e instanceof Error ? e.message : "Request failed");
     } finally {
       setExporting(false);
     }
   };
 
   const handlePromoteClick = () => {
-    if (!confirm(`Promote "${model.name}" to champion? This redirects all production traffic to this model.`)) return;
+    if (
+      !confirm(
+        `Promote "${model.name}" to champion? This redirects all production traffic to this model.`,
+      )
+    )
+      return;
     onActivate(model.id);
   };
 
@@ -36,22 +49,32 @@ function ModelCardImpl({ model, onActivate, isBest }: { model: ModelOut; onActiv
         border: model.is_active
           ? "1px solid var(--success)"
           : isBest
-          ? "1px solid var(--accent)"
-          : "1px solid var(--border-default)",
-        backgroundColor: model.is_active
-          ? "var(--success-soft)"
-          : "var(--bg-surface)",
+            ? "1px solid var(--accent)"
+            : "1px solid var(--border-default)",
+        backgroundColor: model.is_active ? "var(--success-soft)" : "var(--bg-surface)",
       }}
     >
       <div className="flex justify-between items-start mb-3">
         <div>
           <div className="flex items-center gap-2">
-            <h3 className="font-semibold" style={{ color: "var(--text-primary)" }}>{model.name}</h3>
+            <h3 className="font-semibold" style={{ color: "var(--text-primary)" }}>
+              {model.name}
+            </h3>
             {model.is_active && (
-              <span className="px-2 py-0.5 text-[10px] rounded-full font-medium" style={{ backgroundColor: "var(--success)", color: "#fff" }}>Active</span>
+              <span
+                className="px-2 py-0.5 text-[10px] rounded-full font-medium"
+                style={{ backgroundColor: "var(--success)", color: "#fff" }}
+              >
+                Active
+              </span>
             )}
             {!model.is_active && isBest && (
-              <span className="px-2 py-0.5 text-[10px] rounded-full font-medium" style={{ backgroundColor: "var(--accent-soft)", color: "var(--accent)" }}>Best mAP</span>
+              <span
+                className="px-2 py-0.5 text-[10px] rounded-full font-medium"
+                style={{ backgroundColor: "var(--accent-soft)", color: "var(--accent)" }}
+              >
+                Best mAP
+              </span>
             )}
           </div>
           <p className="text-sm" style={{ color: "var(--text-muted)" }}>
@@ -82,7 +105,10 @@ function ModelCardImpl({ model, onActivate, isBest }: { model: ModelOut; onActiv
         </div>
       )}
 
-      <div className="flex items-center gap-2 mt-3 pt-3" style={{ borderTop: "1px solid var(--border-subtle)" }}>
+      <div
+        className="flex items-center gap-2 mt-3 pt-3"
+        style={{ borderTop: "1px solid var(--border-subtle)" }}
+      >
         <select
           value={exportFmt}
           onChange={(e) => setExportFmt(e.target.value)}
@@ -90,7 +116,9 @@ function ModelCardImpl({ model, onActivate, isBest }: { model: ModelOut; onActiv
           style={{ borderColor: "var(--border-default)", backgroundColor: "var(--bg-surface)" }}
         >
           {EXPORT_FORMATS.map((f) => (
-            <option key={f} value={f}>{f.toUpperCase()}</option>
+            <option key={f} value={f}>
+              {f.toUpperCase()}
+            </option>
           ))}
         </select>
         <button
@@ -101,13 +129,21 @@ function ModelCardImpl({ model, onActivate, isBest }: { model: ModelOut; onActiv
         >
           {exporting ? "Exporting..." : "Export"}
         </button>
-        {exportMsg && <span className="text-xs" style={{ color: "var(--text-muted)" }}>{exportMsg}</span>}
+        {exportMsg && (
+          <span className="text-xs" style={{ color: "var(--text-muted)" }}>
+            {exportMsg}
+          </span>
+        )}
       </div>
 
       {Object.keys(model.export_formats).length > 0 && (
         <div className="flex gap-1 mt-2">
           {Object.keys(model.export_formats).map((fmt) => (
-            <span key={fmt} className="px-2 py-0.5 text-xs rounded" style={{ backgroundColor: "var(--bg-inset)", color: "var(--text-muted)" }}>
+            <span
+              key={fmt}
+              className="px-2 py-0.5 text-xs rounded"
+              style={{ backgroundColor: "var(--bg-inset)", color: "var(--text-muted)" }}
+            >
               {fmt}
             </span>
           ))}
@@ -115,7 +151,11 @@ function ModelCardImpl({ model, onActivate, isBest }: { model: ModelOut; onActiv
       )}
 
       {model.weights_url && (
-        <a href={model.weights_url} className="text-sm block mt-2 hover:underline" style={{ color: "var(--accent)" }}>
+        <a
+          href={model.weights_url}
+          className="text-sm block mt-2 hover:underline"
+          style={{ color: "var(--accent)" }}
+        >
           Download weights
         </a>
       )}
@@ -123,8 +163,10 @@ function ModelCardImpl({ model, onActivate, isBest }: { model: ModelOut; onActiv
   );
 }
 
-export const ModelCard = memo(ModelCardImpl, (prev, next) =>
-  prev.model.id === next.model.id &&
-  prev.model.is_active === next.model.is_active &&
-  prev.isBest === next.isBest,
+export const ModelCard = memo(
+  ModelCardImpl,
+  (prev, next) =>
+    prev.model.id === next.model.id &&
+    prev.model.is_active === next.model.is_active &&
+    prev.isBest === next.isBest,
 );

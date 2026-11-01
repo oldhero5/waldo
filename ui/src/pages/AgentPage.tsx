@@ -92,10 +92,7 @@ export default function AgentPage() {
       setStreamTools([]);
       setError(null);
 
-      const wireMessages: ChatMessageWire[] = [
-        ...messages,
-        userMsg,
-      ]
+      const wireMessages: ChatMessageWire[] = [...messages, userMsg]
         .slice(-10)
         .map((m) => ({ role: m.role, content: m.content }));
 
@@ -146,7 +143,12 @@ export default function AgentPage() {
         if (acc) {
           setMessages((prev) => [
             ...prev,
-            { role: "assistant", content: acc, tools: tools.length ? tools : undefined, timestamp: Date.now() },
+            {
+              role: "assistant",
+              content: acc,
+              tools: tools.length ? tools : undefined,
+              timestamp: Date.now(),
+            },
           ]);
         }
         setStreamText("");
@@ -253,7 +255,12 @@ export default function AgentPage() {
         </div>
       </div>
 
-      <div style={{ borderTop: "1px solid var(--border-subtle)", backgroundColor: "var(--bg-surface)" }}>
+      <div
+        style={{
+          borderTop: "1px solid var(--border-subtle)",
+          backgroundColor: "var(--bg-surface)",
+        }}
+      >
         <div className="max-w-2xl mx-auto px-4 py-3">
           <div className="flex items-end gap-2">
             <textarea
@@ -318,7 +325,9 @@ export default function AgentPage() {
               </label>
             </div>
             <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>
-              {["openai", "anthropic", "openrouter"].includes(provider) ? `${provider} · Chat and tool text are sent to this cloud provider` : `${provider} · Uses the server-configured endpoint`}
+              {["openai", "anthropic", "openrouter"].includes(provider)
+                ? `${provider} · Chat and tool text are sent to this cloud provider`
+                : `${provider} · Uses the server-configured endpoint`}
             </p>
           </div>
         </div>
@@ -353,7 +362,9 @@ function MessageBubble({ message: msg }: { message: Message }) {
     <div className={`flex gap-3 mb-4 ${msg.role === "user" ? "justify-end" : ""}`}>
       {msg.role === "assistant" && <Avatar role="assistant" />}
       <div className="space-y-2 max-w-[80%]">
-        {msg.tools?.map((t, idx) => <ToolPill key={idx} tool={t} />)}
+        {msg.tools?.map((t, idx) => (
+          <ToolPill key={idx} tool={t} />
+        ))}
         <div
           className="rounded-2xl px-4 py-3 text-sm leading-relaxed"
           style={{
@@ -397,9 +408,11 @@ function ToolPill({ tool }: { tool: ToolEvent }) {
           {tool.name}
           {tool.args && Object.keys(tool.args).length > 0 ? (
             <span style={{ color: "var(--text-muted)" }}>
-              ({Object.entries(tool.args)
+              (
+              {Object.entries(tool.args)
                 .map(([k, v]) => `${k}=${typeof v === "string" ? `"${v}"` : JSON.stringify(v)}`)
-                .join(", ")})
+                .join(", ")}
+              )
             </span>
           ) : null}
         </div>

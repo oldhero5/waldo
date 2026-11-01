@@ -26,10 +26,17 @@ export default function AuthenticatedRoutes() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: "var(--bg-page)" }}>
+      <div
+        className="min-h-screen flex items-center justify-center"
+        style={{ backgroundColor: "var(--bg-page)" }}
+      >
         <div className="text-center">
-          <p className="text-lg font-bold" style={{ color: "var(--text-primary)" }}>Waldo</p>
-          <p className="text-sm mt-1" style={{ color: "var(--text-muted)" }}>Loading...</p>
+          <p className="text-lg font-bold" style={{ color: "var(--text-primary)" }}>
+            Waldo
+          </p>
+          <p className="text-sm mt-1" style={{ color: "var(--text-muted)" }}>
+            Loading...
+          </p>
         </div>
       </div>
     );
@@ -41,7 +48,21 @@ export default function AuthenticatedRoutes() {
 
   return (
     <AppShell key={`${user.id}:${user.workspace_id || ""}`}>
-      <Suspense fallback={<div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "50vh", color: "var(--text-muted)" }}>Loading...</div>}>
+      <Suspense
+        fallback={
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              height: "50vh",
+              color: "var(--text-muted)",
+            }}
+          >
+            Loading...
+          </div>
+        }
+      >
         <Routes>
           <Route path="/" element={<DashboardPage />} />
           <Route path="/upload" element={<UploadPage />} />

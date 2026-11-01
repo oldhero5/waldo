@@ -11,7 +11,16 @@ export const TABS = [
 
 export type TabKey = (typeof TABS)[number]["key"];
 
-export const COLORS = ["#ef4444", "#3b82f6", "#22c55e", "#f59e0b", "#8b5cf6", "#ec4899", "#14b8a6", "#f97316"];
+export const COLORS = [
+  "#ef4444",
+  "#3b82f6",
+  "#22c55e",
+  "#f59e0b",
+  "#8b5cf6",
+  "#ec4899",
+  "#14b8a6",
+  "#f97316",
+];
 
 export function trackColor(trackId: number | null): string {
   if (trackId == null) return COLORS[0];
@@ -23,12 +32,22 @@ export function classColor(className: string, allClasses: string[]): string {
   return COLORS[Math.max(0, idx) % COLORS.length];
 }
 
-export interface ZoomPan { zoom: number; panX: number; panY: number }
+export interface ZoomPan {
+  zoom: number;
+  panX: number;
+  panY: number;
+}
 
-export function useZoomPan(canvasRef: React.RefObject<HTMLCanvasElement | null>, redraw: () => void, canvasAvailable = true) {
+export function useZoomPan(
+  canvasRef: React.RefObject<HTMLCanvasElement | null>,
+  redraw: () => void,
+  canvasAvailable = true,
+) {
   const [zp, setZp] = useState<ZoomPan>({ zoom: 1, panX: 0, panY: 0 });
   const zpRef = useRef(zp);
-  useLayoutEffect(() => { zpRef.current = zp; }, [zp]);
+  useLayoutEffect(() => {
+    zpRef.current = zp;
+  }, [zp]);
   const dragging = useRef(false);
   const dragStart = useRef({ x: 0, y: 0 });
   const panStart = useRef({ x: 0, y: 0 });
@@ -98,7 +117,9 @@ export function useZoomPan(canvasRef: React.RefObject<HTMLCanvasElement | null>,
     };
   }, [canvasRef, canvasAvailable]);
 
-  useEffect(() => { redraw(); }, [zp, redraw]);
+  useEffect(() => {
+    redraw();
+  }, [zp, redraw]);
 
   return { ...zp, reset };
 }
@@ -156,7 +177,12 @@ export function drawDetections(
   }
 }
 
-export function applyZoomPan(ctx: CanvasRenderingContext2D, zoom: number, panX: number, panY: number) {
+export function applyZoomPan(
+  ctx: CanvasRenderingContext2D,
+  zoom: number,
+  panX: number,
+  panY: number,
+) {
   ctx.translate(panX, panY);
   ctx.scale(zoom, zoom);
 }
