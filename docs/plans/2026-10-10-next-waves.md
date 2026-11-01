@@ -21,14 +21,14 @@ and [architecture roadmap](../../docs-site/docs/architecture/roadmap.md).
 ## Starting point and decision
 
 **October 11 update:** PR #22 merged as
-`4b189ff339e2aaaba36350174cb045d8ec63b5fa`. The owner moved a visible product
+`9458fb77abdd39f859bd55ebcbf5a5d29b734e3c`. The owner moved a visible product
 feature ahead of release machinery: [inspect saved detections in their source
 video](2026-10-11-source-video-inspection.md). This supersedes the order below;
 the release and assessment requirements still apply to their later waves.
 
 [PR #20](https://github.com/oldhero5/waldo/pull/20) merged on October 10, 2026
-as `edb935cd1e314b1af53e7b0e15847c6d37a24ae6`. It is closed. Its reviewed head
-was `3fa46e6e821c3df059d42a61bca8976cc03178eb`. Its
+as `2a8b0b9bec81a76e7231ffe0ac7e14684b3c622e`. It is closed. Its reviewed head
+was `61e9c04e135729179eaf559581e39851b3eb357d`. Its
 [continuous integration (CI) run](https://github.com/oldhero5/waldo/actions/runs/38070243963)
 recorded 723 backend passes, 16 skips, and 96 browser passes with no skips.
 Those results qualify that head only. They do not prove full worker operation,
@@ -42,7 +42,7 @@ Adding the schema first would increase the behavior that needs qualification.
 This reorders the work; it does not cancel the accepted assessment design.
 
 PR #21 established these rules and plans. It merged on October 10, 2026 as
-`f40e20828cfcdbe37c35042f137539ea7dff0f45`. Wave 1 starts from that commit.
+`f7212c8ebe55ca628223eb1c31996aaf50b64046`. Wave 1 starts from that commit.
 Publishing remains disabled. This wave does not migrate secrets or deploy a release.
 
 ```mermaid
@@ -158,7 +158,7 @@ container supplies Linux dependencies; this run does not qualify a release image
 
 On October 10, 2026, a separate native Celery worker completed a generated
 320 × 240, four-frame clip on an Apple M2 Max. The application source was
-`f40e20828cfcdbe37c35042f137539ea7dff0f45`; this wave changes tests and docs only.
+`f7212c8ebe55ca628223eb1c31996aaf50b64046`; this wave changes tests and docs only.
 The run used cached `mlx-community/sam3.1-bf16` checkpoint
 `a992e302ea9b0f03f41dfd93414a4fd0e818f65b`, MLX 0.31.2 and mlx-vlm 0.5.0,
 with network model downloads disabled.

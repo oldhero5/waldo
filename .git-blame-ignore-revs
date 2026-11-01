@@ -2,4 +2,4 @@
 # Local use: git config blame.ignoreRevsFile .git-blame-ignore-revs
 
 # chore: format ui/src with the locked Prettier 3.8.2 (UI redesign wave 0)
-2dd3b9e035e5e5bdfa618df54400528540450cef
+742a715e1985628a49452ba19a6e9b3d94016861
