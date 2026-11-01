@@ -115,14 +115,6 @@ The job streams progress back to the UI over WebSocket. You can switch to Review
 
 The Review canvas shows each frame with overlaid boxes. Accept, reject, edit, redraw — every action PATCHes back to the API.
 
-![Review](/img/screenshots/review.jpg)
-
-<Demo
-  src="/img/recordings/review.mp4"
-  poster="/img/recordings/review.poster.jpg"
-  caption="Scrolling through reviewed frames."
-/>
-
 Keyboard shortcuts:
 
 | Key | Action |
