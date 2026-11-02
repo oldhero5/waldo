@@ -12,7 +12,7 @@ PR CI checks the guards and a tiny local registry copy without release credentia
 
 **Stack:** GitHub Actions, Docker BuildKit, OCI, regctl, Trivy, Python and pytest.
 
-**Base:** PR #23 merged as `fe22b4cc06dfb0be731e6487552233dfaa382742` on
+**Base:** PR #23 merged as `d7443721b7f08bdeaabe19a22345b3d42f31835e` on
 October 12, 2026. This is Wave 2 of the [delivery plan](2026-10-10-next-waves.md).
 Work on `feat/verified-image-release`. Release and deployment need separate owner
 approval; approval to implement this wave does not authorize either action.

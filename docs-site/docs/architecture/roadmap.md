@@ -12,15 +12,15 @@ The largest gap is a trustworthy evidence model, not a different frontend
 framework or a larger chat model.
 
 Updated October 10, 2026 after [PR #20](https://github.com/oldhero5/waldo/pull/20)
-merged as `edb935c`; the original architecture assessment started from commit
-`868ec56`. The first target is
+merged as `2a8b0b9`; the original architecture assessment started from commit
+`edf04d4`. The first target is
 **physical traffic cameras visible in uploaded footage**. Searching
 feeds from a directory of known cameras is a different future workflow.
 
 ## Next delivery waves
 
 **October 11 update:** PR #22 qualified the queued worker checks and merged as
-`4b189ff`. The next feature is source-video inspection in Review: filter saved
+`9458fb7`. The next feature is source-video inspection in Review: filter saved
 findings by clip and class, then open the original footage at the saved time
 beside its annotation frame. This comes before Docker Hub qualification. The
 feature uses existing saved annotations; durable empty-frame assessment storage

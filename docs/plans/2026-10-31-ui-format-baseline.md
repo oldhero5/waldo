@@ -23,7 +23,7 @@ The spec is added by its own docs PR, which merges before this one.
 
 Pre-commit runs `prettier --write` on every touched `ui/src` file
 (`.pre-commit-config.yaml:71-76`), but 60 of the 65 files in `ui/src` are not
-Prettier-clean at `46e4d5f`. Each redesign wave would otherwise reformat whole
+Prettier-clean at `e65775a`. Each redesign wave would otherwise reformat whole
 files it touches, which hides the real change and conflicts with the AGENTS.md
 rule against reformatting adjacent code.
 
@@ -156,8 +156,8 @@ git commit -m "docs: record the UI format baseline and skip it in blame"
 ## Results
 
 Measured on October 31, 2026 on macOS with Node 20.19.6, Prettier 3.8.2 and
-Playwright 1.58.2. The formatting commit is `2dd3b9e`. The baseline is `a795755`
-(the plan commit on top of `46e4d5f`).
+Playwright 1.58.2. The formatting commit is `742a715`. The baseline is `9f66b9a`
+(the plan commit on top of `e65775a`).
 
 | Check | Before | After |
 | --- | --- | --- |

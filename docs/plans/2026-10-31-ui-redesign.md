@@ -1112,7 +1112,7 @@ separate work:
 ## Evidence
 
 On October 31, 2026, the orchestrator ran a read-only research workflow at
-commit `46e4d5f`. Five readers mapped the interface, the backend, the product
+commit `e65775a`. Five readers mapped the interface, the backend, the product
 intent, visual quality and test constraints. Three designers proposed
 directions (Guided Analyst, Refined Studio, Footage-first Workspace). Two
 independent reviewers scored them for user experience and for engineering cost,
@@ -1122,5 +1122,5 @@ document, and a fresh independent reviewer checked the approved version. This
 version includes their findings. The working reports are local files and are
 not committed.
 
-Line references point to commit `46e4d5f`. Wave 0 reformats `ui/src`, which
+Line references point to commit `e65775a`. Wave 0 reformats `ui/src`, which
 shifts its line numbers; each wave plan re-resolves the references it uses.
